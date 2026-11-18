@@ -18,6 +18,7 @@ def run(engine,name):
     browser=engine.launch(**opts)
     page=browser.new_page(viewport={"width":1920,"height":1080})
     errors=[]
+    page.on("console",lambda msg:errors.append(msg.text) if "Shader Error" in msg.text or "VALIDATE_STATUS" in msg.text else None)
     page.on("pageerror",lambda e:errors.append(str(e)))
     page.set_default_timeout(20000)
     page.goto(URL)
@@ -30,6 +31,33 @@ def run(engine,name):
     print(name,json.dumps(checks,ensure_ascii=False),flush=True)
     if errors:raise AssertionError(errors)
     if checks["issues"]:raise AssertionError(checks["issues"])
+    for script in ["verify_pavement.js","verify_traffic.js","verify_pursuit.js","verify_equipment.js"]:
+        detail=page.evaluate((ROOT/script).read_text(encoding="utf-8"))
+        print(name,script,json.dumps(detail,ensure_ascii=False),flush=True)
+        if detail["issues"]:raise AssertionError(detail)
+    # Exercise ownership at a real reload and use the public market controls.
+    page.evaluate("()=>{Object.assign(g.save,window.purchasedSnapshot);quest.writeSave(g.save)}")
+    page.reload();page.locator("#start").click();page.locator(".objective").wait_for()
+    page.evaluate("""async()=>{window.g=(await import(document.querySelector('script[src*="/src/main.ts"]').src)).game;
+      window.level=await import('/src/level.ts');window.quest=await import('/src/campaign.ts');window.life=await import('/src/life.ts');
+      window.places=(await import('/src/rooms.ts')).rooms;window.teleport=q=>{g.q={...q};g.prev={...q};g.view.snap(q);g.updateInteraction()};
+      const v=g.save.inventory,h=places.find(r=>r.id===v.home);
+      if(v.homes.length!==2||v.garage.length!==3||v.vehicle!=='gabare'||v.ammo.prisme.loaded!==0||level.distance(g.q,h.bed)>.2)throw Error('Biens perdus au rechargement');}""")
+    page.keyboard.press("m");page.locator('[data-act="address-arms"]').click();page.locator('[data-act="return"]').click()
+    page.wait_for_function("document.querySelector('#goal').textContent.includes('Balise')")
+    page.keyboard.press("f");page.wait_for_function("document.querySelector('.loadout').textContent.includes('arc')")
+    page.keyboard.press("Escape");page.locator('[data-act="recover"]').click()
+    if name=="chromium" and os.environ.get("DEADLINE_CAPTURES"):
+        out=ROOT/"captures";out.mkdir(exist_ok=True)
+        page.set_viewport_size({"width":1440,"height":900})
+        for nameplate,target in [("05-domicile","terrasse"),("06-convoi","dealer"),("07-charente","rive")]:
+            page.evaluate("""target=>{const r=places.find(r=>r.id===target);g.elapsed=259;g.started=true;g.driving=target==='dealer';
+              if(g.driving){g.car={x:49.3,z:18.6};g.prevCar={...g.car};g.carAngle=.72;teleport(g.car)}
+              else teleport(r?r.counter:level.local(3,75,85));g.address=null;g.resume()}""",target)
+            page.wait_for_timeout(400);page.locator("#toast").evaluate("n=>n.classList.remove('visible')")
+            page.screenshot(path=str(out/(nameplate+".jpg")),quality=89)
+        page.set_viewport_size({"width":1920,"height":1080})
+    page.evaluate("()=>{g.pause();Object.assign(g.save,quest.fresh());quest.writeSave(g.save);g.address=null;g.elapsed=0;g.restore()}")
     scenarios=ROOT/"verify_play.js"
     if scenarios.exists():
         events=page.evaluate(scenarios.read_text(encoding="utf-8"))

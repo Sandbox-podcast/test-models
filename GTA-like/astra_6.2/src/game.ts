@@ -1,10 +1,13 @@
+import {MotorResponse} from './patrol'
+import {rooms,roomAt,isHouse,parkingBays,type Room,type Place} from './rooms'
+import {weapons,vehicles,houses,type Weapon,type Vehicle} from './equipment'
 import R from '@dimforge/rapier3d-compat'
 import * as T from 'three'
 import {View,Actor} from './world'
 import {Streets} from './physics'
-import {Traffic,footFlow,periods,clockPeriod} from './life'
+import {Traffic,type TrafficCar,footFlow,periods,clockPeriod} from './life'
 import {AudioBus} from './audio'
-import {sites,p,distance,ground,district,districts,watchRoutes,type Point} from './level'
+import {sites,p,distance,ground,district,districts,nearestLane,watchRoutes,type Point} from './level'
 import {available,chapter,jobNames,finish,writeSave,missions,steps,startSite,destination,common,offerDetails,type Job,type Save,type Implant} from './campaign'
 export const ready=R.init()
 export type Choice={label:string,act:()=>void}
@@ -16,17 +19,20 @@ const lerp=(a:number,b:number,t:number)=>a+(b-a)*t
 const angleTo=(a:Point,b:Point)=>Math.atan2(b.x-a.x,b.z-a.z)
 export class Game{
  view:View;streets=new Streets();people:Person[]=[];q={...sites.spawn};prev={...this.q};car={...sites.car};prevCar={...this.car}
- driving=false;speed=0;carAngle=Math.PI/2;angle=0;walk=0;health=100;elapsed=0;phase=0
+ address:Place|null=null;private safeCar:{q:Point,angle:number}|null=null;reloadTime=0;private safetyClock=0;private trapped=0;private safeTrail:Point[]=[];driving=false;speed=0;carAngle=Math.PI/2;angle=0;walk=0;health=100;elapsed=0;phase=0
  paused=true;started=false;keys=new Set<string>();nx=0;ny=0;aim=p(0,0);fire=false;gun=0;cool=[0,0]
  step=0;quiet=99;alert='Discret';source='';lastKnown:Point|null=null;alertTTL=0;cameraSeen=0;cameraOff=0;gateTime=0;archiveTime=0;diversionTime=0;private shiftOpen=false;private gatePending=false;cameraAngle=0
  cameraCone:T.Mesh;camObject:T.Group;drone:T.Group;droneOff=0;droneSeen=0;dronePoint=p(128,-4)
  mina:Actor;sorel:Actor;pickup:T.Group;decor:T.Group[]=[];moving=false;hint='';valid='';interaction:(()=>void)|null=null
- traffic:Traffic;npcs=new Map<string,Actor>();escort:Person|null=null;escortStall=0;private escortProgress:Point|null=null;archTime=0;archiveSeen=false;private period=-1;private impactId:number|null=null;private impactAt:Point=p(-999,-999)
+ patrol:MotorResponse;borrowed:TrafficCar|null=null;private ownedPose:{q:Point,angle:number}|null=null;traffic:Traffic;npcs=new Map<string,Actor>();escort:Person|null=null;escortStall=0;private escortProgress:Point|null=null;archTime=0;archiveSeen=false;private period=-1;private impactId:number|null=null;private impactAt:Point=p(-999,-999)
+ get weapon(){return weapons[this.save.inventory.weapon]}
+ get ammo(){return this.save.inventory.ammo[this.save.inventory.weapon]!}
+ get vehicle(){return this.borrowed?{...vehicles.courier,name:'Berline de ville'}:vehicles[this.save.inventory.vehicle]}
  get localTime(){return this.save.dayTime+this.elapsed}
  get hour(){return periods[clockPeriod(this.localTime)]}
  private accumulator=0;private last=0;private uiTime=0;private threatPulse=0;private frameId=0;private sideTicker=0
  constructor(canvas:HTMLCanvasElement,public save:Save,public audio:AudioBus,private ui:Hooks){
-  this.view=new View(canvas);this.traffic=new Traffic(this.view.scene,this.streets);this.mina=new Actor(this.view.scene,'#519a8d');this.sorel=new Actor(this.view.scene,'#9185a7')
+  this.view=new View(canvas);this.traffic=new Traffic(this.view.scene,this.streets);this.patrol=new MotorResponse(this.view.scene,this.streets);this.mina=new Actor(this.view.scene,'#519a8d');this.sorel=new Actor(this.view.scene,'#9185a7')
   this.pickup=this.view.object(sites.chip,'PUCE','#e0ee68');this.camObject=this.view.object(sites.camera,'CAM 01','#ec9566')
   this.cameraCone=this.view.cone('#ffa048',10,.63);this.drone=this.view.object(this.dronePoint,'DRONE','#ef9677',.7)
   const add=(guard:boolean,start:Point,patrol:Point[],col:string)=>{const actor=new Actor(this.view.scene,col);const person:Person={q:{...start},home:start,actor,hp:guard?65:40,angle:0,phase:0,down:0,hit:0,guard,patrol,index:0,plan:[],timer:0,investigate:null,interest:0,seen:0,cool:0};if(guard)person.cone=this.view.cone('#f5b170',7,.65);this.people.push(person)}
@@ -48,14 +54,21 @@ export class Game{
  pause(){this.paused=true;this.clearInput();this.audio.engine(0)}
  resume(){if(this.health<=0)return;this.started=true;this.paused=false;this.last=performance.now();this.accumulator=0;this.clearInput();this.view.resize();this.audio.start();this.updateInteraction();this.ui.hud()}
  stop(){cancelAnimationFrame(this.frameId);this.pause()}
- syncGates(){this.gatePending=false;for(const [id,on] of Object.entries({gate:this.gateTime>0,shortcut:this.save.done.includes('chip'),gallery:this.save.route==='collectif',service:this.save.route==='sorel',cour:this.save.done.includes('escort'),exit:this.save.done.includes('exit'),paper:this.save.done.includes('paper'),archives:this.archiveTime>0||this.archTime>=18,entretien:this.diversionTime>0||this.save.done.includes('door'),maintenance:this.shiftOpen||this.save.done.includes('ledger'),coursive:this.shiftOpen||this.save.ending==='public'})){const bound=this.streets.gateAreas.get(id);const wait=!!bound&&!on&&this.streets.open.has(id)&&Math.abs(this.q.x-bound.x)<bound.w/2+.6&&Math.abs(this.q.z-bound.z)<bound.d/2+.6;this.gatePending||=wait;this.streets.setGate(id,on||wait);const gate=this.view.gates.get(id);if(gate)gate.visible=!(on||wait)}}
+ syncGates(){this.gatePending=false;for(const r of rooms)if(isHouse(r.id)){const open=this.save.inventory.homes.includes(r.id);this.streets.setGate(r.door!.id!,open);this.view.gates.get(r.door!.id!)!.visible=!open}for(const [id,on] of Object.entries({gate:this.gateTime>0,shortcut:this.save.done.includes('chip'),gallery:this.save.route==='collectif',service:this.save.route==='sorel',cour:this.save.done.includes('escort'),exit:this.save.done.includes('exit'),paper:this.save.done.includes('paper'),archives:this.archiveTime>0||this.archTime>=18,entretien:this.diversionTime>0||this.save.done.includes('door'),maintenance:this.shiftOpen||this.save.done.includes('ledger'),coursive:this.shiftOpen||this.save.ending==='public'})){const bound=this.streets.gateAreas.get(id);const wait=!!bound&&!on&&this.streets.open.has(id)&&Math.abs(this.q.x-bound.x)<bound.w/2+.6&&Math.abs(this.q.z-bound.z)<bound.d/2+.6;this.gatePending||=wait;this.streets.setGate(id,on||wait);const gate=this.view.gates.get(id);if(gate)gate.visible=!(on||wait)}}
  restore(){
+  this.borrowed=null;this.ownedPose=null;this.patrol.reset();this.mountLights(this.view.car)
+  this.reloadTime=0;this.safeTrail=[];this.safetyClock=0;this.trapped=0;this.safeCar=null;this.streets.setVehicle(this.save.inventory.vehicle);this.view.setVehicle(this.save.inventory.vehicle);this.view.player.equip(this.save.inventory.weapon)
   this.q={...sites.spawn};this.prev={...this.q};this.car={...sites.car};this.prevCar={...this.car};this.carAngle=Math.PI;this.driving=false;this.speed=0;this.health=100;this.step=0;this.gun=0;this.cool=[0,0];this.quiet=99;this.alertTTL=0;this.lastKnown=null;this.cameraSeen=0;this.droneSeen=0;this.cameraOff=0;this.gateTime=0;this.archiveTime=0;this.diversionTime=0;this.shiftOpen=false;this.droneOff=0;this.alert='Discret';this.source='';this.traffic.reset();this.escort=null;this.escortStall=0;this.archTime=0;this.archiveSeen=false;this.impactId=null;this.period=-1;this.view.resetEffects()
   for(const n of this.people){Object.assign(n,{q:{...n.home},indoors:false,dwell:(n.flow??0)%4,hp:n.guard?65:40,angle:0,index:0,plan:[],timer:0,interest:0,investigate:null,seen:0,cool:0,hit:0,down:0});n.actor.obj.visible=true}
-  this.streets.setParked(this.car,this.carAngle,true);this.syncGates();this.view.snap(this.q);this.clearInput();this.updateInteraction()
+  this.streets.setParked(this.car,this.carAngle,true);this.syncGates();const home=rooms.find(r=>r.id===this.save.inventory.home);if(!this.job&&home&&this.streets.vacant(home.bed)){this.q={...home.bed};this.prev={...this.q}}this.view.snap(this.q);this.clearInput();this.updateInteraction()
  }
  startJob(j:Job){if(this.job||!available(this.save).includes(j))return;this.save.active=j;this.save.activeOffer=common.includes(j)?missions[j].id+'-'+this.save.offers:null;this.save.track=j;this.step=0;writeSave(this.save);this.ui.toast('Point de reprise enregistré au garage');this.updateInteraction()}
  abandon(){this.save.active=null;this.save.activeOffer=null;this.save.track=null;writeSave(this.save);this.restore();this.ui.toast('Retour en exploration libre')}
+ guidance(){
+  const r=rooms.find(r=>r.id===this.address)
+  if(this.job||!r)return this.target()
+  return {q:roomAt(this.q)?.id===r.id?r.counter:r.entrance,label:r.name+' · '+(roomAt(this.q)?.id===r.id?'rejoindre le comptoir':'rejoindre l’entrée')}
+ }
  target():{q:Point,label:string}{
   const j=this.job||this.next;if(!this.job){if(this.save.done.includes(j))return {q:sites.garage,label:'Explorer la ville libre'};return {q:sites[startSite(this.save,j)],label:'Rencontrer '+this.contactName(j)+' · '+jobNames[j]}}
   if(j==='ledger'&&this.step===2)return {q:distance(this.q,sites.mina)<distance(this.q,sites.sorel)?sites.mina:sites.sorel,label:'Confier le registre à Nadia ou à Sorel'}
@@ -101,6 +114,10 @@ export class Game{
   this.hint='';this.interaction=null;const near=(q:Point,r=3)=>distance(this.q,q)<r&&Math.abs(ground(this.q.x,this.q.z)-ground(q.x,q.z))<2.3
   const bind=(hint:string,fn:()=>void)=>{this.hint=hint;this.interaction=fn}
   if(this.driving){bind(Math.abs(this.speed)>2?'Freiner pour sortir':'Sortir du véhicule',()=>this.exitCar());return}
+  const indoor=roomAt(this.q)
+  if(indoor&&near(indoor.counter,2.85)){bind(indoor.id==='dealer'?'Consulter les véhicules':indoor.id==='arms'?'Armes et munitions':indoor.id==='cafe'?'Commander au comptoir':'Utiliser le foyer',()=>this.shop(indoor));return}
+  const listing=rooms.find(r=>isHouse(r.id)&&!this.save.inventory.homes.includes(r.id)&&near(r.entrance,2.6))
+  if(listing){bind('Consulter la maison à vendre',()=>this.shop(listing));return}
   const target=this.target()
   if((this.job||available(this.save).includes(this.next))&&near(target.q,3.7)){
    if(this.job==='chip'&&this.step===1&&this.quiet<5){bind('Livraison dans '+Math.ceil(5-this.quiet)+' s sans détection',()=>this.ui.toast('Éloignez-vous des cônes de surveillance'));return}
@@ -114,22 +131,138 @@ export class Game{
   if(near(sites.lise)&&this.save.done.includes('parcel')){bind('Parler à Lise',()=>this.ui.toast(this.save.night==='destroy'?'Lise · Les dossiers sont détruits. Nous ouvrons ce soir.':'Lise · Les preuves sont sous clé à la permanence.'));return}
   if(near(sites.mina)&&this.save.ending){bind('Parler à Nadia',()=>this.ui.toast(this.save.ending==='public'?'Nadia · Je corrige les badges provisoires ici.':'Nadia · Les familles peuvent rentrer chez elles.'));return}
   if(this.save.ending&&(near(sites.sorel)||near(sites.exit)&&this.save.done.includes('exit'))){bind('Consulter la permanence de Sorel',()=>this.ui.toast(this.save.ending==='public'?'Sorel · Le portillon répond au relais des habitants. Le registre public fait foi.':'Sorel · La cellule de recours a rétabli les badges de l’équipe de nuit.'));return}
+  const civil=this.traffic.candidate(this.q)
+  if(civil&&distance(civil.q,this.q)<distance(this.car,this.q)){bind(civil.speed>2?'Faire arrêter la voiture':'Prendre le volant de la berline',()=>this.takeWheel(civil));return}
   if(near(this.car,3.35)&&this.streets.clear(this.q,this.car,true)){bind('Monter dans la voiture',()=>{this.driving=true;this.streets.setParked(this.car,this.carAngle,false);this.q={...this.car};this.prev={...this.q};this.audio.beep(90,.25,140,'triangle')});return}
   if(near(sites.garage,5)){bind('Configurer les implants',()=>this.garage());return}
+ }
+ private mountLights(body:T.Group){const light=this.view.lighting;body.add(light.head,light.head.target,light.beams)}
+ private takeWheel(c:TrafficCar){
+  if(this.driving||c.mode==='player'||this.traffic.candidate(this.q)!==c)return
+  if(c.speed>2){c.stop=3;this.ui.toast('Le conducteur freine · E près de la portière');return}
+  const civilian=c.mode==='traffic'
+  this.ownedPose={q:{...this.car},angle:this.carAngle};this.borrowed=c
+  this.streets.setVehicle('courier');this.streets.setParked(this.car,this.carAngle,true,this.save.inventory.vehicle)
+  this.traffic.control(c,true,c.q,c.angle)
+  if(!this.streets.vacant(c.q,true,c.angle)){
+   this.traffic.control(c,false,c.q,c.angle);if(civilian)c.mode='traffic';this.borrowed=null;this.ownedPose=null;this.streets.setVehicle(this.save.inventory.vehicle)
+   this.ui.toast('La portière est coincée');return
+  }
+  this.car={...c.q};this.prevCar={...c.q};this.carAngle=c.angle;this.speed=0;this.driving=true;this.q={...c.q};this.prev={...c.q};this.safeCar=null;this.impactId=null;this.reloadTime=0;this.mountLights(c.body)
+  if(civilian){this.confirm(this.q,'Prise de véhicule signalée');this.ui.toast('Berline signalée aux vigiles')}else this.ui.toast('Berline reprise')
+ }
+ private releaseBorrowed(){
+  const c=this.borrowed,owned=this.ownedPose;if(!c||!owned)return
+  this.traffic.control(c,false,this.car,this.carAngle);this.borrowed=null;this.ownedPose=null;this.mountLights(this.view.car)
+  this.car={...owned.q};this.prevCar={...owned.q};this.carAngle=owned.angle;this.streets.setVehicle(this.save.inventory.vehicle);this.streets.setParked(this.car,this.carAngle,true);this.impactId=null;this.safeCar=null
+ }
+ private syncParked(on:boolean){
+  if(this.ownedPose)this.streets.setParked(this.ownedPose.q,this.ownedPose.angle,true,this.save.inventory.vehicle)
+  else this.streets.setParked(this.car,this.carAngle,on)
+ }
+ private shop(r:Room){
+  const inv=this.save.inventory,actions:Choice[]=[],balance=()=>this.save.money+' crédits'
+  const deal=(cost:number,change:()=>void,message:string)=>{
+   if(this.save.money<cost){this.ui.toast('Solde insuffisant · '+balance());return false}
+   const before=structuredClone(inv),money=this.save.money;change();this.save.money-=cost
+   if(!writeSave(this.save)){this.save.inventory=before;this.save.money=money;this.ui.toast('Sauvegarde indisponible');return false}
+   this.syncGates();if(this.save.inventory.weapon!==before.weapon)this.view.player.equip(this.save.inventory.weapon);this.ui.toast(message+' · '+balance());return true
+  }
+  if(r.id==='arms')for(const id of Object.keys(weapons) as Weapon[]){
+   const w=weapons[id],owned=!!inv.ammo[id]
+   if(!owned)actions.push({label:w.name+' · '+w.price+' crédits',act:()=>{if(inv.ammo[id])return;deal(w.price,()=>{inv.ammo[id]={loaded:w.capacity,reserve:w.pack};inv.weapon=id;this.reloadTime=0},'Arme équipée')}})
+   else{if(inv.weapon!==id)actions.push({label:'Équiper '+w.name,act:()=>this.equipWeapon(id)})
+    actions.push({label:w.name+' · '+w.pack+' munitions / '+w.packPrice+' crédits',act:()=>deal(w.packPrice,()=>{inv.ammo[id]!.reserve+=w.pack},'Réserve approvisionnée')})}
+  }
+  if(r.id==='dealer')for(const id of Object.keys(vehicles) as Vehicle[]){
+   const v=vehicles[id],owned=inv.garage.includes(id)
+   actions.push({label:(owned?'Sortir ':'Acheter ')+v.name+(owned?'':' · '+v.price+' crédits'),act:()=>{
+    if(!owned&&inv.garage.includes(id))return
+    const old=inv.vehicle;this.streets.setParked(this.car,this.carAngle,false);this.streets.setVehicle(id)
+    const bay=parkingBays.find(q=>this.streets.vacant(q,true,0)&&this.people.every(n=>n.indoors||n.hp<=0||distance(n.q,q)>3))
+    if(!bay||this.save.money<(owned?0:v.price)){this.streets.setVehicle(old);this.streets.setParked(this.car,this.carAngle,true);this.ui.toast(!bay?'Aucune place libre devant le garage':'Solde insuffisant · '+balance());return}
+    const paid=deal(owned?0:v.price,()=>{if(!owned)inv.garage.push(id);inv.vehicle=id},v.name+' sur le parvis')
+    this.streets.setVehicle(this.save.inventory.vehicle)
+    if(paid){this.car={...bay};this.prevCar={...bay};this.carAngle=0;this.speed=0;this.view.setVehicle(id);this.view.resetEffects();this.impactId=null}
+    this.streets.setParked(this.car,this.carAngle,true)
+   }})
+  }
+  if(isHouse(r.id)){const id=r.id,h=houses[id];if(!inv.homes.includes(id))actions.push({label:'Acheter · '+h.price+' crédits',act:()=>{if(!inv.homes.includes(id))deal(h.price,()=>inv.homes.push(id),'Clés remises')}})
+   else{actions.push({label:'Choisir comme domicile',act:()=>deal(0,()=>{inv.home=id},'Domicile enregistré')},{label:'Se reposer',act:()=>{this.health=100;this.save.dayTime+=120-this.localTime%120;writeSave(this.save);this.ui.toast('Santé rétablie · '+this.hour)}})}}
+  if(r.id==='cafe')actions.push({label:'Repas · 15 crédits',act:()=>{if(this.health>=100){this.ui.toast('Santé au maximum');return}if(deal(15,()=>{},'Repas servi'))this.health=Math.min(100,this.health+35)}})
+  actions.push({label:'Quitter',act:()=>{}})
+  this.dialogue(r.name,isHouse(r.id)?'Logement':r.id==='dealer'?'Parc automobile':r.id==='arms'?'Arsenal':'Café de la rive',balance()+'. '+(r.id==='dealer'?'Le véhicule choisi vous attend sur le parvis. Le précédent retourne au garage.':r.id==='arms'?'Chaque arme utilise sa propre réserve. R recharge, F change d’arme.':isHouse(r.id)?'Le propriétaire peut se reposer et choisir son point de retour en exploration libre.':'Le repas restaure 35 points de santé.'),actions)
  }
  private offerList(offers:Job[]){if(offers.length===1){this.jobOffer(offers[0]);return}this.dialogue('Réseau local','Contrats disponibles','Choisissez le dossier à ouvrir.',offers.map(j=>({label:missions[j].id+' · '+jobNames[j],act:()=>this.jobOffer(j)})).concat([{label:'Retour',act:()=>{}}]))}
  interact(){if(this.paused)return;this.updateInteraction();this.interaction?.();this.updateInteraction();this.ui.hud()}
  workbench(){if(!this.driving&&distance(this.q,sites.garage)<6)this.garage();else this.ui.toast('L’établi se trouve au garage de Mina')}
- exitCar(){if(Math.abs(this.speed)>2){this.ui.toast('Ralentissez pour descendre');return}for(const n of [1,-1]){const q=p(this.car.x+n*Math.cos(this.carAngle)*1.92,this.car.z-n*Math.sin(this.carAngle)*1.92);if(this.streets.vacant(q)&&this.streets.clear(this.car,q,true)){this.q=q;this.prev={...q};this.driving=false;this.speed=0;this.streets.setParked(this.car,this.carAngle,true);this.audio.engine(0);return}}this.ui.toast('Les deux portières sont bloquées')}
+ private canWalkAway(q:Point){
+  return this.streets.vacant(q)&&[[1.1,0],[-1.1,0],[0,1.1],[0,-1.1]].some(([dx,dz])=>distance(this.streets.move(q,dx,dz),q)>.98)
+ }
+ recover(atGarage=false){
+  // Recheck every candidate against current traffic, doors, and the parked car.
+  const here={...this.q}
+  if(this.driving&&!this.streets.vacant(this.car,true,this.carAngle)){
+   const bays=[...(this.safeCar?[this.safeCar]:[]),{q:sites.car,angle:Math.PI},...parkingBays.map(q=>({q,angle:0}))]
+   const free=bays.find(b=>this.streets.vacant(b.q,true,b.angle)&&this.people.every(n=>n.indoors||distance(n.q,b.q)>3))
+   if(free){this.car={...free.q};this.prevCar={...free.q};this.carAngle=free.angle}
+  }
+  if(this.borrowed)this.releaseBorrowed();this.syncParked(true)
+  const nearby:Point[]=[]
+  for(const radius of [1.8,3.3,5.5,8])for(let i=0;i<12;i++){const a=i*Math.PI/6;nearby.push(p(here.x+radius*Math.cos(a),here.z+radius*Math.sin(a)))}
+  const canReachStreet=(q:Point)=>[p(28.4,38),p(34,38.2)].some(exit=>distance(q,exit)<.4||this.streets.path(q,exit).length>0)
+  const garageExits=atGarage?[sites.spawn,p(28,38),p(37,39),p(50,39)].filter(q=>this.canWalkAway(q)&&canReachStreet(q)):[]
+  const candidates=[...garageExits,...this.safeTrail.filter(q=>distance(q,here)<12).reverse(),...nearby,...this.safeTrail.slice().reverse(),sites.spawn,p(28,38),p(68,34),sites.drop]
+  const safe=candidates.find(q=>{const room=roomAt(q);return (atGarage||distance(q,here)>.9)&&this.canWalkAway(q)&&(!room||!isHouse(room.id)||this.save.inventory.homes.includes(room.id))})
+  if(!safe){this.streets.setParked(this.car,this.carAngle,!this.driving);return}
+  this.driving=false;this.speed=0;this.trapped=0;this.safeTrail=[];this.q={...safe};this.prev={...safe};this.clearInput();this.audio.engine(0);this.view.snap(safe);this.updateInteraction();this.ui.toast(atGarage?'Dépannage terminé · garage de Mina':'Coursier remis sur un passage libre')
+ }
+ private checkPosition(dt:number){
+  this.safetyClock+=dt;if(this.safetyClock<.4)return;this.safetyClock=0
+  if(this.driving){
+   if(this.streets.vacant(this.car,true,this.carAngle)){
+    this.trapped=0;const lane=nearestLane(this.car,true)
+    if(lane&&lane.d<lane.r.width/2-this.vehicle.width/2)this.safeCar={q:{...this.car},angle:this.carAngle}
+    return
+   }
+   if(++this.trapped>=3)this.recover();return
+  }
+  if(this.canWalkAway(this.q)){
+   this.trapped=0;const previous=this.safeTrail.at(-1);if(!previous||distance(previous,this.q)>2){this.safeTrail.push({...this.q});if(this.safeTrail.length>12)this.safeTrail.shift()}return
+  }
+  if(++this.trapped>=3)this.recover()
+ }
+ exitCar(){
+  if(Math.abs(this.speed)>2){this.ui.toast('Ralentissez pour descendre');return}
+  const right=this.vehicle.width/2+.88,fore=this.vehicle.length/2
+  this.syncParked(true)
+  if(this.borrowed){this.traffic.position(this.borrowed,this.car,this.carAngle);this.borrowed.collider.setEnabled(true);this.streets.world.step()}
+  const offsets=[[right,0],[-right,0],[right,-1],[-right,-1],[right,1],[-right,1],[0,-fore-.9],[0,fore+.9]]
+  for(const [x,z] of offsets){const c=Math.cos(this.carAngle),s=Math.sin(this.carAngle),q=p(this.car.x+c*x+s*z,this.car.z-s*x+c*z)
+   if(this.canWalkAway(q)&&this.streets.clear(this.car,q,!this.borrowed,this.borrowed?.collider)){this.releaseBorrowed();this.q=q;this.prev={...q};this.driving=false;this.speed=0;this.audio.engine(0);return}}
+  if(this.borrowed){this.borrowed.collider.setEnabled(false);this.streets.world.step()}this.syncParked(false);this.ui.toast('Issues bloquées · remise sur un passage libre dans le menu de pause')
+ }
  private dispatch(q:Point){for(const n of this.people.filter(n=>n.guard&&n.hp>0&&distance(n.q,q)<25)){n.investigate={...q};n.interest=9;n.timer=0}this.audio.beep(230,.18,110,'triangle')}
- private confirm(q:Point,source:string){this.quiet=0;this.source=source;this.lastKnown={...q};this.alertTTL=8;if(this.threatPulse<=0){this.audio.beep(500,.15,740);this.threatPulse=2}for(const n of this.people)if(n.guard&&n.hp>0&&distance(n.q,q)<21){n.investigate={...q};n.interest=8}}
+ private confirm(q:Point,source:string,relay=true){if(relay)this.patrol.notify(q);this.quiet=0;this.source=source;this.lastKnown={...q};this.alertTTL=8;if(this.threatPulse<=0){this.audio.beep(500,.15,740);this.threatPulse=2}for(const n of this.people)if(n.guard&&n.hp>0&&distance(n.q,q)<21){n.investigate={...q};n.interest=8}}
  private see(origin:Point,heading:number,r:number,angle:number){const d=distance(origin,this.q);if(d>r)return false;const h=angleTo(origin,this.q);return (d<1.4||Math.cos(h-heading)>Math.cos(angle))&&this.streets.clear(origin,this.q)}
  private hurt(n:Person,damage:number,dx:number,dz:number){n.hp-=damage;n.hit=1;this.view.impact(n.q,dx,dz,damage>42||n.hp<=0);const pushed=this.streets.move(n.q,dx*(damage>42?.85:.3),dz*(damage>42?.85:.3));n.q=pushed
   if(n.hp<=0)n.plan=[];else if(!n.guard){n.investigate=p(n.q.x+dx*6,n.q.z+dz*6);n.interest=3;n.timer=0}
  }
- shoot(){if(this.paused||this.driving||this.gun>0)return;this.gun=.31;const a=angleTo(this.q,this.aim),dx=Math.sin(a),dz=Math.cos(a);let end=p(this.q.x+dx*25,this.q.z+dz*25)
-  for(let t=.5;t<25;t+=.45){const next=p(this.q.x+dx*t,this.q.z+dz*t);if(!this.streets.clear(this.q,next)){end=next;break}const n=this.people.find(n=>!n.indoors&&n.hp>0&&distance(n.q,next)<.65);if(n){this.hurt(n,38,dx,dz);end=next;break}}
-  this.view.shot(this.q,end);this.audio.beep(115,.11,28,'sawtooth')
+ equipWeapon(id:Weapon){if(!this.save.inventory.ammo[id])return;this.reloadTime=0;this.save.inventory.weapon=id;this.view.player.equip(id);writeSave(this.save);this.ui.toast(weapons[id].name);this.ui.hud()}
+ cycleWeapon(){if(this.paused||this.driving)return;const list=(Object.keys(weapons) as Weapon[]).filter(id=>this.save.inventory.ammo[id]);this.equipWeapon(list[(list.indexOf(this.save.inventory.weapon)+1)%list.length])}
+ reload(){if(this.paused||this.driving||this.reloadTime>0)return
+  if(this.ammo.loaded===this.weapon.capacity||this.ammo.reserve===0){this.ui.toast(this.ammo.reserve?'Chargeur plein':'Réserve vide · Comptoir Balise aux Forges');return}
+  this.reloadTime=this.weapon.reload;this.audio.beep(240,.09,380);this.ui.hud()
+ }
+ shoot(){
+  if(this.paused||this.driving||this.gun>0||this.reloadTime>0)return
+  if(!this.ammo.loaded){this.gun=.45;this.audio.beep(90,.04,60);if(this.ammo.reserve)this.reload();else this.ui.toast('Réserve vide · Comptoir Balise aux Forges');return}
+  const w=this.weapon;this.gun=w.interval;this.ammo.loaded--;writeSave(this.save)
+  for(const spread of w.spread){const a=angleTo(this.q,this.aim)+spread,dx=Math.sin(a),dz=Math.cos(a);let end=p(this.q.x+dx*w.range,this.q.z+dz*w.range)
+   for(let t=.5;t<w.range;t+=.45){const next=p(this.q.x+dx*t,this.q.z+dz*t);if(!this.streets.clear(this.q,next)){end=next;break}
+    const n=this.people.find(n=>!n.indoors&&n.hp>0&&distance(n.q,next)<.65);if(n){this.hurt(n,w.damage,dx,dz);end=next;break}}
+   this.view.shot(this.q,end,w.color)}
+  this.audio.beep(this.save.inventory.weapon==='arc'?460:115,.11,28,this.save.inventory.weapon==='arc'?'triangle':'sawtooth')
   if(this.people.some(n=>!n.indoors&&n.hp>0&&distance(n.q,this.q)<12&&this.streets.clear(n.q,this.q)))this.confirm(this.q,'Tir signalé par un témoin')
  }
  private hackTarget(){return [{id:'camera',q:sites.camera},{id:'gate',q:sites.gate},...(this.job==='calendar'?[{id:'archives',q:sites.archives}]:[])].filter(v=>distance(this.q,v.q)<12&&distance(this.aim,v.q)<3.25).sort((a,b)=>distance(this.aim,a.q)-distance(this.aim,b.q))[0]}
@@ -141,7 +274,7 @@ export class Game{
  }
  private damage(amount:number){this.health=Math.max(0,this.health-amount);this.audio.beep(90,.18,45,'triangle');if(this.health===0){this.dialogue('Signal interrompu','Coursier hors ligne',this.job?'La puce, le véhicule et les patrouilles reprendront leur position du briefing.':'Mina peut vous ramener au garage.',[{label:this.job?'Reprendre au briefing':'Retourner au garage',act:()=>this.restore()},...(this.job?[{label:'Abandonner le contrat',act:()=>this.abandon()}]:[])])}}
  private updateLife(dt:number){
-  this.streets.setParked(this.car,this.carAngle,!this.driving)
+  this.syncParked(!this.driving)
   if(this.archiveSeen&&distance(this.q,this.archPos())<17&&this.streets.clear(this.q,this.archPos())){const prev=this.archTime;this.archTime+=dt;if(prev<18&&this.archTime>=18)this.syncGates()}
   const shift=this.localTime%24<9
   const closing=(this.archiveTime>0&&this.archiveTime<=dt)||(this.diversionTime>0&&this.diversionTime<=dt)
@@ -152,7 +285,17 @@ export class Game{
    const f=footFlow(n.zone,n.flow,period),pts=f.points.filter(q=>this.streets.vacant(q));if(pts.length){n.patrol=pts;n.index=0;n.timer=0;n.wait=f.wait;n.door=f.door;n.activity=f.label}}}
   const near:Point[]=[];for(const n of this.people){if(n.hp<=0||n.indoors||distance(n.q,this.q)>48)continue;near.push(n.q)
    if(!n.guard&&n!==this.escort&&this.alertTTL>0&&distance(n.q,this.q)<10&&n.interest<=0){n.investigate=n.patrol[Math.min(2,n.patrol.length-1)];n.interest=4;n.timer=0}}
-  this.traffic.update(dt,this.q,this.car,this.alertTTL>0,near,this.localTime)
+  const velocity=this.driving?p(Math.sin(this.carAngle)*this.speed,Math.cos(this.carAngle)*this.speed):p(
+   Number(this.keys.has('d')||this.keys.has('arrowright'))-Number(this.keys.has('a')||this.keys.has('q')||this.keys.has('arrowleft')),
+   Number(this.keys.has('s')||this.keys.has('arrowdown'))-Number(this.keys.has('w')||this.keys.has('z')||this.keys.has('arrowup')))
+  if(!this.driving){const factor=(this.keys.has('shift')?7.5:5.05)/(Math.hypot(velocity.x,velocity.z)||1);velocity.x*=factor;velocity.z*=factor}
+  this.traffic.update(dt,this.q,this.ownedPose?.q||this.car,this.alertTTL>0,near,this.localTime,velocity,this.driving,this.patrol.positions,this.carAngle)
+  if(this.save.ending==='public'&&district(this.q.x,this.q.z)===2){if(this.patrol.phase!=='idle')this.patrol.reset()}
+  else this.patrol.update(dt,this.q,this.carAngle,this.driving,this.speed,this.alertTTL,this.lastKnown,near,()=>this.confirm(this.q,'Patrouille motorisée',false),()=>this.audio.beep(510,.33,770,'sine'),this.driving&&this.patrol.level>0&&this.traffic.inFlow(this.q,this.carAngle,this.speed))
+  if(this.patrol.intercept>=5){
+   this.restore()
+   this.dialogue('Patrouille Civis','Véhicule intercepté',this.job?'Mina vous a ramené au garage. Le contrat reprend au briefing.':'Mina vous a ramené à votre point de reprise.',[{label:'Reprendre',act:()=>{}}]);return
+  }
   if(this.escort){const n=this.escort,d=distance(n.q,this.q);if(n.hp<=0||this.escortStall>12){n.hp=55;n.down=0;this.escort=null;this.step=this.job==='guide'?0:1;this.escortStall=0;this.ui.toast('Escorte interrompue · retrouvez votre accompagnant au départ')}
    else if(d>2&&d<15&&!this.driving){n.investigate={...this.q};n.interest=2;if(!this.escortProgress||distance(n.q,this.escortProgress)>.45){this.escortProgress={...n.q};this.escortStall=0}else this.escortStall+=dt}
    else {n.investigate={...n.q};n.interest=2;n.plan=[];this.escortStall=0}}
@@ -164,23 +307,24 @@ export class Game{
   const vx=dx*this.speed-(other?Math.sin(other.angle)*other.speed:0),vz=dz*this.speed-(other?Math.cos(other.angle)*other.speed:0)
   const closing=Math.abs(vx*hit.normal.x+vz*hit.normal.z),severity=closing>12?3:closing>5?2:1
   const frontal=Math.abs(hit.normal.x*dx+hit.normal.z*dz)>.67
-  this.view.carImpact(hit.contact.x,hit.contact.z,severity,frontal);this.audio.beep(110-severity*15,.09+severity*.035,40,'sawtooth')
+  if(this.borrowed)this.traffic.hit(this.borrowed.id,severity);else this.view.carImpact(hit.contact.x,hit.contact.z,severity,frontal);this.audio.beep(110-severity*15,.09+severity*.035,40,'sawtooth')
   if(index!==undefined){this.traffic.hit(index,severity);if(severity>=2)this.confirm(this.car,'Accrochage signalé')}
   const prop=hit.solid&&this.view.furniture.get(hit.solid);if(prop)prop.rotation.z=Math.min(1.12,prop.rotation.z+.21*severity)
   this.impactId=hit.id;this.impactAt={...this.car}
  }
  private simulate(dt:number){
-  this.prev={...this.q};this.prevCar={...this.car};this.elapsed+=dt;this.quiet+=dt;this.gun-=dt;this.threatPulse-=dt;this.alertTTL=Math.max(0,this.alertTTL-dt);this.updateLife(dt)
+  this.prev={...this.q};this.prevCar={...this.car};this.elapsed+=dt;this.quiet+=dt;this.gun-=dt;this.threatPulse-=dt;this.alertTTL=Math.max(0,this.alertTTL-dt);this.updateLife(dt);if(this.paused)return;this.streets.world.step()
+  if(this.reloadTime>0){if(this.driving)this.reloadTime=0;else{this.reloadTime=Math.max(0,this.reloadTime-dt);if(this.reloadTime===0){const n=Math.min(this.weapon.capacity-this.ammo.loaded,this.ammo.reserve);this.ammo.loaded+=n;this.ammo.reserve-=n;writeSave(this.save);this.audio.beep(380,.07,260)}}}
   this.cool=this.cool.map(x=>Math.max(0,x-dt));this.cameraOff=Math.max(0,this.cameraOff-dt);this.droneOff=Math.max(0,this.droneOff-dt)
   if(this.gateTime>0){this.gateTime-=dt;if(this.gateTime<=0){if(distance(this.q,sites.gate)<2||distance(this.car,sites.gate)<3)this.gateTime=.5;else this.syncGates()}}
   const axis=(pos:string[],neg:string[])=>Number(pos.some(k=>this.keys.has(k)))-Number(neg.some(k=>this.keys.has(k)))
   const x=axis(['d','arrowright'],['a','q','arrowleft']),z=axis(['s','arrowdown'],['w','z','arrowup'])
   this.aim=this.view.pick(this.nx,this.ny,ground(this.q.x,this.q.z));this.angle=angleTo(this.q,this.aim)
-  if(this.driving){const accel=-z;if(accel)this.speed+=accel*(this.speed*accel<0?25:11)*dt;else this.speed*=Math.exp(-dt*1.45);if(this.keys.has(' '))this.speed*=Math.exp(-dt*7)
-    this.speed=Math.max(-8,Math.min(24,this.speed));const angle=this.carAngle-x*dt*1.85*Math.min(1,Math.abs(this.speed)/3)*Math.sign(this.speed);if(this.streets.vacant(this.car,true,angle))this.carAngle=angle
+  if(this.driving){const accel=-z;if(accel)this.speed+=accel*(this.speed*accel<0?25:this.vehicle.accel)*dt;else this.speed*=Math.exp(-dt*1.45);if(this.keys.has(' '))this.speed*=Math.exp(-dt*7)
+    this.speed=Math.max(-8,Math.min(this.vehicle.speed,this.speed));const angle=this.carAngle-x*dt*this.vehicle.steer*Math.min(1,Math.abs(this.speed)/3)*Math.sign(this.speed);if(this.streets.vacant(this.car,true,angle))this.carAngle=angle
     const dx=Math.sin(this.carAngle),dz=Math.cos(this.carAngle),v=this.speed*dt,m=this.streets.move(this.car,dx*v,dz*v,true,this.carAngle)
     this.carContact(dx,dz)
-    if(distance(m,this.car)<Math.abs(v)*.7){if(Math.abs(this.speed)>13)this.damage(7);this.speed*=-.12}this.car=m;this.q={...m};this.audio.engine(this.speed)
+    if(distance(m,this.car)<Math.abs(v)*.7){if(Math.abs(this.speed)>13)this.damage(7);this.speed*=-.12}this.car=m;this.q={...m};if(this.borrowed)this.traffic.position(this.borrowed,m,this.carAngle);this.audio.engine(this.speed)
     for(const n of this.people)if(!n.indoors&&n.hp>0&&n.hit<.05&&distance(n.q,m)<2.2&&Math.abs(this.speed)>2.5){this.hurt(n,Math.abs(this.speed)>10?100:17,dx*Math.sign(v),dz*Math.sign(v));if(this.people.some(w=>w!==n&&w.hp>0&&distance(w.q,m)<11&&this.streets.clear(w.q,m)))this.confirm(m,'Collision signalée')}
   }else{const len=Math.hypot(x,z),v=(this.keys.has('shift')?7.5:5.05)*dt/(len||1);this.moving=len>0
     const move=(dx:number,dz:number)=>{this.q=this.streets.move(this.q,dx,dz)}
@@ -211,23 +355,24 @@ export class Game{
   }
   this.alert=this.quiet<.16?'Repéré':watching?'Observé':this.alertTTL>0?'Recherche':'Discret'
   this.valid=this.hackTarget()?'Intrusion · cible compatible':''
-  this.updateInteraction();this.streets.world.step()
+  this.checkPosition(dt);this.updateInteraction()
  }
  private frame=(now:number)=>{this.frameId=requestAnimationFrame(this.frame);if(this.paused)return
   const dt=Math.min(.12,(now-(this.last||now))/1000);this.last=now;this.accumulator+=dt
   while(this.accumulator>=1/60&&!this.paused){this.simulate(1/60);this.accumulator-=1/60}if(this.paused)return
   const alpha=this.accumulator*60,q=p(lerp(this.prev.x,this.q.x,alpha),lerp(this.prev.z,this.q.z,alpha))
   this.view.camera(q,dt,this.carAngle,this.driving?this.speed:0);this.view.player.obj.visible=!this.driving;this.view.player.draw(q,this.angle,this.walk,this.moving?1:0,0)
-  const car=p(lerp(this.prevCar.x,this.car.x,alpha),lerp(this.prevCar.z,this.car.z,alpha));this.view.car.position.set(car.x,ground(car.x,car.z),car.z);this.view.car.rotation.y=this.carAngle
+  const car=p(lerp(this.prevCar.x,this.car.x,alpha),lerp(this.prevCar.z,this.car.z,alpha));const owned=this.ownedPose?.q||car;this.view.car.position.set(owned.x,ground(owned.x,owned.z),owned.z);this.view.car.rotation.y=this.ownedPose?.angle??this.carAngle
+  if(this.borrowed){this.borrowed.body.position.set(car.x,ground(car.x,car.z)+.07,car.z);this.traffic.brakeLights(this.borrowed,this.keys.has(' ')||this.keys.has('s')&&this.speed>0)}
   this.view.aim.position.set(this.aim.x,ground(this.aim.x,this.aim.z)+.13,this.aim.z);this.view.aim.visible=!this.driving
-  const objective=this.target();this.view.marker.visible=this.job!==null||available(this.save).includes(this.next);this.view.marker.position.set(objective.q.x,ground(objective.q.x,objective.q.z)+.17,objective.q.z)
+  const objective=this.guidance();this.view.marker.visible=this.address!==null||this.job!==null||available(this.save).includes(this.next);this.view.marker.position.set(objective.q.x,ground(objective.q.x,objective.q.z)+.17,objective.q.z)
   const resident=this.npcs.get('résidente')!;resident.obj.visible=!(this.job==='escort'&&this.escort!==null);resident.draw(this.save.done.includes('escort')?p(sites.mina.x+1.5,sites.mina.z+.4):sites.resident,.7,0,0,0)
   this.npcs.get('gardienne')!.draw(sites.shopkeeper,.4,0,0,0);this.npcs.get('propriétaire')!.draw(sites.proprio,1.15,0,0,0);this.npcs.get('relais')!.draw(sites.contact,1.72,0,0,0);
-  this.npcs.get('nadia')!.draw(sites.mina,2.8,0,0,0);this.npcs.get('lise')!.draw(sites.lise,-1,0,0,0);this.npcs.get('archiviste')!.draw(this.archPos(),1.6,this.elapsed*5,this.archTime>0&&this.archTime<18?1:0,0);this.npcs.get('varenne')!.draw(sites.core,1.1,0,0,0);this.view.serviceLights.visible=this.save.done.includes('module');this.view.market.visible=this.period!==2;this.view.nightExit.visible=this.save.done.includes('exit');this.view.publicRelays.visible=this.save.ending==='public';this.view.official.visible=this.save.ending==='seal';this.view.annotated.visible=this.save.done.includes('paper');this.view.purge.visible=this.save.done.includes('ascent')&&!this.save.ending;this.view.hemi!.intensity=[1.75,2.18,1.15][Math.max(0,this.period)];this.camObject.children[1].visible=this.cameraOff<=0;for(const light of this.view.brakeLights)(light.material as T.MeshBasicMaterial).color.set(this.driving&&(this.keys.has(' ')||this.keys.has('s'))?'#ff3838':'#942c34')
+  this.npcs.get('nadia')!.draw(sites.mina,2.8,0,0,0);this.npcs.get('lise')!.draw(sites.lise,-1,0,0,0);this.npcs.get('archiviste')!.draw(this.archPos(),1.6,this.elapsed*5,this.archTime>0&&this.archTime<18?1:0,0);this.npcs.get('varenne')!.draw(sites.core,1.1,0,0,0);this.view.serviceLights.visible=this.save.done.includes('module');this.view.market.visible=this.period!==2;this.view.nightExit.visible=this.save.done.includes('exit');this.view.publicRelays.visible=this.save.ending==='public';this.view.official.visible=this.save.ending==='seal';this.view.annotated.visible=this.save.done.includes('paper');this.view.purge.visible=this.save.done.includes('ascent')&&!this.save.ending;this.view.hemi!.intensity=[1.75,2.18,1.15][Math.max(0,this.period)];this.camObject.children[1].visible=this.cameraOff<=0;for(const light of this.view.brakeLights)(light.material as T.MeshBasicMaterial).color.set(this.driving&&!this.borrowed&&(this.keys.has(' ')||this.keys.has('s'))?'#ff3838':'#942c34')
   this.mina.draw(this.minaPos,.35,0,0,0);this.sorel.draw(sites.sorel,-.65,0,0,0);this.pickup.visible=this.job==='chip'&&this.step===0
   this.cameraCone.position.set(sites.camera.x,ground(sites.camera.x,sites.camera.z)+.14,sites.camera.z);this.cameraCone.rotation.y=this.cameraAngle;this.cameraCone.visible=this.cameraOff<=0
   this.drone.visible=this.save.ending!=='public';this.drone.position.set(this.dronePoint.x,ground(this.dronePoint.x,this.dronePoint.z)+(this.droneOff?.1:1.5),this.dronePoint.z)
   for(const n of this.people){n.actor.obj.visible=!n.indoors&&distance(n.q,q)<52;if(!n.actor.obj.visible){if(n.cone)n.cone.visible=false;continue}n.actor.draw(n.q,n.angle,n.phase,(n.dwell??0)>0?0:1,n.down,n.hit);if(n.cone){n.cone.position.set(n.q.x,ground(n.q.x,n.q.z)+.13,n.q.z);n.cone.rotation.y=n.angle;n.cone.visible=n.hp>0&&!(this.save.ending==='public'&&district(n.q.x,n.q.z)===2)}}
-  this.view.render(q,dt,this.elapsed);this.uiTime+=dt;if(this.uiTime>.1){this.uiTime=0;this.ui.hud()}
+  this.view.lighting.update(q,dt,this.elapsed,this.driving,this.period===2);this.view.sun.intensity=this.period===2?.83:this.period===0?1.65:2.1;this.view.render(q,dt,this.elapsed);this.uiTime+=dt;if(this.uiTime>.1){this.uiTime=0;this.ui.hud()}
  }
 }

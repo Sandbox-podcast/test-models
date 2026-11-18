@@ -1,3 +1,4 @@
+import {starter,readInventory,type Inventory} from './equipment'
 import {sites,district,districts,siteNames,type Site} from './level'
 export type Implant='Intrusion'|'Leurre'|'Surcharge'
 type Stage=readonly [Site,string]
@@ -23,12 +24,12 @@ export type Job=keyof typeof missions
 export const all=Object.keys(missions) as Job[],mainJobs=all.filter(j=>missions[j].id.startsWith('M')),common=all.filter(j=>missions[j].id.startsWith('C'))
 export const jobNames=Object.fromEntries(all.map(j=>[j,missions[j].title])) as Record<Job,string>
 export const brief=Object.fromEntries(all.map(j=>[j,missions[j].brief])) as Record<Job,string>
-export type Save={version:2,done:Job[],active:Job|null,money:number,route:'collectif'|'sorel'|null,ending:'public'|'seal'|null,night:'destroy'|'entrust'|null,equip:Implant[],sound:boolean,track:Job|null,contact:'mina'|'sorel',offers:number,activeOffer:string|null,dayTime:number}
-export const fresh=():Save=>({version:2,done:[],active:null,money:0,route:null,ending:null,night:null,equip:['Intrusion','Leurre'],sound:true,track:null,contact:'mina',offers:0,activeOffer:null,dayTime:0})
+export type Save={inventory:Inventory,version:2,done:Job[],active:Job|null,money:number,route:'collectif'|'sorel'|null,ending:'public'|'seal'|null,night:'destroy'|'entrust'|null,equip:Implant[],sound:boolean,track:Job|null,contact:'mina'|'sorel',offers:number,activeOffer:string|null,dayTime:number}
+export const fresh=():Save=>({inventory:starter(),version:2,done:[],active:null,money:0,route:null,ending:null,night:null,equip:['Intrusion','Leurre'],sound:true,track:null,contact:'mina',offers:0,activeOffer:null,dayTime:0})
 const key='deadline.courier.v2'
 export function readSave():Save{
  try{const raw=JSON.parse(localStorage.getItem(key)||localStorage.getItem('deadline.courier.v1')||'null');if(!raw||![1,2].includes(raw.version))return fresh()
- const s:Save={...fresh(),...raw,version:2,done:all.filter(j=>!common.includes(j)&&raw.done?.includes(j)),active:all.includes(raw.active)?raw.active:null}
+ const s:Save={...fresh(),...raw,inventory:readInventory(raw.inventory),version:2,done:all.filter(j=>!common.includes(j)&&raw.done?.includes(j)),active:all.includes(raw.active)?raw.active:null}
  if(raw.version===1){if(s.done.includes('ledger'))for(const j of ['calendar','door'] as Job[])if(!s.done.includes(j))s.done.push(j)
  if(s.done.includes('core')&&!s.done.includes('ascent'))s.done.push('ascent')}
  if(s.active&&common.includes(s.active)&&!s.activeOffer)s.activeOffer=missions[s.active].id+'-'+s.offers

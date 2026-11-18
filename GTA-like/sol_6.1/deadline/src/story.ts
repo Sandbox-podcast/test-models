@@ -1,3 +1,4 @@
+import{freshInventory,decodeInventory,type Inventory}from'./economy.ts';
 import type {Vec3}from'./world/geometry.ts';
 import {LOC,GATES}from'./world/data.ts';
 export type Implant='intrusion'|'lure'|'overload';
@@ -26,9 +27,9 @@ for(const [id,title,giver,pickup,destination,kind]of [
 ]as const){const escort=kind==='escort',operate=kind==='operate';QUESTS.push({id,title,giver,speaker:'Réseau des relais',role:'Panneau des contrats',district:id.endsWith('F')?'Les Forges':id.endsWith('D')?'La Dalle':'Les Quais',reward:operate?100:escort?180:120,requires:'M01',common:true,briefing:escort?'Accompagner un habitant jusqu’au relais sûr. Il attend si tu t’éloignes.':operate?'Rétablir le service de la borne puis quitter la zone.':'Prendre le colis repéré et le rapporter au destinataire. Le véhicule reste facultatif.',approaches:'Placement fixe contrôlé à pied, sans implant obligatoire. Abandon et échec restaurent le départ de l’offre.',steps:escort?[{at:pickup,text:'Rejoindre la personne à accompagner',kind:'talk'},{at:destination,text:'Accompagner l’habitant au relais',kind:'escort',to:destination}]:[{at:pickup,text:operate?'Remettre la borne en service':'Récupérer le colis',kind:operate?'operate':'take',duration:operate?5:undefined},{at:destination,text:operate?'Quitter la zone et confirmer au relais':'Livrer au destinataire',kind:'talk'}],result:'Le relais confirme la mission. Une nouvelle occurrence possède son propre identifiant.'});}
 export const QUEST_BY_ID=Object.fromEntries(QUESTS.map(q=>[q.id,q]))as Record<QuestId,Quest>;
 export interface ActiveQuest {id:QuestId;step:number;offerId:string;elapsed:number;}
-export interface Save {version:2;money:number;completed:QuestId[];rewarded:string[];flags:string[];route:Route|null;ending:Ending|null;implants:[Implant,Implant];active:ActiveQuest|null;occurrences:Record<string,number>;hour:number;nightChoice:'destroy'|'entrust'|null;}
+export interface Save {inventory:Inventory;version:2;money:number;completed:QuestId[];rewarded:string[];flags:string[];route:Route|null;ending:Ending|null;implants:[Implant,Implant];active:ActiveQuest|null;occurrences:Record<string,number>;hour:number;nightChoice:'destroy'|'entrust'|null;}
 export const SAVE_KEY='deadline.signal-mort.v2';
-export function freshSave():Save{return{version:2,money:120,completed:[],rewarded:[],flags:[],route:null,ending:null,implants:['intrusion','lure'],active:null,occurrences:{},hour:21.6,nightChoice:null};}
+export function freshSave():Save{return{inventory:freshInventory(),version:2,money:120,completed:[],rewarded:[],flags:[],route:null,ending:null,implants:['intrusion','lure'],active:null,occurrences:{},hour:21.6,nightChoice:null};}
 export function decodeSave(raw:string|null,legacyRaw?:string|null):Save {
  try{
   if(!raw){if(!legacyRaw)return freshSave();const old=JSON.parse(legacyRaw);if(old.version!==1)return freshSave();const s=freshSave();s.money=Number.isFinite(old.money)&&old.money>=0?old.money:120;s.implants=Array.isArray(old.implants)&&old.implants.length===2&&old.implants.every((v:unknown)=>['intrusion','lure','overload'].includes(String(v)))&&old.implants[0]!==old.implants[1]?old.implants:s.implants;
@@ -39,7 +40,7 @@ export function decodeSave(raw:string|null,legacyRaw?:string|null):Save {
   const s=JSON.parse(raw)as Save;const implants=['intrusion','lure','overload'];
   if(s.version!==2||!Number.isFinite(s.money)||s.money<0||!Array.isArray(s.completed)||s.completed.some(id=>!QUEST_BY_ID[id])||!Array.isArray(s.rewarded)||s.rewarded.some(v=>typeof v!=='string')||!Array.isArray(s.flags)||s.flags.some(v=>typeof v!=='string')||!Array.isArray(s.implants)||s.implants.length!==2||s.implants.some(v=>!implants.includes(v))||![null,'nadia','sorel'].includes(s.route)||![null,'publish','restore'].includes(s.ending)||!Number.isFinite(s.hour)||s.hour<0||s.hour>=24||![null,'destroy','entrust'].includes(s.nightChoice)||!s.occurrences||typeof s.occurrences!=='object'||Object.values(s.occurrences).some(v=>!Number.isSafeInteger(v)||v<0))return freshSave();
   if(s.active&&(!QUEST_BY_ID[s.active.id]||!Number.isInteger(s.active.step)||s.active.step<0||s.active.step>=QUEST_BY_ID[s.active.id].steps.length||typeof s.active.offerId!=='string'||!Number.isFinite(s.active.elapsed)||s.active.elapsed<0))return freshSave();
-  return{...freshSave(),...s,completed:[...new Set(s.completed)],rewarded:[...new Set(s.rewarded)],flags:[...new Set(s.flags)]};
+  return{...freshSave(),...s,inventory:decodeInventory(s.inventory),completed:[...new Set(s.completed)],rewarded:[...new Set(s.rewarded)],flags:[...new Set(s.flags)]};
  }catch{return freshSave();}
 }
 export function resumeSave(save:Save):Save{return{...save,active:save.active?{...save.active,step:0,elapsed:0}:null};}
@@ -62,5 +63,5 @@ export function questPoint(s:Save):Vec3 {
  if(s.active){const q=QUEST_BY_ID[s.active.id],step=q.steps[s.active.step];return LOC[step.at];}
  const q=nextMain(s);return LOC[q?.giver||'garage'];
 }
-export function openGates(s:Save):Set<string>{const open=new Set(s.flags.filter(id=>id in GATES));if(s.route==='nadia')open.add('gallery');if(s.route==='sorel')open.add('badge');if(s.ending){open.add('gallery');open.add('badge');}return open;}
+export function openGates(s:Save):Set<string>{const open=new Set(s.flags.filter(id=>id in GATES));if(s.route==='nadia')open.add('gallery');if(s.route==='sorel')open.add('badge');if(s.ending){open.add('gallery');open.add('badge');}for(const home of s.inventory.homes)open.add(home);return open;}
 export const ENDINGS={publish:{title:'Registre public',text:'Les preuves expurgées sont publiques. Les relais de quartier délivrent des autorisations provisoires. Les contrôles Civis ferment. Nadia organise les corrections manuelles ; Mina garde son garage ouvert. Pour beaucoup, le droit d’entrer dépend enfin de ceux qui les connaissent.'},restore:{title:'Révocations annulées',text:'Les preuves d’audit annulent la purge et les droits sont restaurés. Les transports et les services rouvrent vite. Civis conserve les portiques, désormais surveillés par une cellule dont Sorel fait partie. Nadia restera là pour ceux que le registre ne reconnaît toujours pas.'}};

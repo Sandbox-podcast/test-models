@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { FORGES, ROAD_ROUTES, TRAFFIC_ROUTES, groundHeightAt } from './layout';
+import { FORGES, ROAD_JUNCTIONS, ROAD_ROUTES, TRAFFIC_ROUTES, groundHeightAt } from './layout';
 
 export type Point = { x: number; z: number };
+export type VehicleModel = 'compact' | 'sport' | 'van';
 
 export type Building = {
   name: string;
@@ -35,11 +36,15 @@ export type City = {
   cameraUnit: THREE.Group;
   cameraCone: THREE.Mesh;
   car: Vehicle;
+  playerVehicles: Vehicle[];
+  controlledVehicle: Vehicle | null;
   traffic: TrafficVehicle[];
+  pursuitVehicles: PursuitVehicle[];
   trafficRouteMeshes: THREE.Group[];
   servicePanel: THREE.Group;
   breakables: Breakable[];
   streetLights: THREE.PointLight[];
+  shaderMaterials: THREE.ShaderMaterial[];
   activityPhase: number;
   player: Character;
   floorPlane: THREE.Plane;
@@ -93,6 +98,13 @@ export type Vehicle = {
   yaw: number;
   speed: number;
   available: boolean;
+  model: VehicleModel;
+  modelName: string;
+  maxSpeed: number;
+  acceleration: number;
+  steering: number;
+  halfWidth: number;
+  halfLength: number;
   damageMarks: THREE.Mesh[];
   impactCount: number;
   contactHandles: Set<number>;
@@ -119,9 +131,35 @@ export type Citizen = {
   alive: boolean;
 };
 
-export type TrafficVehicle = Vehicle & { route: Point[]; routeIndex: number; direction: 1 | -1; cruiseSpeed: number; laneOffset: number; pauseUntil: number };
+export type TrafficVehicle = Vehicle & { route: Point[]; routeIndex: number; direction: 1 | -1; cruiseSpeed: number; laneOffset: number; baseLaneOffset: number; pauseUntil: number; hijacked: boolean; stuckSeconds: number };
+export type PursuitVehicle = Vehicle & { spawn: Point; active: boolean; route: Point[]; routeIndex: number; replanClock: number; stuckSeconds: number; lightbar: THREE.Group; lastSeenTarget: Point | null; lastSeenAt: number };
 
 export type Breakable = { mesh: THREE.Group; collider: RAPIER.Collider; kind: 'crate' | 'bollard'; durability: number; broken: boolean };
+
+export function trafficOccludesLine(city: City, from: Point, to: Point, observerHeight = 1.15, targetHeight = 1): boolean {
+  const length = Math.hypot(to.x - from.x, to.z - from.z);
+  if (length < .5) return false;
+  const steps = Math.ceil(length / .45);
+  const fromFloor = groundHeightAt(from);
+  const toFloor = groundHeightAt(to);
+  for (const vehicle of city.traffic) {
+    if (vehicle === city.controlledVehicle || vehicle.hijacked || !vehicle.available || !vehicle.group.visible) continue;
+    const carFloor = groundHeightAt({ x: vehicle.position.x, z: vehicle.position.z });
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const x = THREE.MathUtils.lerp(from.x, to.x, t);
+      const z = THREE.MathUtils.lerp(from.z, to.z, t);
+      const sightHeight = THREE.MathUtils.lerp(fromFloor + observerHeight, toFloor + targetHeight, t);
+      if (sightHeight < carFloor + .08 || sightHeight > carFloor + 1.5) continue;
+      const dx = x - vehicle.position.x;
+      const dz = z - vehicle.position.z;
+      const localX = Math.cos(vehicle.yaw) * dx + Math.sin(vehicle.yaw) * dz;
+      const localZ = -Math.sin(vehicle.yaw) * dx + Math.cos(vehicle.yaw) * dz;
+      if (Math.abs(localX) <= vehicle.halfWidth + .18 && Math.abs(localZ) <= vehicle.halfLength + .22) return true;
+    }
+  }
+  return false;
+}
 
 const MAT = {
   ground: new THREE.MeshStandardMaterial({ color: 0x20292a, roughness: 1 }),
@@ -346,30 +384,40 @@ function createCharacter(
   };
 }
 
-function createVehicle(scene: THREE.Scene, world: RAPIER.World, point: Point, color = 0x172e32): Vehicle {
+const VEHICLE_MODELS: Record<VehicleModel, { name: string; color: number; width: number; length: number; cabinHeight: number; maxSpeed: number; acceleration: number; steering: number }> = {
+  compact: { name: 'Compacte électrique', color: 0x253b3b, width: 1.48, length: 2.9, cabinHeight: .44, maxSpeed: 9.1, acceleration: 8.6, steering: 1.6 },
+  sport: { name: 'Sportive des Forges', color: 0x284b58, width: 1.62, length: 3.45, cabinHeight: .34, maxSpeed: 11.5, acceleration: 10.2, steering: 1.45 },
+  van: { name: 'Fourgon d’atelier', color: 0x6f5841, width: 1.82, length: 3.8, cabinHeight: .68, maxSpeed: 7.8, acceleration: 7.1, steering: 1.25 },
+};
+
+function createVehicle(scene: THREE.Scene, world: RAPIER.World, point: Point, color?: number, model: VehicleModel = 'compact'): Vehicle {
+  const spec = VEHICLE_MODELS[model];
+  const bodyColor = color ?? spec.color;
+  const halfWidth = spec.width / 2;
+  const halfLength = spec.length / 2;
   const group = new THREE.Group();
-  const chassisMat = new THREE.MeshStandardMaterial({ color, metalness: .45, roughness: .45 });
+  const chassisMat = new THREE.MeshStandardMaterial({ color: bodyColor, metalness: .45, roughness: .45 });
   const glass = new THREE.MeshStandardMaterial({ color: 0x326a70, emissive: 0x09272b, emissiveIntensity: 1.2, metalness: .2, roughness: .3 });
-  const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.48, .48, 2.9), chassisMat);
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(spec.width, .48, spec.length), chassisMat);
   chassis.position.y = .51;
   group.add(chassis);
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.12, .44, 1.22), glass);
-  cabin.position.set(0, .9, .12);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(spec.width * .76, spec.cabinHeight, spec.length * (model === 'van' ? .48 : .43)), glass);
+  cabin.position.set(0, .75 + spec.cabinHeight / 2, model === 'van' ? .14 : .06);
   group.add(cabin);
-  const hood = new THREE.Mesh(new THREE.BoxGeometry(1.28, .15, .65), new THREE.MeshStandardMaterial({ color: 0x29474a, metalness: .4, roughness: .4 }));
-  hood.position.set(0, .76, -1.02);
+  const hood = new THREE.Mesh(new THREE.BoxGeometry(spec.width * .86, .15, spec.length * .22), new THREE.MeshStandardMaterial({ color: model === 'sport' ? 0x367a80 : 0x29474a, metalness: .4, roughness: .4 }));
+  hood.position.set(0, .76, -spec.length * .34);
   group.add(hood);
   const headLamp = new THREE.Mesh(new THREE.BoxGeometry(.38, .09, .04), MAT.neonCyan);
-  headLamp.position.set(-.42, .5, -1.47);
+  headLamp.position.set(-halfWidth * .56, .5, -halfLength);
   group.add(headLamp);
   const headLamp2 = headLamp.clone();
-  headLamp2.position.x = .42;
+  headLamp2.position.x = halfWidth * .56;
   group.add(headLamp2);
-  const tail = new THREE.Mesh(new THREE.BoxGeometry(.68, .09, .04), MAT.neonPink);
-  tail.position.set(0, .5, 1.47);
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(spec.width * .54, .09, .04), MAT.neonPink);
+  tail.position.set(0, .5, halfLength);
   group.add(tail);
   const wheelMat = new THREE.MeshStandardMaterial({ color: 0x101617, roughness: 1 });
-  for (const x of [-.76, .76]) for (const z of [-.91, .91]) {
+  for (const x of [-halfWidth * .98, halfWidth * .98]) for (const z of [-halfLength * .64, halfLength * .64]) {
     const wheel = new THREE.Mesh(new THREE.CylinderGeometry(.31, .31, .19, 12), wheelMat);
     wheel.rotation.z = Math.PI / 2;
     wheel.position.set(x, .34, z);
@@ -377,15 +425,13 @@ function createVehicle(scene: THREE.Scene, world: RAPIER.World, point: Point, co
   }
   const damageMat = new THREE.MeshStandardMaterial({ color: 0x171a1a, roughness: .9, metalness: .1 });
   const damageMarks: THREE.Mesh[] = [];
-  for (const [x, z, rotationY] of [
-    [-.34, -1.48, 0], [.34, -1.48, 0], [0, -1.49, 0],
-    [-.76, -.65, Math.PI / 2], [-.76, .55, Math.PI / 2],
-    [.76, -.65, -Math.PI / 2], [.76, .55, -Math.PI / 2],
-    [-.34, 1.48, 0], [.34, 1.48, 0], [0, 1.49, 0],
-  ] as const) {
-    const mark = new THREE.Mesh(new THREE.BoxGeometry(.26, .17, .035), damageMat);
+  for (const [side, end, segment] of [[-1, -1, -.22], [1, -1, -.22], [0, -1, -.23], [-1, 0, -.16], [-1, 0, .16], [1, 0, -.16], [1, 0, .16], [-1, 1, -.22], [1, 1, -.22], [0, 1, -.23]] as const) {
+    const isSide = end === 0;
+    const x = isSide ? side * halfWidth : side * halfWidth * .48;
+    const z = isSide ? segment * halfLength * 1.65 : end * (halfLength + .015);
+    const mark = new THREE.Mesh(new THREE.BoxGeometry(isSide ? .035 : .26, .17, isSide ? .23 : .035), damageMat);
     mark.position.set(x, .53, z);
-    mark.rotation.y = rotationY;
+    if (isSide) mark.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2;
     mark.visible = false;
     group.add(mark);
     damageMarks.push(mark);
@@ -394,11 +440,35 @@ function createVehicle(scene: THREE.Scene, world: RAPIER.World, point: Point, co
   group.position.set(point.x, groundY, point.z);
   scene.add(group);
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(point.x, groundY + .57, point.z));
-  const collider = world.createCollider(RAPIER.ColliderDesc.cuboid(.8, .52, 1.5).setFriction(.25), body);
+  const collider = world.createCollider(RAPIER.ColliderDesc.cuboid(halfWidth + .06, .52, halfLength + .06).setFriction(.25), body);
   const controller = world.createCharacterController(.06);
   controller.setMaxSlopeClimbAngle(.45);
   controller.setMinSlopeSlideAngle(1.1);
-  return { group, body, collider, controller, position: v(point.x, groundY + .57, point.z), yaw: 0, speed: 0, available: true, damageMarks, impactCount: 0, contactHandles: new Set() };
+  return {
+    group, body, collider, controller, position: v(point.x, groundY + .57, point.z), yaw: 0, speed: 0,
+    available: true, model, modelName: spec.name, maxSpeed: spec.maxSpeed, acceleration: spec.acceleration, steering: spec.steering,
+    halfWidth, halfLength, damageMarks, impactCount: 0, contactHandles: new Set(),
+  };
+}
+
+function createPursuitVehicle(scene: THREE.Scene, world: RAPIER.World, spawn: Point, index: number): PursuitVehicle {
+  const vehicle = createVehicle(scene, world, spawn, index ? 0x263545 : 0x3c333b, 'compact');
+  const driverJacket = new THREE.Mesh(new THREE.BoxGeometry(.42, .34, .3), MAT.guardArmor);
+  driverJacket.position.set(.18, .78, .06);
+  const driverHead = new THREE.Mesh(new THREE.SphereGeometry(.14, 8, 6), MAT.guard);
+  driverHead.position.set(.18, 1.03, .06);
+  vehicle.group.add(driverJacket, driverHead);
+  const lightbar = new THREE.Group();
+  lightbar.position.set(0, 1.15, .08);
+  const red = new THREE.Mesh(new THREE.BoxGeometry(.34, .13, .26), new THREE.MeshBasicMaterial({ color: 0xff3658 }));
+  const blue = new THREE.Mesh(new THREE.BoxGeometry(.34, .13, .26), new THREE.MeshBasicMaterial({ color: 0x48d9ff }));
+  red.position.x = -.22;
+  blue.position.x = .22;
+  lightbar.add(red, blue);
+  vehicle.group.add(lightbar);
+  vehicle.group.visible = false;
+  vehicle.collider.setEnabled(false);
+  return { ...vehicle, spawn: { ...spawn }, active: false, route: [], routeIndex: 0, replanClock: 0, stuckSeconds: 0, lightbar, lastSeenTarget: null, lastSeenAt: -1000 };
 }
 
 function addRoad(
@@ -507,7 +577,7 @@ function addBarrier(
   return boxMesh(scene, world, blockers, { ...point, y }, size, material, true);
 }
 
-function addStreetLight(scene: THREE.Scene, position: Point, groundY: number, color: number, streetLights: THREE.PointLight[], seed: number): void {
+function addStreetLight(scene: THREE.Scene, position: Point, groundY: number, color: number, streetLights: THREE.PointLight[], shaderMaterials: THREE.ShaderMaterial[], seed: number): void {
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(.08, .12, 5.2, 7), MAT.concrete);
   pole.position.set(position.x, groundY + 2.6, position.z);
   scene.add(pole);
@@ -524,6 +594,19 @@ function addStreetLight(scene: THREE.Scene, position: Point, groundY: number, co
   streetLights.push(light);
   scene.add(light);
   addStaticCircle(scene, position.x, position.z, 3.2, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .035, depthWrite: false }), groundY + .012);
+  const haloMaterial = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(color) } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform float uTime; uniform vec3 uColor; varying vec2 vUv; void main(){ float d = length(vUv - vec2(0.5)) * 2.0; float edge = 1.0 - smoothstep(0.08, 1.0, d); float pulse = 0.72 + 0.18 * sin(uTime * 1.7 + vUv.x * 8.0); gl_FragColor = vec4(uColor, edge * pulse * 0.24); }`,
+  });
+  const halo = new THREE.Mesh(new THREE.CircleGeometry(2.6, 32), haloMaterial);
+  halo.rotation.x = -Math.PI / 2;
+  halo.position.set(position.x, groundY + .055, position.z);
+  scene.add(halo);
+  shaderMaterials.push(haloMaterial);
 }
 
 export function showVehicleDamage(vehicle: Vehicle, side: 'front' | 'rear' | 'left' | 'right', severity: number): void {
@@ -603,6 +686,7 @@ export function buildCity(container: HTMLElement, world: RAPIER.World): City {
   const blocks: THREE.Object3D[] = [];
   const buildings: Building[] = [];
   const streetLights: THREE.PointLight[] = [];
+  const shaderMaterials: THREE.ShaderMaterial[] = [];
   const breakables: Breakable[] = [];
 
   // The bible uses the north-west map corner as (0,0). The upper block is a real +6m deck.
@@ -685,6 +769,17 @@ export function buildCity(container: HTMLElement, world: RAPIER.World): City {
   buildings.push(createBuilding(scene, world, blocks, 'Entrepôt bas', { x: 35, z: 87.5 }, 20, 6.5, 4.7, 0x504e48, { door: 'south', groundY: 0 }));
   buildings.push(createBuilding(scene, world, blocks, 'Maisons des remises', { x: 63, z: 91.5 }, 22.75, 8.75, 5.1, 0x625f57, { door: 'south', groundY: 0 }));
   buildings.push(createBuilding(scene, world, blocks, 'Remises de l’Houmeau', { x: 94, z: 91 }, 22.75, 7.75, 4.5, 0x5b5147, { door: 'south', groundY: 0 }));
+  // Low furniture makes the two homes readable while leaving a clear path through each south door.
+  const furniture = new THREE.MeshStandardMaterial({ color: 0x59483b, roughness: .82 });
+  const upholstery = new THREE.MeshStandardMaterial({ color: 0x54726d, roughness: .9 });
+  for (const [x, z, sx, sy, sz, material] of [
+    [57, 89, 2.7, .36, 1.55, furniture], [57, 89.82, 2.7, .08, 1.55, upholstery],
+    [70, 89.4, 2.5, .5, 1.25, furniture], [68.5, 92.3, 1.3, .72, .9, furniture],
+    [88, 89, 2.8, .36, 1.55, furniture], [88, 89.82, 2.8, .08, 1.55, upholstery],
+    [101, 89.2, 2.4, .52, 1.35, furniture], [99.5, 92.1, 1.3, .72, .9, furniture],
+  ] as const) {
+    boxMesh(scene, world, blocks, { x, z, y: .065 + sy / 2 }, { x: sx, y: sy, z: sz }, material, true);
+  }
 
   // Courtyard enclosure: 8m north entrance, depot-side door and the southern hackable grille.
   addBarrier(scene, world, blocks, { x: 108, z: 42.5 }, { x: 8, y: 1.8, z: .3 }, 6.9, MAT.wall);
@@ -792,7 +887,7 @@ export function buildCity(container: HTMLElement, world: RAPIER.World): City {
     [146, 97, 0xffbd72], [123, 87, 0x75d5b6], [106, 107, 0xffbd72], [68, 109, 0x78d4cf],
     [35, 101, 0xffbd72], [37.5, 40.8, 0xffbd72], [125, 62, 0x75d5b6],
   ];
-  streetLightPositions.forEach(([x, z, color], index) => addStreetLight(scene, { x, z }, groundHeightAt({ x, z }), color, streetLights, index * .83));
+  streetLightPositions.forEach(([x, z, color], index) => addStreetLight(scene, { x, z }, groundHeightAt({ x, z }), color, streetLights, shaderMaterials, index * .83));
 
   const mina = new THREE.Group();
   const minaBody = new THREE.Mesh(new THREE.CapsuleGeometry(.34, .54, 3, 8), MAT.neonPink);
@@ -816,7 +911,12 @@ export function buildCity(container: HTMLElement, world: RAPIER.World): City {
 
   const chip = createPackage(scene, FORGES.chip, 0x54f1dc, .7);
   const secondaryPackage = createPackage(scene, FORGES.package, 0xf1b66c, .82);
-  const car = createVehicle(scene, world, FORGES.carStart, 0x253b3b);
+  const playerVehicles = [
+    createVehicle(scene, world, FORGES.carStart, undefined, 'compact'),
+    createVehicle(scene, world, { x: 21.5, z: 54 }, undefined, 'sport'),
+    createVehicle(scene, world, { x: 42.5, z: 54 }, undefined, 'van'),
+  ];
+  const car = playerVehicles[0];
   car.yaw = 0;
   car.group.rotation.y = car.yaw;
   const guards: Guard[] = [
@@ -870,14 +970,20 @@ export function buildCity(container: HTMLElement, world: RAPIER.World): City {
     const dx = route[1].x - route[0].x;
     const dz = route[1].z - route[0].z;
     const length = Math.hypot(dx, dz) || 1;
-    const laneOffset = index === 0 ? 1.9 : index === 1 ? -1.9 : 1.9;
+    const laneOffset = 1.9;
     const start = { x: route[0].x + dz / length * laneOffset, z: route[0].z - dx / length * laneOffset };
     const vehicle = createVehicle(scene, world, start, [0x655445, 0x35565c, 0x76604a][index]);
     const next = route[1];
     vehicle.yaw = Math.atan2(-(next.x - start.x), -(next.z - start.z));
     vehicle.group.rotation.y = vehicle.yaw;
-    return { ...vehicle, route: [...route], routeIndex: 1, direction: 1, cruiseSpeed: 4.2 + index * .55, laneOffset, pauseUntil: 0 };
+    return { ...vehicle, route: [...route], routeIndex: 1, direction: 1, cruiseSpeed: 4.2 + index * .55, laneOffset, baseLaneOffset: laneOffset, pauseUntil: 0, hijacked: false, stuckSeconds: 0 };
   });
+  const pursuitVehicles: PursuitVehicle[] = [
+    createPursuitVehicle(scene, world, { x: 9, z: 39 }, 0),
+    createPursuitVehicle(scene, world, { x: 79, z: 29 }, 1),
+    createPursuitVehicle(scene, world, { x: 132, z: 39 }, 2),
+    createPursuitVehicle(scene, world, { x: 108, z: 39 }, 3),
+  ];
 
   const decoys: THREE.Group[] = [];
   for (let i = 0; i < 5; i++) {
@@ -908,8 +1014,8 @@ export function buildCity(container: HTMLElement, world: RAPIER.World): City {
   const player = createCharacter(scene, world, FORGES.playerStart, MAT.player);
   const city: City = {
     scene, camera, renderer, bridgeDeck, railDeck, blockers: blocks, buildings, gateMesh, shortcutMesh, chip, secondaryPackage,
-    mina, minaTag, guards, citizens, cameraUnit, cameraCone, car, traffic, trafficRouteMeshes: [], servicePanel, breakables,
-    streetLights, activityPhase: -1, player, floorPlane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -6),
+    mina, minaTag, guards, citizens, cameraUnit, cameraCone, car, playerVehicles, controlledVehicle: null, traffic, pursuitVehicles, trafficRouteMeshes: [], servicePanel, breakables,
+    streetLights, shaderMaterials, activityPhase: -1, player, floorPlane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -6),
     aimRay: new THREE.Raycaster(), decoys, bloodMarks, particles, particlePositions, particleLife,
     buildingsByName: new Map(buildings.map((building) => [building.name, building])),
     navGrid: { blocked: [], heights: new Float32Array(), minX: -3, minZ: -3, step: 1.5, width: 125, height: 83 },
@@ -987,6 +1093,7 @@ export function flashBlood(city: City, point: Point, now: number): void {
 }
 
 export function animateEffects(city: City, dt: number, now: number): void {
+  for (const material of city.shaderMaterials) material.uniforms.uTime.value = now;
   for (let i = 0; i < city.particleLife.length; i++) {
     if (city.particleLife[i] <= 0) continue;
     city.particleLife[i] -= dt;
@@ -1097,6 +1204,10 @@ export function updateForgesLife(city: City, dt: number, now: number, player: Po
   }
 
   for (const vehicle of city.traffic) {
+    if (vehicle.hijacked || vehicle === city.controlledVehicle) {
+      vehicle.collider.setEnabled(true);
+      continue;
+    }
     const lanePoint = (index: number): Point => {
       const previous = vehicle.route[Math.max(0, index - 1)];
       const next = vehicle.route[Math.min(vehicle.route.length - 1, index + 1)];
@@ -1106,11 +1217,11 @@ export function updateForgesLife(city: City, dt: number, now: number, player: Po
       const point = vehicle.route[index];
       return { x: point.x + dz / length * vehicle.laneOffset, z: point.z - dx / length * vehicle.laneOffset };
     };
-    const target = lanePoint(vehicle.routeIndex);
-    const toX = target.x - vehicle.position.x;
-    const toZ = target.z - vehicle.position.z;
-    const distance = Math.hypot(toX, toZ);
-    if (distance < 2.3) {
+    let target = lanePoint(vehicle.routeIndex);
+    let toX = target.x - vehicle.position.x;
+    let toZ = target.z - vehicle.position.z;
+    let distance = Math.hypot(toX, toZ);
+    while (distance < 2.3) {
       const nextIndex = vehicle.routeIndex + vehicle.direction;
       if (nextIndex >= vehicle.route.length) {
         vehicle.direction = -1;
@@ -1121,13 +1232,59 @@ export function updateForgesLife(city: City, dt: number, now: number, player: Po
       } else {
         vehicle.routeIndex = nextIndex;
       }
-      vehicle.pauseUntil = now + .12;
-      continue;
+      target = lanePoint(vehicle.routeIndex);
+      toX = target.x - vehicle.position.x;
+      toZ = target.z - vehicle.position.z;
+      distance = Math.hypot(toX, toZ);
     }
-    const nearPlayer = Math.hypot(vehicle.position.x - player.x, vehicle.position.z - player.z) < 6.5;
-    const nearTraffic = city.traffic.some((other) => other !== vehicle && Math.hypot(other.position.x - vehicle.position.x, other.position.z - vehicle.position.z) < 2.3);
+    const playerDistance = Math.hypot(vehicle.position.x - player.x, vehicle.position.z - player.z);
+    const playerOnSameLevel = Math.abs(groundHeightAt(player) - groundHeightAt({ x: vehicle.position.x, z: vehicle.position.z })) < 1.4;
+    const nearPlayer = playerOnSameLevel && playerDistance < 8.5;
+    const controlled = city.controlledVehicle;
+    const controlledDistance = controlled && Math.abs(groundHeightAt({ x: controlled.position.x, z: controlled.position.z }) - groundHeightAt({ x: vehicle.position.x, z: vehicle.position.z })) < 1.4
+      ? Math.hypot(controlled.position.x - vehicle.position.x, controlled.position.z - vehicle.position.z)
+      : Number.POSITIVE_INFINITY;
+    const yieldingForPlayer = controlledDistance < 11 || !controlled && nearPlayer;
+    let yieldSide = Math.sign(vehicle.baseLaneOffset);
+    if (yieldingForPlayer) {
+      const a = vehicle.route[Math.max(0, vehicle.routeIndex - 1)];
+      const b = vehicle.route[Math.min(vehicle.route.length - 1, vehicle.routeIndex + 1)];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const length = Math.hypot(dx, dz) || 1;
+      const normalX = dz / length;
+      const normalZ = -dx / length;
+      const yieldingTarget = controlledDistance < 11 && controlled ? controlled.position : player;
+      const playerSide = (yieldingTarget.x - vehicle.position.x) * normalX + (yieldingTarget.z - vehicle.position.z) * normalZ;
+      yieldSide = playerSide >= 0 ? -1 : 1;
+    }
+    const desiredLaneOffset = yieldingForPlayer ? yieldSide * 4.25 : vehicle.baseLaneOffset * vehicle.direction;
+    vehicle.laneOffset = THREE.MathUtils.damp(vehicle.laneOffset, desiredLaneOffset, yieldingForPlayer ? 4.4 : 1.7, dt);
+    target = lanePoint(vehicle.routeIndex);
+    toX = target.x - vehicle.position.x;
+    toZ = target.z - vehicle.position.z;
+    distance = Math.hypot(toX, toZ);
+    const atJunction = ROAD_JUNCTIONS.some((junction) => Math.hypot(junction.point.x - vehicle.position.x, junction.point.z - vehicle.position.z) < 5.6);
+    const headingX = -Math.sin(vehicle.yaw);
+    const headingZ = -Math.cos(vehicle.yaw);
+    const nearbyVehicles: Vehicle[] = [
+      ...city.traffic.filter((other) => other !== vehicle && other.collider.isEnabled()),
+      ...city.playerVehicles.filter((other) => other.available && other.collider.isEnabled()),
+      ...city.pursuitVehicles.filter((other) => other.active),
+      ...(controlled && controlled !== vehicle ? [controlled] : []),
+    ];
+    const vehicleAhead = nearbyVehicles.map((other) => {
+      const dx = other.position.x - vehicle.position.x;
+      const dz = other.position.z - vehicle.position.z;
+      const ahead = dx * headingX + dz * headingZ;
+      const side = Math.abs(dx * headingZ - dz * headingX);
+      return { other, ahead, side, gap: ahead - vehicle.halfLength - other.halfLength };
+    }).filter((entry) => entry.ahead > 0 && entry.gap < 8 && entry.side < vehicle.halfWidth + entry.other.halfWidth + .6)
+      .sort((a, b) => a.gap - b.gap)[0];
     const nearCitizen = city.citizens.some((person) => person.alive && Math.hypot(person.position.x - vehicle.position.x, person.position.z - vehicle.position.z) < 2.6);
-    const desiredSpeed = now < vehicle.pauseUntil || (nearTraffic && distance < 5) ? 0 : nearPlayer || nearCitizen ? Math.min(2.1, vehicle.cruiseSpeed) : vehicle.cruiseSpeed;
+    let desiredSpeed = now < vehicle.pauseUntil ? 0 : nearPlayer ? Math.min(2.1, vehicle.cruiseSpeed) : nearCitizen ? Math.min(2.7, vehicle.cruiseSpeed) : vehicle.cruiseSpeed;
+    if (vehicleAhead && !atJunction) desiredSpeed = Math.min(desiredSpeed, Math.max(0, Math.min(vehicleAhead.other.speed, vehicle.cruiseSpeed) + (vehicleAhead.gap - 2.8) * .95));
+    if (atJunction) desiredSpeed = Math.max(1.35, desiredSpeed);
     vehicle.speed = THREE.MathUtils.damp(vehicle.speed, desiredSpeed, 1.8, dt);
     if (vehicle.speed < .15) continue;
     const desiredYaw = Math.atan2(-toX, -toZ);
@@ -1141,7 +1298,9 @@ export function updateForgesLife(city: City, dt: number, now: number, player: Po
     const nextFloor = groundHeightAt({ x: vehicle.position.x + moveX, z: vehicle.position.z + moveZ });
     vehicle.controller.computeColliderMovement(vehicle.collider, { x: moveX, y: nextFloor - oldFloor, z: moveZ });
     const moved = vehicle.controller.computedMovement();
-      if (Math.hypot(moved.x - moveX, moved.z - moveZ) > .001) {
+    const movedDistance = Math.hypot(moved.x, moved.z);
+    const clipped = Math.hypot(moved.x - moveX, moved.z - moveZ) > .001;
+    if (clipped) {
       const freshContacts = new Set<number>();
       for (let i = 0; i < vehicle.controller.numComputedCollisions(); i++) {
         const collision = vehicle.controller.computedCollision(i);
@@ -1165,10 +1324,17 @@ export function updateForgesLife(city: City, dt: number, now: number, player: Po
         }
       }
       vehicle.contactHandles = freshContacts;
-      vehicle.speed *= .18;
-      vehicle.pauseUntil = now + .5;
+      vehicle.stuckSeconds += dt;
+      if (vehicle.stuckSeconds > .75) vehicle.laneOffset = Math.sign(vehicle.baseLaneOffset) * 4.25;
+      if (vehicle.stuckSeconds > 2.2 && vehicle.routeIndex > 0 && vehicle.routeIndex < vehicle.route.length - 1) {
+        vehicle.routeIndex += vehicle.direction;
+        vehicle.stuckSeconds = 0;
+      }
+      vehicle.speed *= atJunction ? .62 : .28;
+      vehicle.pauseUntil = now + (atJunction ? .04 : .18);
     } else {
       vehicle.contactHandles.clear();
+      if (movedDistance > .005) vehicle.stuckSeconds = Math.max(0, vehicle.stuckSeconds - dt * 2);
     }
     vehicle.position.x += moved.x;
     vehicle.position.z += moved.z;

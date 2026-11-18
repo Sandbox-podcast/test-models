@@ -1,26 +1,41 @@
 import * as T from 'three';
 import {
   bounds, carSpawn, chip, clamp, distance, districtAt, elevation, exchange,
-  garage, gates, inRect, patrols, rooms, sensors, spawn, type Point, type Patrol, type Sensor,
+  garage, gates, inRect, onTunnelStairs, patrols, rooms, sensors, spawn, type Point, type Patrol, type Sensor,
 } from './level';
-import { Physics, step, type Contact } from './physics';
+import { insideCity, Physics, step, type Contact } from './physics';
 import { City, Effects, makeCamera, makeCar, makeDrone, PersonModel, sightCone, type CarModel, type CarSide } from './visuals';
 import { furniture } from './furniture';
 import { civilFlows, populationPeriod, type CivilFlow } from './population';
 import { Traffic } from './traffic';
 import { places as p } from './places';
 import { Sound } from './sound';
+import { startingAmmo, weaponIds, weapons, type WeaponId } from './arsenal';
+import { showroom, streetVehicles, vehicleClasses, vehicleIds, type VehicleClass, type VehicleId } from './fleet';
+import { Lighting } from './lighting';
+import { onStreet } from './roads';
+import { homes, venues, type HomeId, type VenueId } from './venues';
+import { Pursuit } from './pursuit';
+import { activityIds, activitySpec, type ActivityId, type ActivityRun } from './activities';
 import {
   effects, finishSide as awardSide, getSide, implants, nadiaPlateau, newGame, objectives,
   readSave, sideAvailable, sideIds, writeSave, type ActionStep, type BlackmailChoice,
   type Chapter, type Ending, type Implant, type Route, type Save, type SideId,
 } from './progression';
 
-type Intent = 'garage' | 'brief' | 'progress' | 'offers' | 'offer' | 'sorel' | 'ada' | 'dialogue' | 'car';
-type Interaction = { action:Intent; at:Point; label:string; range?:number; side?:SideId; person?:string };
+type Intent = 'garage' | 'brief' | 'progress' | 'offers' | 'offer' | 'sorel' | 'ada' | 'dialogue' | 'car' | 'venue' | 'activity';
+type Interaction = { action:Intent; at:Point; label:string; range?:number; side?:SideId; person?:string; vehicle?:string; venue?:VenueId };
 export type Pin = { at:Point; label:string; kind:'goal'|'route'|'car' };
 export type Objective = { name:string; text:string; pins:Pin[] };
-export type Menu = 'garage'|'brief'|'offer'|'offers'|'route'|'ending'|'failed'|'epilogue'|'dialogue'|'side-choice';
+export type Menu = 'garage'|'brief'|'offer'|'offers'|'route'|'ending'|'failed'|'epilogue'|'dialogue'|'side-choice'|'venue'|'arsenal'|'activities'|'activity';
+type DrivenVehicle = {
+  id:string; name:string; kind:VehicleClass; owned?:VehicleId; bay:Point; facing:number;
+  at:Point; previous:Point; yaw:number; lastYaw:number; speed:number; model:CarModel;
+};
+const createVehicle=(id:string, kind:VehicleClass, at:Point, yaw:number, color?:string, name?:string, owned?:VehicleId):DrivenVehicle=>({
+  id,name:name??vehicleClasses[kind].name,kind,owned,bay:at,facing:yaw,at,previous:at,yaw,lastYaw:yaw,speed:0,
+  model:makeCar(color??vehicleClasses[kind].color,kind),
+});
 type Actor = { at:Point; previous:Point; yaw:number; health:number; hit:number; fall:number; model:PersonModel|T.Group; stride:number; momentum:Point };
 type Guard = Actor & {
   spec: Patrol; cone: ReturnType<typeof sightCone>; state:'patrol'|'investigate'|'pursue'|'search';
@@ -37,6 +52,8 @@ type Observer = 'camera' | 'guard' | 'drone';
 const canvasLook = new T.Vector3(0, 56, 29);
 const initialYaw = Math.PI;
 const center: Point = [bounds.east, bounds.south];
+const recoveryFallback:Point[]=[spawn,[-26,23],[-22,23],[-20,23],[-15,23],[-25,9],
+  ...Array.from({length:41},(_,i)=>[-45+i*2,2] as Point)];
 const publicService:Point[]=[[184.8,8.1],[190.4,9.6],[195.4,10.4],[197.3,11.3]];
 const redeployedWorkers:Point[]=[[199,-6.8],[210.1,-6.9],[216.1,-7.2],[219.8,-5.6]];
 const combine = (a: Point, b: Point, t: number): Point => [T.MathUtils.lerp(a[0], b[0], t), T.MathUtils.lerp(a[1], b[1], t)];
@@ -66,12 +83,16 @@ export class Game {
   readonly camera = new T.OrthographicCamera();
   readonly renderer: T.WebGLRenderer;
   readonly physics = new Physics();
+  readonly police = new Pursuit(this.scene,this.physics);
   readonly city = new City(this.scene);
+  readonly lighting = new Lighting(this.scene);
   readonly traffic = new Traffic(this.scene, this.physics);
   readonly sound = new Sound();
   readonly effects = new Effects(this.scene);
   readonly player = actor(spawn, new PersonModel('#9ccc79', 'player'));
-  readonly car = { at: carSpawn, previous: carSpawn, yaw: initialYaw, lastYaw: initialYaw, speed: 0, model: makeCar() };
+  private readonly starter=createVehicle('player-car','sedan',carSpawn,initialYaw,undefined,'Voiture de Mina');
+  private readonly fleet=new Map<string,DrivenVehicle>();
+  private selectedCar=this.starter;
   readonly keys = new Set<string>();
   readonly guards: Guard[] = [];
   readonly civils: Civil[] = [];
@@ -82,9 +103,18 @@ export class Game {
   paused = false;
   driven = false;
   failed = false;
+  policeArrested=false;
   stage = 0;
   selectedSide: SideId = 'U01';
   dialoguePerson = 'Inès';
+  venueId:VenueId='armory';
+  destination?:Pin;
+  activity:ActivityRun|null=null;
+  activityId:ActivityId='sprint';
+  private crimeReported=-100;
+  private readonly activityMarker: T.Group;
+  private readonly activityStarts=new Map<ActivityId,T.Group>();
+  private readonly shuttlePassenger=home('#9ce4c1',[109,17.6]);
   routeContact: Route = 'collective';
   confirmed = false;
   observation = 0;
@@ -100,8 +130,11 @@ export class Game {
   cooldown: Record<Implant, number> = { intrusion: 0, decoy: 0, overload: 0 };
   private lastVehicleContact?: string;
   private clearanceSinceContact = 0;
-  private readonly parkedModels = new Map<string, CarModel>();
   private gun = 0;
+  reloadLeft = 0;
+  private dryFire=false;
+  private safeFoot:Point[]=[spawn];
+  private recoveryClock=0;
   private heat = -100;
   private alarm = false;
   private readonly hacked = new Set<string>();
@@ -132,24 +165,30 @@ export class Game {
     this.renderer.toneMapping = T.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
     this.scene.fog = new T.Fog('#263b4d', 79, 170);
-    this.scene.add(new T.HemisphereLight('#bfd8ef', '#75696b', 1.82));
-    const moon = new T.DirectionalLight('#b9d7fa', 1.48);
-    moon.position.set(-24, 38, 29);
-    this.scene.add(moon);
-    this.scene.add(position(this.player),this.car.model,this.mina,this.minaExchange,this.nadiaPlateau,this.communityDesk,
+    this.scene.add(position(this.player),this.mina,this.minaExchange,this.nadiaPlateau,this.communityDesk,
       position(this.escort),home('#a4c6e7',p.recordsSorel),home('#9bd3a7',p.nadia),home('#a1c6f6',p.sorel),
       home('#a1c6f6',p.plateauSorel),home('#bc85a7',p.lise),home('#d69b85',p.keeper),
       home('#c9b49b',p.paperOwner),home('#c8ab91',p.varenne));
-    for (const [index, [at, yaw, tint]] of ([
-      [[-49, -16], .03, '#756564'], [[33, 38], -1.55, '#5f6682'], [[96, 39], 1.57, '#695965'], [[219, 10], Math.PI, '#536471'],
-    ] as [Point, number, string][]).entries()) {
-      const model = makeCar(tint);
-      model.position.set(at[0], elevation(...at), at[1]);
-      model.rotation.y = yaw;
-      this.scene.add(model);
-      const id = 'parked-' + index;
-      this.parkedModels.set(id, model);
-      this.physics.addVehicle(id, at, yaw);
+    const cars=[this.starter,...streetVehicles.map(v=>createVehicle(v.id,v.kind,v.at,v.yaw,v.tint,v.name)),
+      ...vehicleIds.map(id=>{const v=showroom[id];return createVehicle(id,v.kind,v.at,v.yaw,undefined,v.name,id);})];
+    for (const car of cars) {
+      this.scene.add(car.model);
+      this.fleet.set(car.id,car);
+      this.physics.addVehicle(car.id,car.at,car.yaw,car.kind);
+    }
+    for(const id of activityIds){
+      const group=this.makeActivityMarker(1.25,'#efb478'), {start}=activitySpec(id);
+      group.position.set(start[0],elevation(...start)+.065,start[1]);
+      this.scene.add(group);this.activityStarts.set(id,group);
+    }
+    this.activityMarker=this.makeActivityMarker(2.5,'#fae18c');
+    this.scene.add(this.activityMarker,this.shuttlePassenger);
+    for (const venue of venues) {
+      if(venue.kind==='home') continue;
+      const [x,z]=venue.use;
+      const actor=home(venue.accent,[x,z-2.95]);
+      this.scene.add(actor);
+      if(venue.id==='market') this.marketHost=actor;
     }
     const terminals = [
       ['chip',chip,'#e8eea2'],['calendar',p.calendar,'#f5d199'],['portico',p.portico,'#9fd0be'],
@@ -198,16 +237,20 @@ export class Game {
       this.cameras.push({ spec, view, cone, charge: 0, disabled: 0, yaw: spec.angle });
     }
     this.resetScene();
-    this.view.set(spawn[0], elevation(...spawn), spawn[1] - 2);
     window.addEventListener('resize', () => { this.resizeNeeded = true; });
     this.frame = performance.now();
     requestAnimationFrame(this.animate);
   }
 
+  private marketHost?:T.Group;
+  get car(){return this.selectedCar;}
   get at() { return this.driven ? this.car.at : this.player.at; }
+  get venue(){return venues.find(venue=>venue.id===this.venueId)!;}
+  get weapon(){return weapons[this.save.arsenal.equipped];}
+  get ammo(){return this.save.arsenal.ammo[this.save.arsenal.equipped]!;}
   get received() { return this.save.chapter > 1; }
   get active() { return this.save.checkpoint === this.save.chapter && !this.save.ending; }
-  get busy() { return this.active || this.save.side !== null; }
+  get busy() { return this.active || this.save.side !== null || this.activity!==null; }
   get loot() { return this.stage > 0; }
   get offerIds() { return sideIds.filter(id=>sideAvailable(this.save,id)); }
   get missionContact() {
@@ -252,6 +295,201 @@ export class Game {
   notice(message: string, duration = 3.25) {
     this.message = message;
     this.messageTime = duration;
+  }
+
+  private availableCar(car:DrivenVehicle) { return !car.owned||this.save.vehicles.includes(car.owned); }
+
+  markVenue(id:VenueId) {
+    const venue=venues.find(v=>v.id===id)!;
+    this.destination=waypoint(venue.entrance,venue.name,'route');
+  }
+
+  private makeActivityMarker(radius:number,tint:string){
+    const group=new T.Group();
+    const ring=new T.Mesh(new T.RingGeometry(radius-.14,radius,40),new T.MeshBasicMaterial({color:tint,transparent:true,opacity:.86,depthWrite:false}));
+    ring.rotation.x=-Math.PI/2;
+    const pin=new T.Mesh(new T.OctahedronGeometry(.26),new T.MeshBasicMaterial({color:tint}));
+    pin.position.y=1.15;
+    group.add(ring,pin);
+    return group;
+  }
+
+  get activityStop(){return this.activity?activitySpec(this.activity.id).stops[this.activity.step]:undefined;}
+  get activityRemaining(){return this.activity?Math.max(0,activitySpec(this.activity.id).time-(this.time-this.activity.started)):0;}
+  get nearbyActivity(){
+    if(this.busy) return;
+    return activityIds.find(id=>{
+      const spec=activitySpec(id);
+      return distance(this.at,spec.start)<(this.driven?6:3.5)&&Math.abs(elevation(...this.at)-elevation(...spec.start))<1.9;
+    });
+  }
+
+  markActivity(id:ActivityId){
+    const spec=activitySpec(id);
+    this.destination=waypoint(spec.start,spec.name,'route');
+  }
+
+  activitiesMenu(){
+    if(!this.running||this.paused||this.failed) return;
+    const id=this.activity?.id??this.nearbyActivity;
+    if(id) this.showActivity(id);
+    else this.onMenu('activities');
+  }
+
+  showActivity(id:ActivityId){
+    this.activityId=id;this.onMenu('activity');
+  }
+
+  canStartActivity(id:ActivityId){
+    return this.nearbyActivity===id && this.driven===activitySpec(id).vehicle && (!this.driven||Math.abs(this.car.speed)<3.2) && !this.police.level;
+  }
+
+  startActivity(id:ActivityId){
+    if(!this.canStartActivity(id)) return;
+    this.activity={id,step:0,started:this.time,stationary:0,condition:100,car:this.driven?this.car.id:null};
+    this.destination=undefined;
+    this.sound.beep(625,.21,.16,866);
+    this.notice(activitySpec(id).name+' · départ');
+  }
+
+  cancelActivity(message='Activité abandonnée.'){
+    if(!this.activity) return;
+    this.activity=null;this.notice(message);
+  }
+
+  private advanceActivity(){
+    const run=this.activity;
+    if(!run) return;
+    const spec=activitySpec(run.id),at=spec.stops[run.step].at;
+    this.effects.pulse(at,run.id==='photos'?'#a8ddff':'#ffdf96',.58);
+    this.sound.beep(645+run.step*24,.19,.11);
+    run.step++;run.stationary=0;
+    if(run.step<spec.stops.length){this.notice(spec.stops[run.step].label,1.9);return;}
+    this.activity=null;
+    const seconds=Math.max(.01,Math.round((this.time-run.started)*100)/100);
+    const older=this.save.activities[run.id], best=Math.min(older?.best??Infinity,seconds);
+    this.save.activities[run.id]={count:(older?.count??0)+1,best};
+    const bonus=spec.cargo?Math.round(75*run.condition/100):0;
+    this.save.credits+=spec.reward+bonus;
+    this.persist();
+    this.notice(`${spec.name} terminé · +${spec.reward+bonus} ₡${best===seconds&&spec.time?' · Meilleur temps '+seconds.toFixed(1)+' s':''}`,5.5);
+  }
+
+  private updateActivity(dt:number){
+    const run=this.activity,stop=this.activityStop;
+    if(!run||!stop||this.failed) return;
+    if(activitySpec(run.id).time&&!this.activityRemaining){this.cancelActivity('Temps écoulé. Relancez l’activité au départ.');return;}
+    if(stop.kind==='use') return;
+    const eligible=this.driven&&this.car.id===run.car&&distance(this.at,stop.at)<(stop.kind==='pass'?4.1:3.55)
+      &&Math.abs(elevation(...this.at)-elevation(...stop.at))<1.65;
+    if(eligible&&stop.kind==='pass'){this.advanceActivity();return;}
+    run.stationary=eligible&&Math.abs(this.car.speed)<1.6?run.stationary+dt:0;
+    if(run.stationary>=.95) this.advanceActivity();
+  }
+
+  equipWeapon(id:WeaponId) {
+    if(!this.save.arsenal.ammo[id]||id===this.save.arsenal.equipped) return;
+    this.save.arsenal.equipped=id;
+    this.reloadLeft=0;
+    this.gun=.18;
+    this.persist();
+  }
+
+  cycleWeapon() {
+    if(this.driven||this.failed||this.paused) return;
+    const owned=weaponIds.filter(id=>this.save.arsenal.ammo[id]);
+    this.equipWeapon(owned[(owned.indexOf(this.save.arsenal.equipped)+1)%owned.length]);
+  }
+
+  reload() {
+    if(this.driven||this.paused||this.failed||this.reloadLeft>0||this.ammo.loaded===this.weapon.magazine) return;
+    if(!this.ammo.spare){this.notice('Réserve épuisée. Retrouvez des munitions au Comptoir Impulsion.');return;}
+    this.reloadLeft=this.weapon.reload;
+    this.sound.beep(238,.17,.08,328);
+  }
+
+  private pay(price:number) {
+    if(this.save.credits<price){this.notice('Crédits insuffisants.');return false;}
+    this.save.credits-=price;
+    return true;
+  }
+
+  buyWeapon(id:WeaponId) {
+    if(this.venueId!=='armory'||this.save.arsenal.ammo[id]||!this.pay(weapons[id].price)) return;
+    this.save.arsenal.ammo[id]=startingAmmo(id);
+    this.equipWeapon(id);
+    this.notice(weapons[id].name+' acheté et équipé.');
+  }
+
+  buyAmmo(id:WeaponId) {
+    const spec=weapons[id],ammo=this.save.arsenal.ammo[id];
+    if(this.venueId!=='armory'||!ammo||ammo.spare===spec.reserve||!this.pay(spec.ammoPrice)) return;
+    ammo.spare=Math.min(spec.reserve,ammo.spare+spec.box);
+    this.persist();
+    this.notice('Réserve de '+spec.name+' réapprovisionnée.');
+  }
+
+  buyVehicle(id:VehicleId) {
+    const car=this.fleet.get(id);
+    if(this.venueId!=='dealership'||!car||this.save.vehicles.includes(id)) return;
+    const delivery=this.deliverySpot(car);
+    if(!delivery){this.notice('Le parvis est encombré. Libérez une place de livraison.');return;}
+    if(!this.pay(showroom[id].price)) return;
+    this.save.vehicles.push(id);
+    this.parkAt(car,delivery);
+    this.persist();
+    this.markVehicle(car);
+  }
+
+  collectVehicle(id:VehicleId) {
+    const car=this.fleet.get(id);
+    if(this.venueId!=='dealership'||this.driven||!car||!this.save.vehicles.includes(id)) return;
+    const delivery=this.deliverySpot(car);
+    if(delivery){this.parkAt(car,delivery);car.model.resetDamage();}
+    this.markVehicle(car);
+  }
+
+  private markVehicle(car:DrivenVehicle) {
+    this.destination=waypoint(car.at,car.name,'car');
+    this.notice(car.name+' · emplacement indiqué sur la carte.');
+  }
+
+  private deliverySpot(car:DrivenVehicle) {
+    const [x,z]=car.bay;
+    const candidates:Point[]=[car.bay,[x-4.5,z],[x+4.5,z],[x,z-3.2],[x,z+3.2],[x-5,z+2.8],[x+5,z+2.8]];
+    return candidates.find(at=>!onStreet(...at)&&this.physics.canTurn(at,car.facing,car.kind,car.id)
+      &&this.physics.exitVehicle(at,car.facing,car.kind,car.id));
+  }
+
+  private parkAt(car:DrivenVehicle,at:Point) {
+    Object.assign(car,{at,previous:at,yaw:car.facing,lastYaw:car.facing,speed:0});
+    this.physics.placeVehicle(car.id,at,car.yaw,true);
+    this.physics.tick();
+  }
+
+  buyHome(id:HomeId) {
+    const home=homes.find(h=>h.id===id);
+    if(!home||this.venueId!==id||this.save.properties.includes(id)||!this.pay(home.price)) return;
+    this.save.properties.push(id);
+    this.updateGates();
+    this.persist();
+    this.notice(home.name+' achetée. La porte est ouverte.');
+  }
+
+  restHome(id:HomeId) {
+    const home=homes.find(h=>h.id===id);
+    if(!home||!this.save.properties.includes(id)||distance(this.at,home.use)>2.45) return;
+    this.health=100;
+    this.save.residence=id;
+    this.persist();
+    this.notice('Intégrité restaurée. Point de reprise en ville libre enregistré.');
+  }
+
+  buyMeal() {
+    if(this.venue.kind!=='public'||this.health>=100||!this.pay(18)) return;
+    this.health=Math.min(100,this.health+38);
+    this.persist();
+    this.notice('Repas servi. Intégrité +38 au maximum.');
   }
 
   pause(value: boolean) {
@@ -330,17 +568,29 @@ export class Game {
   }
 
   private resetScene() {
-    Object.assign(this.player, { at: spawn, previous: spawn, yaw: initialYaw, health: 100, hit: 0, fall: 0, momentum: [0, 0] });
-    Object.assign(this.car, { at: carSpawn, previous: carSpawn, yaw: initialYaw, lastYaw: initialYaw, speed: 0 });
+    this.activity=null;
+    this.police.reset();
+    this.crimeReported=-100;
+    const property=homes.find(home=>home.id===this.save.residence);
+    const start=this.busy||!property?spawn:property.use;
+    Object.assign(this.player, { at:start, previous:start, yaw:initialYaw, health:100, hit:0, fall:0, momentum:[0,0] });
+    this.selectedCar=this.starter;
+    this.safeFoot=[spawn,start];
+    this.recoveryClock=0;
+    this.destination=undefined;
     this.lastVehicleContact = undefined;
     this.clearanceSinceContact = 0;
-    this.car.model.resetDamage();
-    for (const vehicle of this.parkedModels.values()) vehicle.resetDamage();
+    for (const car of this.fleet.values()) {
+      Object.assign(car,{at:car.bay,previous:car.bay,yaw:car.facing,lastYaw:car.facing,speed:0});
+      car.model.resetDamage();
+      this.physics.placeVehicle(car.id,car.at,car.yaw,this.availableCar(car));
+    }
     this.traffic.reset();
     this.city.resetProps();
     for (const prop of furniture) this.physics.setProp(prop.id, true);
     this.driven = false;
     this.failed = false;
+    this.policeArrested=false;
     this.stage = 0;
     this.health = 100;
     this.safeFor = 5;
@@ -359,9 +609,11 @@ export class Game {
     this.cooldown = { intrusion: 0, decoy: 0, overload: 0 };
     this.damageFlash = 0;
     this.gun = 0;
+    this.reloadLeft=0;
+    this.dryFire=false;
+    this.lighting.reset();
     this.effects.clear();
-    this.view.set(spawn[0], elevation(...spawn), spawn[1] - 1.8);
-    this.physics.setParked(this.car.at, this.car.yaw, true);
+    this.view.set(start[0], elevation(...start), start[1] - 1.8);
     this.physics.tick();
     for (const g of this.guards) Object.assign(g, {
       at: g.spec.at, previous: g.spec.at, yaw: angle(g.spec.at, g.spec.route[1]), health: 100, hit: 0, fall: 0, state: 'patrol',
@@ -425,7 +677,9 @@ export class Game {
       'paper-way':completed.includes('U04'),
       'night-exit':completed.includes('U05'),
       'night-passage':!!ending || (chapter===6&&northernShift>=5&&northernShift<15),
+      'venue-market':populationPeriod(this.time)!=='evening'||inRect(...this.at,venues.find(v=>v.id==='market')!.area,.85),
     };
+    for(const home of homes) open['venue-'+home.id]=this.save.properties.includes(home.id);
     for(const gate of gates){
       const wanted=!!open[gate.id] || this.hacked.has(gate.id);
       const staysOpen=this.gateState.get(gate.id) && inRect(...this.at,gate.area,this.driven?2:.5);
@@ -466,6 +720,13 @@ export class Game {
   objective(): Objective {
     const {chapter,side,tracking,ending,route}=this.save;
     const goal=(name:string,text:string,at:Point,label:string,others:Pin[]=[]):Objective=>({name,text,pins:[waypoint(at,label),...others]});
+    const run=this.activity,stop=this.activityStop;
+    if(run&&stop){
+      const job=activitySpec(run.id);
+      const status=stop.kind==='park'?' · Arrêtez-vous dans la zone':stop.kind==='use'?' · E à pied':'';
+      const cargo=job.cargo&&run.step>0?` · Colis ${run.condition} %`:'';
+      return goal(job.name,`${run.step+1}/${job.stops.length} · ${stop.label}${status}${cargo}`,stop.at,stop.label);
+    }
     const step=this.currentStep;
     if(step){
       const name=side?getSide(this.save,side).name:objectives[chapter].name;
@@ -491,12 +752,27 @@ export class Game {
   }
 
   interaction(): Interaction | undefined {
-    if(this.driven) return {action:'car',at:this.at,label:Math.abs(this.car.speed)>2.2?'Freinez pour descendre':'Descendre de la voiture'};
+    if(this.driven) return {action:'car',at:this.at,label:Math.abs(this.car.speed)>2.2?'Freinez pour descendre':'Descendre de la voiture',vehicle:this.car.id};
     const {chapter,side,ending}=this.save;
     const list:Interaction[]=[
       {action:'garage',at:garage,label:'Parler à Mina',range:3.25},
-      {action:'car',at:this.car.at,label:'Prendre la voiture',range:3.25},
     ];
+    if(this.nearbyActivity){const job=activitySpec(this.nearbyActivity);list.push({action:'activity',at:job.start,label:job.name,range:3.5});}
+    const stop=this.activityStop;
+    if(stop?.kind==='use') list.unshift({action:'activity',at:stop.at,label:stop.label,range:2.75});
+    for(const car of this.fleet.values()) if(this.availableCar(car)&&distance(this.at,car.at)<3.4) {
+      list.push({action:'car',at:car.at,label:car===this.starter?'Prendre la voiture':'Conduire · '+car.name,range:3.25,vehicle:car.id});
+    }
+    for(const venue of venues){
+      const [x,z]=venue.entrance;
+      if(venue.kind==='home'&&!this.save.properties.includes(venue.id)) {
+        list.push({action:'venue',at:[x,z+venue.side*.42],label:'Visiter l’annonce · '+venue.name,venue:venue.id,range:2.7});
+      } else if(venue.id==='market'&&populationPeriod(this.time)==='evening'&&!inRect(...this.at,venue.area)) {
+        list.push({action:'venue',at:[x,z+.42],label:'Halle fermée · voir les horaires',venue:venue.id,range:2.45});
+      } else if(inRect(...this.at,venue.area,-.30)) {
+        list.push({action:'venue',at:venue.use,label:venue.kind==='home'?'Se reposer':venue.name,venue:venue.id,range:2.4});
+      }
+    }
     const task=this.currentStep;
     if(task){
       const label=task.kind==='delivery'&&this.safeFor<5?'Attendre la fin de la détection'
@@ -522,8 +798,8 @@ export class Game {
     if(ending) list.push({action:'dialogue',at:p.varenne,label:'Parler à Varenne',person:'Élias Varenne'});
     if(ending==='publish') list.push({action:'dialogue',at:p.communityDesk,label:'Demander un accès provisoire',person:'Relais de quartier'});
     const reachable=list.filter(i=>distance(i.at,this.at)<=(i.range??2.65)
-      && this.physics.ray(this.at,i.at,1.3,1.4,i.action==='car')>.89);
-    return reachable.find(i=>i.action==='progress') ?? reachable.find(i=>i.side===this.save.tracking)
+      && this.physics.ray(this.at,i.at,1.3,1.4,i.vehicle)>.89);
+    return reachable.find(i=>i.action==='progress'||i.action==='activity'&&stop?.kind==='use') ?? reachable.find(i=>i.side===this.save.tracking)
       ?? reachable.sort((a,b)=>distance(a.at,this.at)-distance(b.at,this.at))[0];
   }
 
@@ -532,7 +808,9 @@ export class Game {
     const intent=this.interaction();
     if(!intent) return;
     switch(intent.action){
-      case 'car':this.transfer();break;
+      case 'car':this.transfer(intent.vehicle);break;
+      case 'activity':if(this.activityStop?.kind==='use') this.advanceActivity();else this.activitiesMenu();break;
+      case 'venue':this.venueId=intent.venue!;this.onMenu('venue');break;
       case 'garage':this.health=100;this.onMenu('garage');break;
       case 'brief':this.onMenu('brief');break;
       case 'offers':this.onMenu('offers');break;
@@ -606,25 +884,69 @@ export class Game {
     }
   }
 
-  private transfer() {
+  private transfer(id?:string) {
     if (this.driven) {
       if (Math.abs(this.car.speed) > 2.2) { this.notice('Freinez avant de descendre.'); return; }
-      const side: Point = [Math.cos(this.car.yaw), -Math.sin(this.car.yaw)];
-      for (const sign of [1, -1]) {
-        const target: Point = [this.car.at[0] + side[0] * sign * 1.76, this.car.at[1] + side[1] * sign * 1.76];
-        if (!this.physics.canStand(target) || this.physics.ray(this.car.at, target, .9, .9, true) < .99) continue;
-        this.player.at = this.player.previous = target;
-        this.car.speed = 0;
-        this.driven = false;
-        this.physics.setParked(this.car.at, this.car.yaw, true);
-        return;
-      }
-      this.notice('Les deux portières sont bloquées.');
+      const target=this.physics.exitVehicle(this.car.at,this.car.yaw,this.car.kind,this.car.id);
+      if(target) this.leaveCar(target);
+      else this.notice('Sortie obstruée. Reculez ou appuyez sur T pour vous dégager.');
       return;
     }
+    const car=id&&this.fleet.get(id);
+    if(!car||!this.availableCar(car)) return;
+    this.rememberFoot(this.player.at);
+    this.selectedCar=car;
     this.driven = true;
-    this.physics.setParked(this.car.at, this.car.yaw, false);
+    this.reloadLeft=0;
+    this.lastVehicleContact=undefined;
+    this.physics.placeVehicle(car.id,car.at,car.yaw,false);
+    this.physics.tick();
+    if(this.destination?.kind==='car'&&distance(this.destination.at,car.at)<1) this.destination=undefined;
     this.sound.beep(93, .14, .075, 175);
+  }
+
+  private leaveCar(target:Point) {
+    this.player.at=this.player.previous=target;
+    this.player.yaw=this.car.yaw;
+    this.car.speed=0;
+    this.driven=false;
+    this.physics.placeVehicle(this.car.id,this.car.at,this.car.yaw,true);
+    this.physics.tick();
+    this.rememberFoot(target);
+  }
+
+  private rememberFoot(at:Point) {
+    if(distance(this.safeFoot.at(-1)!,at)<1.6||!this.physics.escapeOnFoot(at)) return;
+    this.safeFoot.push(at);
+    if(this.safeFoot.length>36) this.safeFoot.splice(1,1);
+  }
+
+  recover() {
+    if(!this.running||this.failed) return;
+    if(this.driven) {
+      const car=this.car, exit=this.physics.exitVehicle(car.at,car.yaw,car.kind,car.id);
+      if(exit){this.leaveCar(exit);this.notice('Sortie vers un espace libre.');return;}
+      if(!this.physics.canTurn(car.at,car.yaw,car.kind,car.id)) {
+        const free=this.deliverySpot(car);
+        if(free) this.parkAt(car,free);
+      }
+      car.speed=0;
+      this.driven=false;
+      this.physics.placeVehicle(car.id,car.at,car.yaw,true);
+      this.physics.tick();
+    }
+    let previous=this.safeFoot.length-1;
+    for(;previous>=0;previous--){
+      const at=this.safeFoot[previous];
+      if(distance(this.at,at)>2.1&&this.physics.escapeOnFoot(at)) break;
+    }
+    const target=previous>=0?this.safeFoot[previous]:recoveryFallback.find(at=>this.physics.escapeOnFoot(at));
+    if(!target){this.notice('Aucun emplacement libre à proximité.');return;}
+    this.safeFoot.splice(Math.max(1,previous+1));
+    this.player.at=this.player.previous=target;
+    this.player.momentum=[0,0];
+    this.view.set(target[0],elevation(...target),target[1]-1.4);
+    this.notice('Dégagé vers un emplacement libre. Le contrat continue.');
   }
 
   private startAlarm(at:Point,district:number) {
@@ -700,7 +1022,8 @@ export class Game {
     const x = Number(this.key('d', 'arrowright')) - Number(this.key('a', 'q', 'arrowleft'));
     const z = Number(this.key('s', 'arrowdown')) - Number(this.key('w', 'z', 'arrowup'));
     if (!this.driven) {
-      const speed = this.key('shift') ? 9.3 : 6.65;
+      const stair=onTunnelStairs(...this.player.at);
+      const speed = stair ? (this.key('shift')?5.25:4.45) : (this.key('shift')?9.3:6.65);
       const factor = speed * dt / Math.max(1, Math.hypot(x, z));
       this.player.at = this.physics.move(this.player.at, x * factor, z * factor).at;
       this.player.stride = x || z ? speed / 8.9 : 0;
@@ -711,26 +1034,27 @@ export class Game {
       return;
     }
     const car = this.car;
+    const performance=vehicleClasses[car.kind];
     const throttle = -z;
     const stop = this.key(' ');
     if (stop) car.speed *= Math.exp(-8.8 * dt);
     else if (throttle) {
       const changing = car.speed * throttle < 0;
-      car.speed = clamp(car.speed + throttle * dt * (changing ? 28 : throttle > 0 ? 13 : 10), -8.2, 23.2);
+      car.speed = clamp(car.speed + throttle * dt * (changing ? 28 : throttle > 0 ? performance.acceleration : 10), -8.2, performance.speed);
     } else car.speed *= Math.exp(-1.24 * dt);
     if (Math.abs(car.speed) < .075) car.speed = 0;
     if (x && Math.abs(car.speed) > .32) {
-      const next = car.yaw - x * Math.sign(car.speed) * (1.63 + 1.18 * Math.min(Math.abs(car.speed) / 11, 1)) * dt;
-      if (this.physics.canTurn(car.at, next)) car.yaw = next;
+      const next = car.yaw - x * Math.sign(car.speed) * (1.63 + 1.18 * Math.min(Math.abs(car.speed) / 11, 1)) * dt * performance.turn;
+      if (this.physics.canTurn(car.at, next,car.kind,car.id)) car.yaw = next;
     }
     const heading = forward(car.yaw);
     const from = car.at;
     const velocity: Point = [heading[0] * car.speed, heading[1] * car.speed];
-    const move = this.physics.move(from, velocity[0] * dt, velocity[1] * dt, car.yaw, true);
+    const move = this.physics.move(from,velocity[0]*dt,velocity[1]*dt,car.yaw,true,car.id,car.kind);
     car.at = move.at;
     if (move.hit) {
       const normal = move.contact?.normal;
-      const other = move.contact && this.traffic.get(move.contact.id);
+      const other = move.contact && (this.traffic.get(move.contact.id)??this.police.get(move.contact.id));
       const relative = other ? [velocity[0]-Math.sin(other.yaw)*other.speed,velocity[1]-Math.cos(other.yaw)*other.speed] : velocity;
       const strength = normal ? Math.abs(normal[0]*relative[0] + normal[1]*relative[1]) : Math.abs(car.speed);
       if (move.contact) this.vehicleImpact(move.contact, velocity, strength);
@@ -744,7 +1068,7 @@ export class Game {
     for (const victim of [...this.guards, ...this.civils]) {
       if (victim.health <= 0 || victim.hit > .45 || ('spec' in victim && (victim as Guard).spec.drone)) continue;
       const dx = victim.at[0] - car.at[0], dz = victim.at[1] - car.at[1];
-      if (Math.abs(dx * c - dz * s) > 1.34 || Math.abs(dx * s + dz * c) > 2.3 || Math.abs(elevation(...victim.at) - elevation(...car.at)) > 1.3) continue;
+      if (Math.abs(dx * c - dz * s) > .36+.98*performance.x || Math.abs(dx * s + dz * c) > .34+1.96*performance.z || Math.abs(elevation(...victim.at) - elevation(...car.at)) > 1.3) continue;
       const strength = Math.abs(car.speed);
       const impact: Point = [heading[0] * Math.sign(car.speed), heading[1] * Math.sign(car.speed)];
       if (strength < 8) {
@@ -772,47 +1096,82 @@ export class Game {
     car.model.impact(side, strength);
     this.sound.impact(strength > 11);
     this.effects.pulse(contact.point, strength > 11 ? '#ffb67f' : '#e1c5a5', .26);
-    const other = this.parkedModels.get(contact.id) ?? this.traffic.get(contact.id)?.model;
+    const patrol=this.police.get(contact.id);
+    const other = this.fleet.get(contact.id)?.model ?? this.traffic.get(contact.id)?.model ?? patrol?.model;
     if (other) other.impact(impactSide(other.rotation.y, nx, nz), strength);
     this.traffic.hold(contact.id,strength);
-    if (contact.type === 'furniture' && this.city.damageProp(contact.id, -nx, -nz, strength)) this.physics.setProp(contact.id, false);
+    this.police.impact(contact.id,strength);
+    if(patrol&&strength>5) this.reportPolice(strength>12?2:1);
+    if(!patrol&&contact.type==='vehicle'&&strength>=12) this.violent();
+    if(this.activity?.id==='cargo'&&this.activity.step>0&&strength>3.5)
+      this.activity.condition=Math.max(0,this.activity.condition-Math.round(strength*2.3));
+    if (contact.type === 'furniture' && this.city.damageProp(contact.id, -nx, -nz, strength)) {
+      this.physics.setProp(contact.id, false);
+      this.lighting.breakLamp(contact.id);
+    }
     if (strength > 13) this.hurt(5);
   }
 
   private shoot() {
-    this.gun = .24;
-    const from = this.player.at, dir = forward(this.player.yaw);
-    const target: Point = [from[0] + dir[0] * 35, from[1] + dir[1] * 35];
-    let reach = this.physics.ray(from, target, 1.20, 1.20) * 35;
+    if(this.reloadLeft>0) return;
+    const weapon=this.weapon, ammo=this.ammo, from=this.player.at;
+    if(ammo.loaded===0){
+      if(ammo.spare) this.reload();
+      else if(!this.dryFire){this.dryFire=true;this.sound.beep(132,.06,.07,76);this.notice('Munitions épuisées · F pour changer d’arme.');}
+      return;
+    }
+    this.gun=weapon.cycle;
+    ammo.loaded--;
+    this.persist();
+    this.lighting.muzzle(from,this.player.yaw,weapon.color,this.time);
+    const sway=weapon.rays===1 ? (Math.random()-.5)*weapon.spread*(1+this.player.stride) : 0;
+    let hit=false;
+    for(let i=0;i<weapon.rays;i++){
+      const spread=weapon.rays>1 ? weapon.spread*(i/(weapon.rays-1)-.5) : sway;
+      hit=this.projectShot(from,forward(this.player.yaw+spread),weapon.range,weapon.power,weapon.color)||hit;
+    }
+    this.sound.impact(hit,true);
+    this.violent();
+    for (const c of this.civils) if (distance(c.at, from) < 15) c.fear = 4.7;
+  }
+
+  private projectShot(from:Point,dir:Point,range:number,power:number,color:string) {
+    const y=elevation(...from)+1.22;
+    const target:Point=[from[0]+dir[0]*range,from[1]+dir[1]*range];
+    let reach=this.physics.ray(from,target,1.22,y-elevation(...target))*range;
     let targetActor: Actor | undefined;
     for (const a of [...this.guards, ...this.civils]) {
       if (a.health <= 0) continue;
       const dx = a.at[0] - from[0], dz = a.at[1] - from[1];
       const along = dx * dir[0] + dz * dir[1];
-      if (along < .45 || along > reach || Math.abs(dx * dir[1] - dz * dir[0]) > .68 ||
+      if (along < .45 || along > reach || Math.abs(dx * dir[1] - dz * dir[0]) > .68 || Math.abs(elevation(...a.at)+1.18-y)>1.12 ||
           this.physics.ray(from, a.at, 1.18, 1.16) < .98) continue;
       reach = along;
       targetActor = a;
     }
     const to: Point = [from[0] + dir[0] * reach, from[1] + dir[1] * reach];
-    this.effects.trace(new T.Vector3(from[0] + dir[0] * .52, elevation(...from) + 1.22, from[1] + dir[1] * .52),
-      new T.Vector3(to[0], elevation(...to) + 1.22, to[1]));
-    this.sound.impact(!!targetActor, true);
-    if (targetActor) this.injure(targetActor, 36, dir, false);
-    this.violent();
-    for (const c of this.civils) if (distance(c.at, from) < 15) c.fear = 4.7;
+    this.effects.trace(new T.Vector3(from[0]+dir[0]*.52,y,from[1]+dir[1]*.52),new T.Vector3(to[0],y,to[1]),color);
+    if(targetActor) this.injure(targetActor,power,dir,false);
+    return !!targetActor;
   }
 
   private violent() {
     this.heat = this.time;
     const witness = this.civils.some(c => c.health > 0 && distance(c.at, this.at) < 13 && this.physics.ray(c.at, this.at) > .94);
     if (!witness) return;
+    if(!this.active||this.driven) this.reportPolice();
     this.safeFor = 0;
     for (const g of this.guards) {
       if (g.health <= 0 || g.spec.drone || distance(g.at, this.at) > 54) continue;
       this.order(g, this.at, 'pursue', 5.3);
     }
     this.notice('Un témoin a signalé votre position.', 2.8);
+  }
+
+  private reportPolice(severity=1){
+    if(this.time-this.crimeReported<1.5) return;
+    this.crimeReported=this.time;
+    this.police.report(this.at,severity);
   }
 
   private injure(a: Actor, amount: number, dir: Point, strong: boolean) {
@@ -913,6 +1272,7 @@ export class Game {
       }
     }
     if (this.confirmed && !wasConfirmed) this.sound.beep(660, .21, .15, 420);
+    if(this.confirmed&&this.driven&&(crime||this.alarm)&&!this.police.level) this.reportPolice();
     this.safeFor = this.confirmed ? 0 : Math.min(5, this.safeFor + dt);
   }
 
@@ -1029,6 +1389,17 @@ export class Game {
     this.time += dt;
     if(Math.floor(this.time*5)!==Math.floor((this.time-dt)*5)) this.updateGates();
     this.gun -= dt;
+    if(this.reloadLeft>0){
+      this.reloadLeft=Math.max(0,this.reloadLeft-dt);
+      if(this.reloadLeft===0) {
+        const ammo=this.ammo,count=Math.min(ammo.spare,this.weapon.magazine-ammo.loaded);
+        ammo.loaded+=count;
+        ammo.spare-=count;
+        this.persist();
+        this.sound.beep(342,.09,.065,479);
+      }
+    }
+    if(!this.pointer.down) this.dryFire=false;
     this.messageTime -= dt;
     this.damageFlash -= dt;
     for (const id of Object.keys(this.cooldown) as Implant[]) this.cooldown[id] = Math.max(0, this.cooldown[id] - dt);
@@ -1037,15 +1408,21 @@ export class Game {
     this.car.lastYaw = this.car.yaw;
     this.updateAim();
     this.controls(dt);
+    this.recoveryClock+=dt;
+    if(this.recoveryClock>=.45){
+      this.recoveryClock=0;
+      if(!insideCity(this.at)||!this.driven&&!this.physics.canStand(this.at)) this.recover();
+      else if(!this.driven) this.rememberFoot(this.at);
+    }
     for (const g of this.guards) { g.previous = g.at; this.moveGuard(g, dt); }
-    const period=populationPeriod(this.time), chase=this.confirmed||this.guards.some(g=>g.state==='pursue'&&distance(g.at,this.at)<22);
+    const period=populationPeriod(this.time), chase=this.confirmed||this.police.phase==='pursuit'||this.guards.some(g=>g.state==='pursue'&&distance(g.at,this.at)<22);
     const sidewalk:Point[]=[];
     for (const c of this.civils) {
       c.previous = c.at;
       this.moveCiv(c, dt, period, chase);
       if(c.health>0 && distance(c.at,this.at)<70) sidewalk.push(c.at);
     }
-    this.traffic.update(dt,this.at,sidewalk,chase);
+    this.traffic.update(dt,this.at,[...sidewalk,...this.police.audible],chase);
     this.updateEscort(dt,chase);
     for (const body of [...this.guards, ...this.civils]) {
       body.hit = Math.max(0, body.hit - dt * 2.9);
@@ -1058,6 +1435,11 @@ export class Game {
       }
     }
     this.detect(dt);
+    this.police.update(dt,{at:this.at,driven:this.driven,yaw:this.driven?this.car.yaw:this.player.yaw,
+      speed:this.driven?this.car.speed:this.player.stride*6,kind:this.driven?this.car.kind:undefined});
+    if(this.police.visible) this.safeFor=0;
+    if(this.police.arrest>=1&&!this.failed){this.policeArrested=true;this.hurt(this.health);}
+    this.updateActivity(dt);
     this.effects.update(dt);
     this.physics.tick();
   }
@@ -1109,13 +1491,29 @@ export class Game {
     renderActor(this.player);
     if(position(this.escort).visible) renderActor(this.escort);
     position(this.player).visible = !this.driven;
-    const car = combine(this.car.previous, this.car.at, alpha);
-    this.car.model.position.set(car[0], elevation(...car), car[1]);
-    this.car.model.rotation.y = this.car.lastYaw + deltaAngle(this.car.lastYaw, this.car.yaw) * alpha;
-    this.car.model.setBrake(this.driven && this.key(' '));
+    for(const car of this.fleet.values()){
+      car.model.visible=this.availableCar(car)&&distance(car.at,this.at)<58;
+      if(!car.model.visible) continue;
+      const at=car===this.car&&this.driven?combine(car.previous,car.at,alpha):car.at;
+      car.model.position.set(at[0],elevation(...at),at[1]);
+      car.model.rotation.y=car===this.car&&this.driven?car.lastYaw+deltaAngle(car.lastYaw,car.yaw)*alpha:car.yaw;
+      car.model.setBrake(car===this.car&&this.driven&&this.key(' '));
+    }
     this.traffic.render(alpha,this.at);
+    this.police.render(alpha,this.at);
+    for(const [id,group] of this.activityStarts) group.visible=!this.busy&&distance(this.at,activitySpec(id).start)<52;
+    const stop=this.activityStop;
+    this.shuttlePassenger.visible=this.activity?.id==='shuttle'&&this.activity.step===0;
+    this.activityMarker.visible=!!stop&&distance(this.at,stop.at)<49;
+    if(stop){
+      this.activityMarker.position.set(stop.at[0],elevation(...stop.at)+.13,stop.at[1]);
+      this.activityMarker.children[1].rotation.y=this.time*1.7;
+    }
     this.city.updateVisibility(x, z, dt);
-    this.city.setPeriod(populationPeriod(this.time));
+    const period=populationPeriod(this.time);
+    this.city.setPeriod(period);
+    if(this.marketHost) this.marketHost.visible=period!=='evening'||inRect(x,z,venues.find(v=>v.id==='market')!.area,.6);
+    this.city.setLight(this.time,this.lighting.update(this.time,this.at,this.driven?this.car:null));
     for (const g of this.guards) {
       renderActor(g);
       const p = position(g).position;
@@ -1140,7 +1538,8 @@ export class Game {
       cam.view.pivot.visible = active;
     }
     if ((this.running && !this.paused) || dt === 0) this.renderer.render(this.scene, this.camera);
-    this.sound.update(this.driven, this.car.speed, this.running && !this.paused);
+    const siren=Math.max(0,...this.police.audible.map(at=>1-distance(at,this.at)/44));
+    this.sound.update(this.driven,this.car.speed,this.running&&!this.paused,siren*(this.police.phase==='search'?.45:1));
     this.onFrame(this);
   }
 

@@ -1,6 +1,7 @@
+import {rooms,isHouse} from './rooms'
 import {blocks,routes,origins,districts,bounds,pointsOfInterest,sites,trackZ,type Point} from './level'
 
-export function drawMap(canvas:HTMLCanvasElement, mode:'preview'|'atlas'|'mini', player?:Point,target?:Point){
+export function drawMap(canvas:HTMLCanvasElement, mode:'preview'|'atlas'|'mini', player?:Point,target?:Point,patrols:Point[]=[]){
  const box=canvas.getBoundingClientRect();if(!box.width||!box.height)return
  const dpr=Math.min(devicePixelRatio,2), w=box.width,h=box.height
  if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr)}
@@ -27,5 +28,8 @@ export function drawMap(canvas:HTMLCanvasElement, mode:'preview'|'atlas'|'mini',
    c.beginPath();if(shape==='person'){c.moveTo(0,-6);c.lineTo(5.2,5);c.lineTo(0,3);c.lineTo(-5.2,5);c.closePath();c.fillStyle=color}else if(shape==='circle'){c.arc(0,0,4.5,0,Math.PI*2)}else{c.moveTo(0,-5);c.lineTo(5,0);c.lineTo(0,5);c.lineTo(-5,0);c.closePath()}c.fill();c.stroke();if(label){c.font='600 9px "IBM Plex Mono", monospace';const len=c.measureText(label).width;c.fillStyle='#121c1d';c.fillRect(8,-8,len+8,15);c.fillStyle=color;c.fillText(label,12,3)}c.restore()}
  if(mode!=='mini'){pointsOfInterest.forEach(([n,pos],i)=>pin(pos,n,i===1?'#e3f83b':i===0?'#69d4bc':'#bccbc9',i===0?'circle':'square'))
  if(mode==='atlas'){origins.forEach((o,i)=>pin({x:o.x+55,z:o.z+9},districts[i].toUpperCase(),'#dbe3cf','circle'))}}
+ if(mode!=='preview')for(const r of rooms){const near=mode==='mini'&&player&&Math.hypot(player.x-r.entrance.x,player.z-r.entrance.z)<20
+   pin(r.entrance,near?r.name.toUpperCase():mode==='atlas'&&r.id!=='cour'&&r.id!=='dealer'?r.name.toUpperCase():'',isHouse(r.id)?'#e7b592':'#88d9b7','circle')}
+ for(const patrol of patrols)pin(patrol,'','#ff8565','circle')
  if(target)pin(target,'','#ebfa46');if(player)pin(player,'','#f1ffff','person')
 }

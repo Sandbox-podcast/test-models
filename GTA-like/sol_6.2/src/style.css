@@ -69,6 +69,13 @@ kbd { font: 600 .73rem/1 "Segoe UI",sans-serif; min-width: 22px; height: 21px; d
 .danger[data-state="watch"] { color: var(--amber); border-color: #ffca787c; }
 .danger[data-state="confirmed"] { color: var(--danger); border-color: #ff927c96; }
 .danger[data-state="delivery"] { color: var(--signal); border-color: #e9f68484; }
+.wanted { position:absolute; top:1px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:9px; padding:7px 10px; color:#ffc8b6; font-size:.75rem; border-color:#e88c778c; white-space:nowrap; }
+.wanted[data-with-alert="true"] { top:44px; }
+.wanted[data-phase="search"] { color:#ffd495; border-color:#b49561; }
+#wanted-stars { letter-spacing:.075em; font-size:.91rem; }
+#wanted-countdown { color:#e6ddd3; font-variant-numeric:tabular-nums; }
+.objective .activity-clock { color:#ffcf8a; font-weight:700; font-variant-numeric:tabular-nums; }
+#open-activities { margin-left:auto; }
 #alert-meter { position: absolute; bottom: 0; left: 0; height: 2px; background: currentColor; width: var(--progress,0%); }
 .top-actions { display: flex; gap: 6px; align-items: stretch; }
 .account { color: var(--signal); height: 34px; padding: 6px 11px; font-size: .84rem; font-variant-numeric: tabular-nums; }
@@ -80,6 +87,9 @@ kbd { font: 600 .73rem/1 "Segoe UI",sans-serif; min-width: 22px; height: 21px; d
 .health-track { height: 5px; background: #2c3a42; margin-top: 6px; overflow: hidden; }
 .health-track i { height: 100%; display: block; background: #9bdfab; width: 100%; }
 .health-track[data-low="true"] i { background: #fe937b; }
+.weapon-hud { display: flex; width: 100%; align-items: center; gap: .5rem; margin-top: 7px; padding: 6px 0 0; border: 0; border-top: 1px solid #53666d66; background: transparent; color: #dce5dd; font-size: .73rem; pointer-events: auto; cursor: pointer; }
+.weapon-hud strong { margin-left: auto; color: #e9cd98; font-variant-numeric: tabular-nums; }
+.weapon-hud[data-empty="true"] strong { color: #ff9d83; }
 .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
 .slot { position: relative; border: 1px solid #53697983; display: grid; align-items: center; grid-template-columns: auto 1fr auto; gap: 5px; padding: 5px; font-size: .71rem; overflow: hidden; }
 .slot b { display: none; }
@@ -134,6 +144,8 @@ kbd { font: 600 .73rem/1 "Segoe UI",sans-serif; min-width: 22px; height: 21px; d
   .hud-foot { bottom: 8px; }
   .objective { width: min(215px,48vw); padding: 8px; }
   .danger { top: 104px; left: 0; transform: none; }
+  .wanted { top:104px; left:0; transform:none; }
+  .wanted[data-with-alert="true"] { top:144px; }
   .map { width: 138px; }
   .equipment { width: 165px; padding: 7px; }
   .slot { grid-template-columns: auto 1fr; gap: 3px; padding: 3px; }

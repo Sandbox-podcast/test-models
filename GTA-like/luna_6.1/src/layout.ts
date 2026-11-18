@@ -54,7 +54,7 @@ export const ROAD_ROUTES: readonly RoadRoute[] = [
   },
   {
     id: 'rue-basse',
-    width: 12,
+    width: 11,
     sidewalk: true,
     points: [
       { x: 141, z: 100, y: 0 }, { x: 124, z: 100, y: 0 }, { x: 105, z: 107, y: 0 },
@@ -107,6 +107,17 @@ export const ROAD_ROUTES: readonly RoadRoute[] = [
     sidewalk: false,
     points: [{ x: 135, z: 90, y: 0 }, { x: 140, z: 95, y: 0 }, { x: 141, z: 100, y: 0 }],
   },
+] as const;
+
+/** Intentional same-level road joins; all other close approaches should stay separated. */
+export const ROAD_JUNCTIONS = [
+  { point: { x: 165, z: 87 }, routes: ['avenue-haute', 'rampe-rue-basse'] },
+  { point: { x: 32, z: 30 }, routes: ['avenue-haute', 'accès-garage'] },
+  { point: { x: 112, z: 30 }, routes: ['avenue-haute', 'accès-cour'] },
+  { point: { x: 90, z: 19 }, routes: ['avenue-haute', 'accès-dépôt'] },
+  { point: { x: 141, z: 100 }, routes: ['rampe-rue-basse', 'rue-basse', 'liaison-mina'] },
+  { point: { x: 125, z: 71 }, routes: ['escalier-piéton', 'passage-sous-voies'] },
+  { point: { x: 135, z: 90 }, routes: ['passage-sous-voies', 'liaison-mina'] },
 ] as const;
 
 export const TRAFFIC_ROUTES: readonly (readonly Point[])[] = [

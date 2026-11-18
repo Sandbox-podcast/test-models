@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "check": "tsc --noEmit",
     "test:world": "esbuild scripts/world-audit.ts --bundle --format=esm --platform=node --external:@dimforge/rapier3d-compat --outfile=.vite/world-audit.mjs && node .vite/world-audit.mjs",
+    "test:pursuit": "esbuild scripts/pursuit-audit.ts --bundle --format=esm --platform=node --external:@dimforge/rapier3d-compat --outfile=.vite/pursuit-audit.mjs && node .vite/pursuit-audit.mjs",
     "build": "npm run check && vite build",
     "build:portable": "npm run build && node scripts/portable.mjs",
     "preview": "vite preview --host 127.0.0.1"

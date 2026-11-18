@@ -3,6 +3,8 @@ export class Sound {
   private master?: GainNode;
   private engine?: OscillatorNode;
   private engineLevel?: GainNode;
+  private siren?: OscillatorNode;
+  private sirenLevel?: GainNode;
   private ambience?: GainNode;
   private noise?: AudioBuffer;
   muted = false;
@@ -38,6 +40,12 @@ export class Sound {
       this.engineLevel.gain.value = 0;
       this.engine.connect(this.engineLevel).connect(this.master);
       this.engine.start();
+      this.siren=context.createOscillator();
+      this.siren.type='sine';
+      this.sirenLevel=context.createGain();
+      this.sirenLevel.gain.value=0;
+      this.siren.connect(this.sirenLevel).connect(this.master);
+      this.siren.start();
     }
     await this.context.resume().catch(() => undefined);
   }
@@ -47,12 +55,14 @@ export class Sound {
     if (this.master && this.context) this.master.gain.setTargetAtTime(value ? 0 : .48, this.context.currentTime, .06);
   }
 
-  update(driving: boolean, speed: number, active: boolean) {
+  update(driving: boolean, speed: number, active: boolean, siren=0) {
     if (!this.context || !this.engine || !this.engineLevel || !this.ambience) return;
     const t = this.context.currentTime;
     this.engine.frequency.setTargetAtTime(29 + Math.abs(speed) * 2.55, t, .11);
     this.engineLevel.gain.setTargetAtTime(active && driving ? .09 + Math.abs(speed) * .003 : 0, t, .10);
     this.ambience.gain.setTargetAtTime(active ? .18 : .062, t, .14);
+    this.siren?.frequency.setTargetAtTime(626+166*Math.sin(t*6.4),t,.055);
+    this.sirenLevel?.gain.setTargetAtTime(active?Math.min(.15,siren*.15):0,t,.1);
   }
 
   beep(hz = 550, duration = .18, level = .15, to = hz * 1.13) {

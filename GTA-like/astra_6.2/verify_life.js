@@ -25,12 +25,17 @@ async () => {
  g.save.ending='seal';await periodAt(121);check(g.view.official.visible&&g.drone.visible,'Cellule de recours et surveillance');
  async function benchmark(pursuit){
   g.save.ending=null;g.restore();g.elapsed=121;teleport(street(pursuit?3:0,8));g.resume();
-  if(pursuit)g.keys.add('d');let last=await frame();const samples=[],firstFrame=g.view.renderer.info.render.frame;
+  if(pursuit){
+   const road=level.roads.find(r=>r.id==='J01'),start=along(road,35,-2.45);
+   g.car={...start};g.prevCar={...start};g.carAngle=start.angle;g.driving=true;g.streets.setParked(start,start.angle,false);
+   teleport(start);g.confirm(start,'Témoin');g.speed=5;
+  }
+  let active=0,last=await frame();const samples=[],firstFrame=g.view.renderer.info.render.frame;
   for(let i=0;i<155;i++){
-   if(pursuit&&i%32===0){g.keys.clear();g.keys.add(i%64?'a':'d');g.keys.add('shift')}
-   if(pursuit&&i%16===0){g.confirm(g.q,'Témoin');g.view.impact(g.q,.9,.1,true)}
+   if(pursuit){g.keys.clear();if(g.speed<5)g.keys.add('w');if(g.patrol.phase==='pursuit'&&g.patrol.units[0].body.visible)active++}
    const now=await frame();if(i>=35)samples.push(now-last);last=now;
   }
+  if(pursuit)check(active>100,'Patrouille motorisée absente du rendu');
   g.pause();const sorted=[...samples].sort((a,b)=>a-b),mean=samples.reduce((a,b)=>a+b,0)/samples.length;
   const rendered=g.view.renderer.info.render.frame-firstFrame;check(rendered>=150,'Rendu suspendu pendant le benchmark · '+rendered);return {rendered,fps:+(1000/mean).toFixed(1),msP95:+sorted[Math.floor(.95*sorted.length)].toFixed(1),largeur:g.view.renderer.domElement.width,hauteur:g.view.renderer.domElement.height}
  }

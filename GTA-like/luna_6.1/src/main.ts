@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import './styles.css';
-import { FORGES, ROAD_ROUTES, groundHeightAt } from './layout';
+import { FORGES, ROAD_JUNCTIONS, ROAD_ROUTES, groundHeightAt } from './layout';
 import { playAlarm, playImpact, playImplant, playShot, playSuccess, startSoundscape, toggleSound } from './audio';
 import {
   animateEffects,
@@ -10,18 +10,27 @@ import {
   refreshNavigation,
   resizeCity,
   showVehicleDamageAt,
+  trafficOccludesLine,
   updateForgesLife,
   updateActorVisual,
   type Character,
   type City,
   type Guard,
   type Point,
+  type PursuitVehicle,
+  type TrafficVehicle,
+  type Vehicle,
+  type VehicleModel,
 } from './world';
 
 type MainState = 'available' | 'accepted' | 'chip' | 'complete';
 type Implant = 'intrusion' | 'leurre' | 'surcharge';
+type WeaponId = 'pistol' | 'smg' | 'shotgun' | 'ion';
+type HomeId = 'remises' | 'houmeau';
+type AmmoState = { magazine: number; reserve: number };
+type WeaponAmmo = Record<WeaponId, AmmoState>;
 type SaveData = {
-  version: 1;
+  version: 2;
   credits: number;
   accepted: boolean;
   mainComplete: boolean;
@@ -32,6 +41,13 @@ type SaveData = {
   sideRewardPaid: boolean;
   ownedImplants: Implant[];
   equippedImplants: [Implant, Implant];
+  ownedVehicles: VehicleModel[];
+  selectedVehicle: VehicleModel;
+  ownedWeapons: WeaponId[];
+  equippedWeapon: WeaponId;
+  ammo: WeaponAmmo;
+  ownedHomes: HomeId[];
+  homeId: HomeId | null;
 };
 
 const SAVE_KEY = 'deadline.puce-fantome.save.v1';
@@ -49,6 +65,22 @@ const IMPLANT_NAMES: Record<Implant, string> = {
   intrusion: 'Intrusion',
   leurre: 'Leurre',
   surcharge: 'Surcharge',
+};
+const WEAPON_NAMES: Record<WeaponId, string> = {
+  pistol: 'Pistolet compact', smg: 'Mitraillette', shotgun: 'Fusil à pompe', ion: 'Carabine ionique',
+};
+const WEAPON_STATS: Record<WeaponId, { damage: number; range: number; delay: number; spread: number; reload: number; magazine: number; reserve: number }> = {
+  pistol: { damage: 36, range: 16, delay: .34, spread: .64, reload: .9, magazine: 12, reserve: 48 },
+  smg: { damage: 17, range: 14, delay: .12, spread: .82, reload: 1.15, magazine: 30, reserve: 90 },
+  shotgun: { damage: 26, range: 10, delay: .78, spread: 1.28, reload: 1.25, magazine: 8, reserve: 32 },
+  ion: { damage: 62, range: 22, delay: .88, spread: .42, reload: 1.3, magazine: 6, reserve: 24 },
+};
+const VEHICLE_NAMES: Record<VehicleModel, string> = {
+  compact: 'Compacte électrique', sport: 'Sportive des Forges', van: 'Fourgon d’atelier',
+};
+const HOME_CATALOG: Record<HomeId, { name: string; price: number; door: Point; interior: Point }> = {
+  remises: { name: 'Studio des Remises', price: 180, door: { x: 63, z: 97 }, interior: { x: 63, z: 93 } },
+  houmeau: { name: 'Maison de l’Houmeau', price: 300, door: { x: 94, z: 96 }, interior: { x: 94, z: 92 } },
 };
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
@@ -79,7 +111,7 @@ const healthValue = $('#health-value');
 const cashValue = $('#cash-value');
 
 const freshSave = (): SaveData => ({
-  version: 1,
+  version: 2,
   credits: 240,
   accepted: false,
   mainComplete: false,
@@ -90,15 +122,27 @@ const freshSave = (): SaveData => ({
   sideRewardPaid: false,
   ownedImplants: ['intrusion', 'leurre'],
   equippedImplants: ['intrusion', 'leurre'],
+  ownedVehicles: ['compact'],
+  selectedVehicle: 'compact',
+  ownedWeapons: ['pistol'],
+  equippedWeapon: 'pistol',
+  ammo: {
+    pistol: { magazine: 12, reserve: 48 },
+    smg: { magazine: 0, reserve: 0 },
+    shotgun: { magazine: 0, reserve: 0 },
+    ion: { magazine: 0, reserve: 0 },
+  },
+  ownedHomes: [],
+  homeId: null,
 });
 
 function readSave(): SaveData {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return freshSave();
-    const parsed = JSON.parse(raw) as Partial<SaveData>;
+    const parsed = JSON.parse(raw) as { version?: number } & Partial<Omit<SaveData, 'version'>>;
     const base = freshSave();
-    if (parsed.version !== 1) return base;
+    if (parsed.version !== 1 && parsed.version !== 2) return base;
     const owned = Array.isArray(parsed.ownedImplants)
       ? parsed.ownedImplants.filter((item): item is Implant => ['intrusion', 'leurre', 'surcharge'].includes(item))
       : base.ownedImplants;
@@ -106,9 +150,32 @@ function readSave(): SaveData {
       ? parsed.equippedImplants.filter((item): item is Implant => owned.includes(item)).slice(0, 2)
       : base.equippedImplants;
     if (equipped.length < 2 && owned.length > 1) equipped.push(owned.find((item) => item !== equipped[0])!);
+    const vehicles = Array.isArray(parsed.ownedVehicles)
+      ? parsed.ownedVehicles.filter((item): item is VehicleModel => ['compact', 'sport', 'van'].includes(item))
+      : base.ownedVehicles;
+    const ownedVehicles: VehicleModel[] = vehicles.includes('compact') ? vehicles : ['compact', ...vehicles];
+    const weapons = Array.isArray(parsed.ownedWeapons)
+      ? parsed.ownedWeapons.filter((item): item is WeaponId => ['pistol', 'smg', 'shotgun', 'ion'].includes(item))
+      : base.ownedWeapons;
+    const ownedWeapons: WeaponId[] = weapons.includes('pistol') ? weapons : ['pistol', ...weapons];
+    const ammo = { ...base.ammo };
+    for (const weapon of Object.keys(WEAPON_STATS) as WeaponId[]) {
+      const stored = parsed.ammo?.[weapon];
+      if (stored) {
+        const limit = WEAPON_STATS[weapon];
+        ammo[weapon] = {
+          magazine: Math.max(0, Math.min(limit.magazine, Math.floor(Number(stored.magazine) || 0))),
+          reserve: Math.max(0, Math.min(limit.reserve * 4, Math.floor(Number(stored.reserve) || 0))),
+        };
+      }
+    }
+    const homes = Array.isArray(parsed.ownedHomes)
+      ? parsed.ownedHomes.filter((item): item is HomeId => ['remises', 'houmeau'].includes(item))
+      : base.ownedHomes;
     return {
       ...base,
       ...parsed,
+      version: 2,
       credits: Number.isFinite(parsed.credits) ? Math.max(0, Number(parsed.credits)) : base.credits,
       accepted: Boolean(parsed.accepted && !parsed.mainComplete),
       mainComplete: Boolean(parsed.mainComplete),
@@ -119,6 +186,13 @@ function readSave(): SaveData {
       sideRewardPaid: Boolean(parsed.sideRewardPaid),
       ownedImplants: owned.length >= 2 ? owned : base.ownedImplants,
       equippedImplants: [equipped[0] ?? 'intrusion', equipped[1] ?? 'leurre'],
+      ownedVehicles,
+      selectedVehicle: ownedVehicles.includes(parsed.selectedVehicle as VehicleModel) ? parsed.selectedVehicle as VehicleModel : 'compact',
+      ownedWeapons,
+      equippedWeapon: ownedWeapons.includes(parsed.equippedWeapon as WeaponId) ? parsed.equippedWeapon as WeaponId : 'pistol',
+      ammo,
+      ownedHomes: homes,
+      homeId: homes.includes(parsed.homeId as HomeId) ? parsed.homeId as HomeId : null,
     };
   } catch {
     return freshSave();
@@ -139,15 +213,26 @@ let previousFrame = 0;
 let interfaceClock = 0;
 let observed = 0;
 let confirmedAt = -1000;
+let lastSeenAt = -1000;
+let lastKnownPlayerPosition: Point | null = null;
+let lastSeenWantedLevel = 0;
+let pursuitStartedAt = -1000;
+let lastPoliceSightAt = -1000;
 let chipTakenAt = -1000;
 let lastDamageAt = -1000;
 let invulnerableUntil = 0;
 let vehicleMode = false;
 let cameraDisabledUntil = 0;
 let violenceAlarmUntil = 0;
+let pursuitDispatchAt = 0;
 let implantReadyAt: [number, number] = [0, 0];
 let weaponReadyAt = 0;
+let reloadFinishesAt = 0;
+let reloadWeapon: WeaponId | null = null;
 let weaponHeat = 0;
+let mouseHeld = false;
+let blockedPlayerSeconds = 0;
+let lastSafePlayerPosition = { ...INITIAL_POSITION };
 let playerAim = new THREE.Vector3(0, 0, -1);
 let aimPoint = new THREE.Vector3(0, 0, -1);
 let mouse = { x: .5, y: .5 };
@@ -161,6 +246,13 @@ let checkpointPosition = { ...INITIAL_POSITION };
 let menuBeforeStart = true;
 
 const pressed = new Set<string>();
+const FLEET_SPOTS: Record<VehicleModel, Point> = {
+  compact: { ...CAR_POSITION }, sport: { x: 21.5, z: 54 }, van: { x: 42.5, z: 54 },
+};
+const PURSUIT_SPAWNS: readonly Point[] = [
+  { x: 9, z: 39 }, { x: 79, z: 29 }, { x: 132, z: 39 }, { x: 108, z: 39 },
+  { x: 20, z: 112 }, { x: 80, z: 119 }, { x: 115, z: 118 }, { x: 166, z: 107 },
+];
 const pointerNdc = new THREE.Vector2();
 const aimPlanePoint = new THREE.Vector3();
 const rayOrigin = new THREE.Vector3();
@@ -260,6 +352,7 @@ function openDialog(title: string, copy: string, actions: Array<{ label: string;
   }
   dialogLayer.classList.remove('hidden');
   dialogOpen = true;
+  mouseHeld = false;
   pressed.clear();
   requestAnimationFrame(() => dialogActions.querySelector('button')?.focus());
 }
@@ -281,6 +374,116 @@ function readImplantSelection(): void {
   save.equippedImplants = [one.value as Implant, two.value as Implant];
   persist();
   updateHud();
+}
+
+function buyOrSelectVehicle(model: VehicleModel): void {
+  if (save.ownedVehicles.includes(model)) {
+    save.selectedVehicle = model;
+  } else {
+    const price = model === 'sport' ? 160 : 200;
+    if (save.credits < price) { showMessage(`Il manque ${price - save.credits} ¢ pour ce véhicule.`, 2.5); return; }
+    save.credits -= price;
+    save.ownedVehicles.push(model);
+    save.selectedVehicle = model;
+    showMessage(`${VEHICLE_NAMES[model]} ajoutée au garage.`, 3);
+  }
+  applyFleetSave();
+  persist();
+  updateHud();
+  openGarageShop();
+}
+
+function buyOrEquipWeapon(weapon: WeaponId): void {
+  if (save.ownedWeapons.includes(weapon)) {
+    save.equippedWeapon = weapon;
+  } else {
+    const price: Record<WeaponId, number> = { pistol: 0, smg: 90, shotgun: 110, ion: 150 };
+    if (save.credits < price[weapon]) { showMessage(`Il manque ${price[weapon] - save.credits} ¢ pour cette arme.`, 2.5); return; }
+    save.credits -= price[weapon];
+    save.ownedWeapons.push(weapon);
+    save.ammo[weapon] = { magazine: WEAPON_STATS[weapon].magazine, reserve: WEAPON_STATS[weapon].reserve };
+    save.equippedWeapon = weapon;
+    showMessage(`${WEAPON_NAMES[weapon]} achetée et chargée.`, 3);
+  }
+  persist();
+  updateHud();
+  openGarageShop();
+}
+
+function buyHome(home: HomeId): void {
+  const offer = HOME_CATALOG[home];
+  if (save.ownedHomes.includes(home)) {
+    save.homeId = home;
+  } else {
+    if (save.credits < offer.price) { showMessage(`Il manque ${offer.price - save.credits} ¢ pour cette maison.`, 2.5); return; }
+    save.credits -= offer.price;
+    save.ownedHomes.push(home);
+    save.homeId = home;
+    showMessage(`${offer.name} achetée. Sa porte devient ton point de reprise.`, 3.5);
+  }
+  checkpointPosition = { ...offer.interior };
+  persist();
+  updateHud();
+  openGarageShop();
+}
+
+function refillEquippedWeapon(): void {
+  const weapon = save.equippedWeapon;
+  const stats = WEAPON_STATS[weapon];
+  const price = 28;
+  if (save.credits < price) { showMessage('Crédits insuffisants pour la recharge.', 2.4); return; }
+  save.credits -= price;
+  save.ammo[weapon] = { magazine: stats.magazine, reserve: Math.min(stats.reserve * 2, save.ammo[weapon].reserve + stats.magazine * 2) };
+  persist();
+  updateHud();
+  openGarageShop();
+}
+
+function openGarageShop(): void {
+  const ownedVehicle = (model: VehicleModel) => save.ownedVehicles.includes(model);
+  const ownedWeapon = (weapon: WeaponId) => save.ownedWeapons.includes(weapon);
+  const vehicleRows = (['compact', 'sport', 'van'] as VehicleModel[]).map((model) => `<li>${VEHICLE_NAMES[model]} · ${ownedVehicle(model) ? (save.selectedVehicle === model ? 'sélectionnée' : 'au garage') : `${model === 'sport' ? 160 : 200} ¢`}</li>`).join('');
+  const weaponPrices: Record<WeaponId, number> = { pistol: 0, smg: 90, shotgun: 110, ion: 150 };
+  const weaponRows = (['pistol', 'smg', 'shotgun', 'ion'] as WeaponId[]).map((weapon) => `<li>${WEAPON_NAMES[weapon]} · ${ownedWeapon(weapon) ? `${save.ammo[weapon].magazine}/${save.ammo[weapon].reserve} munitions` : `${weaponPrices[weapon]} ¢`}</li>`).join('');
+  const homeRows = (['remises', 'houmeau'] as HomeId[]).map((home) => `<li>${HOME_CATALOG[home].name} · ${save.ownedHomes.includes(home) ? (save.homeId === home ? 'point de reprise' : 'achetée') : `${HOME_CATALOG[home].price} ¢`}</li>`).join('');
+  const actions: Array<{ label: string; run: () => void; style?: string }> = [];
+  for (const model of ['compact', 'sport', 'van'] as VehicleModel[]) {
+    const price = model === 'sport' ? 160 : 200;
+    actions.push({ label: ownedVehicle(model) ? `${save.selectedVehicle === model ? 'Sélectionnée' : 'Sélectionner'} · ${VEHICLE_NAMES[model]}` : `Acheter ${VEHICLE_NAMES[model]} · ${price} ¢`, run: () => buyOrSelectVehicle(model), style: model === 'sport' && !ownedVehicle(model) ? 'primary' : '' });
+  }
+  for (const weapon of ['pistol', 'smg', 'shotgun', 'ion'] as WeaponId[]) {
+    const price: Record<WeaponId, number> = { pistol: 0, smg: 90, shotgun: 110, ion: 150 };
+    actions.push({ label: ownedWeapon(weapon) ? `Équiper ${WEAPON_NAMES[weapon]}` : `Acheter ${WEAPON_NAMES[weapon]} · ${price[weapon]} ¢`, run: () => buyOrEquipWeapon(weapon) });
+  }
+  for (const home of ['remises', 'houmeau'] as HomeId[]) {
+    const offer = HOME_CATALOG[home];
+    actions.push({ label: save.ownedHomes.includes(home) ? `Choisir ${offer.name} comme refuge` : `Acheter ${offer.name} · ${offer.price} ¢`, run: () => buyHome(home) });
+  }
+  actions.push({ label: 'Recharger l’arme équipée · 28 ¢', run: refillEquippedWeapon });
+  actions.push({ label: 'Fermer le catalogue', run: closeDialog });
+  openDialog(
+    'Le garage de Mina',
+    `<p>Véhicules stockés à l’abri, armes et munitions disponibles avec ${save.credits} ¢.</p><div class="catalog-columns"><section><strong>VÉHICULES</strong><ul>${vehicleRows}</ul></section><section><strong>ARMES</strong><ul>${weaponRows}</ul></section><section><strong>MAISONS</strong><ul>${homeRows}</ul></section></div><p class="catalog-note">Une maison achetée sert de point de reprise et restaure la santé à sa porte. Les intérieurs restent accessibles à pied.</p>`,
+    actions,
+    'MARCHÉ · GARAGE DE MINA',
+  );
+}
+
+function interactWithHome(): boolean {
+  const home = (Object.keys(HOME_CATALOG) as HomeId[]).find((key) => distance(city.player.position.x, city.player.position.z, HOME_CATALOG[key].door.x, HOME_CATALOG[key].door.z) < 2.4);
+  if (!home) return false;
+  const offer = HOME_CATALOG[home];
+  if (!save.ownedHomes.includes(home)) {
+    showMessage(`${offer.name} est à vendre chez Mina.`, 3);
+    return true;
+  }
+  save.homeId = home;
+  checkpointPosition = { ...offer.interior };
+  city.player.health = 100;
+  persist();
+  updateHud();
+  showMessage(`${offer.name} activée comme refuge. Santé restaurée; le point de reprise est à l’intérieur.`, 4);
+  return true;
 }
 
 function moveMina(point: Point): void {
@@ -325,21 +528,38 @@ function setPlayerPosition(point: Point): void {
   const y = groundHeightAt(point) + .9;
   city.player.position.set(point.x, y, point.z);
   city.player.body.setTranslation({ x: point.x, y, z: point.z }, true);
+  lastSafePlayerPosition = { ...point };
+  blockedPlayerSeconds = 0;
   updateActorVisual(city.player);
 }
 
-function setCarPosition(point: Point, yaw = -Math.PI / 2): void {
+function setVehiclePosition(vehicle: City['car'], point: Point, yaw = 0): void {
   const groundY = groundHeightAt(point);
-  city.car.position.set(point.x, groundY + .57, point.z);
-  city.car.body.setTranslation({ x: point.x, y: groundY + .57, z: point.z }, true);
-  city.car.yaw = yaw;
-  city.car.group.position.set(point.x, groundY, point.z);
-  city.car.group.rotation.y = yaw;
-  city.car.speed = 0;
-  city.car.available = true;
-  city.car.contactHandles.clear();
-  city.car.impactCount = 0;
-  city.car.damageMarks.forEach((mark) => { mark.visible = false; });
+  vehicle.position.set(point.x, groundY + .57, point.z);
+  vehicle.body.setTranslation({ x: point.x, y: groundY + .57, z: point.z }, true);
+  vehicle.body.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
+  vehicle.yaw = yaw;
+  vehicle.group.position.set(point.x, groundY, point.z);
+  vehicle.group.rotation.y = yaw;
+  vehicle.speed = 0;
+  vehicle.contactHandles.clear();
+  vehicle.impactCount = 0;
+  vehicle.damageMarks.forEach((mark) => { mark.visible = false; });
+}
+
+function applyFleetSave(): void {
+  for (const vehicle of city.playerVehicles) {
+    const owned = save.ownedVehicles.includes(vehicle.model);
+    vehicle.available = owned;
+    vehicle.group.visible = owned;
+    vehicle.collider.setEnabled(owned);
+    if (!owned) vehicle.speed = 0;
+  }
+  city.car = city.playerVehicles.find((vehicle) => vehicle.model === save.selectedVehicle) ?? city.playerVehicles[0];
+}
+
+function setCarPosition(point: Point, yaw = 0): void {
+  setVehiclePosition(city.car, point, yaw);
 }
 
 function resetGuard(guard: Guard): void {
@@ -363,6 +583,8 @@ function resetGuard(guard: Guard): void {
 }
 
 function resetToCheckpoint(): void {
+  releaseControlledVehicle();
+  applyFleetSave();
   mainState = save.mainComplete ? 'complete' : 'accepted';
   vehicleMode = false;
   city.player.group.visible = true;
@@ -370,7 +592,9 @@ function resetToCheckpoint(): void {
   city.player.alive = true;
   city.player.health = 100;
   setPlayerPosition(checkpointPosition);
-  setCarPosition(CAR_POSITION);
+  for (const vehicle of city.playerVehicles) {
+    if (save.ownedVehicles.includes(vehicle.model)) setVehiclePosition(vehicle, FLEET_SPOTS[vehicle.model]);
+  }
   city.chip.visible = true;
   city.secondaryPackage.visible = save.secondaryStage === 1;
   moveMina(MINA_GARAGE);
@@ -378,9 +602,7 @@ function resetToCheckpoint(): void {
   setGate(false);
   setShortcut(save.shortcutOpen);
   cameraDisabledUntil = 0;
-  violenceAlarmUntil = 0;
-  observed = 0;
-  confirmedAt = -1000;
+  clearAlertState();
   chipTakenAt = -1000;
   lastDamageAt = -1000;
   refreshObjective();
@@ -398,8 +620,7 @@ function startMainContract(): void {
   for (const guard of city.guards) resetGuard(guard);
   setGate(false);
   setShortcut(false);
-  observed = 0;
-  confirmedAt = -1000;
+  clearAlertState();
   refreshObjective();
   closeDialog();
   showMessage('Contrat accepté. Deux entrées sont connues; le quai est surveillé.', 4.5);
@@ -423,6 +644,7 @@ function showMinaDialog(): void {
       `<p><strong>Mina :</strong> La puce est dans un dépôt logistique, au nord des voies. La porte principale donne sur l’avenue; une grille ouvre sur la cour de livraison.</p><p>Prends-la, puis décroche sous le pont. Je déchiffrerai ce qu’elle contient. Les vigiles ont un angle mort dans la cour. Choisis tes deux implants avant de partir.</p>${implantMarkup()}`,
       [
         { label: 'Accepter le contrat', style: 'primary', run: startMainContract },
+        { label: 'Voir le catalogue du garage', run: openGarageShop },
         { label: 'Pas encore', run: closeDialog },
       ],
       'BRIEFING · GARAGE DE MINA',
@@ -438,6 +660,7 @@ function showMinaDialog(): void {
       [
         { label: 'Reprendre au garage', style: 'primary', run: () => { resetToCheckpoint(); closeDialog(); } },
         { label: 'Abandonner le contrat', style: 'danger', run: abandonMainContract },
+        { label: 'Voir le catalogue du garage', run: openGarageShop },
         { label: 'Continuer à explorer', run: closeDialog },
       ],
       'POINT DE REPRISE',
@@ -459,6 +682,7 @@ function showMinaDialog(): void {
           refreshObjective();
           showMessage('U01 · Une porte de plus. Le module est dans le garage.', 4);
         } },
+        { label: 'Voir le catalogue du garage', run: openGarageShop },
         { label: 'Plus tard', run: () => { secondaryStorySeen = true; closeDialog(); refreshObjective(); } },
       ],
       'CONTRAT SECONDAIRE · GARAGE',
@@ -472,7 +696,10 @@ function showMinaDialog(): void {
     : save.secondaryStage === 2
       ? '<p>Le panneau est fixé à la grille de service ouverte. L’accès par l’avenue reste praticable.</p>'
       : '<p>Une partie des identités révoquées est encore récupérable. Mina déchiffre la puce; les Forges ont quelques raccourcis de plus ce soir.</p>';
-  openDialog('Le garage tient encore.', `${copy}${implantMarkup()}`, [{ label: 'Reprendre la rue', style: 'primary', run: closeDialog }]);
+  openDialog('Le garage tient encore.', `${copy}${implantMarkup()}`, [
+    { label: 'Voir le catalogue du garage', run: openGarageShop },
+    { label: 'Reprendre la rue', style: 'primary', run: closeDialog },
+  ]);
   $('#implant-slot-one')?.addEventListener('change', readImplantSelection);
   $('#implant-slot-two')?.addEventListener('change', readImplantSelection);
 }
@@ -526,7 +753,7 @@ function finishMainContract(): void {
   persist();
   city.chip.visible = false;
   moveMina(MINA_GARAGE);
-  violenceAlarmUntil = 0;
+  clearAlertState();
   setGate(true);
   setShortcut(true);
   for (const guard of city.guards) {
@@ -643,13 +870,20 @@ function interact(): void {
     showMessage('Module pris. Le panneau est sur la grille de service.', 3.5);
     return;
   }
+  if (interactWithHome()) return;
   const nearMina = distance(player.x, player.z, city.mina.position.x, city.mina.position.z) < 2.8 || distance(player.x, player.z, MINA_GARAGE.x, MINA_GARAGE.z) < 3.2;
   if (nearMina && (mainState === 'available' || save.secondaryUnlocked && save.secondaryStage === 0 && !save.sideRewardPaid)) {
     showMinaDialog();
     return;
   }
-  if (distance(player.x, player.z, city.car.position.x, city.car.position.z) < 2.85 && city.car.available) {
-    enterVehicle();
+  const nearbyVehicle = nearestPlayerVehicle(player);
+  if (nearbyVehicle && distance(player.x, player.z, nearbyVehicle.position.x, nearbyVehicle.position.z) < 3.2) {
+    enterVehicle(nearbyVehicle);
+    return;
+  }
+  const nearbyTraffic = nearestTrafficVehicle(player);
+  if (nearbyTraffic && distance(player.x, player.z, nearbyTraffic.position.x, nearbyTraffic.position.z) < 3.3) {
+    enterVehicle(nearbyTraffic);
     return;
   }
   if (distance(player.x, player.z, MINA_GARAGE.x, MINA_GARAGE.z) < 3.2 || distance(player.x, player.z, city.mina.position.x, city.mina.position.z) < 2.7) {
@@ -680,16 +914,76 @@ function takeChip(): void {
   showMessage('Alerte au dépôt. Mina t’attend sous le pont; coupe la ligne de vue.', 5);
 }
 
-function enterVehicle(): void {
-  if (!city.car.available) return;
+function nearestPlayerVehicle(point: Point): City['car'] | null {
+  return city.playerVehicles.filter((vehicle) => vehicle.available).sort((a, b) =>
+    distance(point.x, point.z, a.position.x, a.position.z) - distance(point.x, point.z, b.position.x, b.position.z),
+  )[0] ?? null;
+}
+
+function nearestTrafficVehicle(point: Point): TrafficVehicle | null {
+  return city.traffic.filter((vehicle) => !vehicle.hijacked && vehicle.collider.isEnabled()).sort((a, b) =>
+    distance(point.x, point.z, a.position.x, a.position.z) - distance(point.x, point.z, b.position.x, b.position.z),
+  )[0] ?? null;
+}
+
+function enterVehicle(vehicle: Vehicle = city.car): void {
+  if (!vehicle.available) return;
+  const stolen = city.traffic.find((traffic) => traffic === vehicle);
+  city.car = vehicle;
+  city.controlledVehicle = vehicle;
+  if (!stolen && city.playerVehicles.includes(vehicle)) {
+    save.selectedVehicle = vehicle.model;
+    persist();
+  }
   vehicleMode = true;
+  if (stolen) {
+    stolen.hijacked = true;
+    stolen.collider.setEnabled(true);
+    confirmedAt = gameTime;
+    violenceAlarmUntil = gameTime + 14;
+    observed = Math.max(observed, 1.2);
+    if (!city.pursuitVehicles.some((patrol) => patrol.active)) {
+      pursuitStartedAt = -1000;
+      pursuitDispatchAt = gameTime;
+    }
+    rememberPlayer({ x: vehicle.position.x, z: vehicle.position.z });
+    for (const guard of city.guards) if (guard.alive) chooseGuardTarget(guard, { x: vehicle.position.x, z: vehicle.position.z });
+    playAlarm();
+  }
   city.player.group.visible = false;
   city.player.collider.setEnabled(false);
   const playerY = groundHeightAt({ x: city.car.position.x, z: city.car.position.z }) + .9;
   city.player.position.set(city.car.position.x, playerY, city.car.position.z);
   city.player.body.setTranslation({ x: city.car.position.x, y: playerY, z: city.car.position.z }, true);
-  showMessage('Véhicule connecté. Lâche l’accélérateur avant de descendre.', 3);
+  showMessage(stolen ? 'Voiture civile détournée. Les vigiles lancent la poursuite.' : 'Véhicule connecté. Lâche l’accélérateur avant de descendre.', 3.5);
   updateHud();
+}
+
+function releaseControlledVehicle(): void {
+  const controlled = city.controlledVehicle;
+  if (controlled) {
+    const traffic = city.traffic.find((vehicle) => vehicle === controlled);
+    if (traffic) {
+      traffic.hijacked = false;
+      let nearest = 1;
+      let best = Number.POSITIVE_INFINITY;
+      traffic.route.forEach((point, index) => {
+        const score = distance(traffic.position.x, traffic.position.z, point.x, point.z);
+        if (score < best) { best = score; nearest = index; }
+      });
+      traffic.routeIndex = THREE.MathUtils.clamp(nearest, 1, traffic.route.length - 2);
+      const forwardX = -Math.sin(traffic.yaw);
+      const forwardZ = -Math.cos(traffic.yaw);
+      const towardNext = traffic.route[traffic.routeIndex + 1];
+      const towardPrevious = traffic.route[traffic.routeIndex - 1];
+      const nextDot = (towardNext.x - traffic.position.x) * forwardX + (towardNext.z - traffic.position.z) * forwardZ;
+      const previousDot = (towardPrevious.x - traffic.position.x) * forwardX + (towardPrevious.z - traffic.position.z) * forwardZ;
+      traffic.direction = nextDot >= previousDot ? 1 : -1;
+      traffic.pauseUntil = gameTime + .25;
+      traffic.stuckSeconds = 0;
+    }
+  }
+  city.controlledVehicle = null;
 }
 
 function exitVehicle(): void {
@@ -699,12 +993,13 @@ function exitVehicle(): void {
   for (const offset of candidates) {
     const x = city.car.position.x + offset.x;
     const z = city.car.position.z + offset.z;
-    if (!isAreaClear(x, z, .45)) continue;
+    if (!isAreaClear(x, z, .45, city.car)) continue;
     city.player.collider.setEnabled(true);
     setPlayerPosition({ x, z });
     city.player.group.visible = true;
     city.player.facing = city.car.yaw;
     vehicleMode = false;
+    releaseControlledVehicle();
     showMessage('À pied. Le véhicule reste ici.', 2.6);
     updateHud();
     return;
@@ -728,7 +1023,7 @@ function actorPoint(): Point {
   return vehicleMode ? { x: city.car.position.x, z: city.car.position.z } : { x: city.player.position.x, z: city.player.position.z };
 }
 
-function isAreaClear(x: number, z: number, radius: number): boolean {
+function isAreaClear(x: number, z: number, radius: number, ignoreVehicle?: City['car']): boolean {
   const floorY = groundHeightAt({ x, z });
   for (const object of city.blockers) {
     if (!object.visible) continue;
@@ -739,6 +1034,19 @@ function isAreaClear(x: number, z: number, radius: number): boolean {
       return x > bounds.min.x - radius && x < bounds.max.x + radius && z > bounds.min.z - radius && z < bounds.max.z + radius;
     };
     if ((object as THREE.Mesh).isMesh ? inspect(object) : (() => { let hit = false; object.traverse((child) => { if (inspect(child)) hit = true; }); return hit; })()) return false;
+  }
+  for (const vehicle of [...city.playerVehicles, ...city.traffic, ...city.pursuitVehicles.filter((entry) => entry.active)]) {
+    if (vehicle === ignoreVehicle || !vehicle.available || !vehicle.collider.isEnabled()) continue;
+    if (Math.abs(groundHeightAt({ x: vehicle.position.x, z: vehicle.position.z }) - floorY) > 1.4) continue;
+    const dx = x - vehicle.position.x;
+    const dz = z - vehicle.position.z;
+    const localX = Math.cos(vehicle.yaw) * dx + Math.sin(vehicle.yaw) * dz;
+    const localZ = -Math.sin(vehicle.yaw) * dx + Math.cos(vehicle.yaw) * dz;
+    if (Math.abs(localX) < vehicle.halfWidth + radius && Math.abs(localZ) < vehicle.halfLength + radius) return false;
+  }
+  for (const actor of [...city.guards, ...city.citizens]) {
+    if (!actor.alive || Math.abs(groundHeightAt({ x: actor.position.x, z: actor.position.z }) - floorY) > 1.4) continue;
+    if (distance(x, z, actor.position.x, actor.position.z) < .6 + radius) return false;
   }
   return true;
 }
@@ -776,29 +1084,41 @@ function navPoint(x: number, z: number): Point {
   return { x: city.navGrid.minX + x * city.navGrid.step, z: city.navGrid.minZ + z * city.navGrid.step };
 }
 
-function findRoute(start: Point, destination: Point): Point[] {
+function findRoute(start: Point, destination: Point, vehicleOnly = false): Point[] {
   const grid = city.navGrid;
   if (!grid.blocked.length) return [destination];
   const count = grid.width * grid.height;
   const index = (x: number, z: number) => z * grid.width + x;
+  const forbiddenVehicleCell = (x: number, z: number) => {
+    if (!vehicleOnly) return false;
+    const point = navPoint(x, z);
+    return point.x >= 121 && point.x <= 129 && point.z >= 64 && point.z <= 72;
+  };
   const seekFree = (cell: { x: number; z: number }, desiredHeight: number): { x: number; z: number } => {
-    if (!grid.blocked[index(cell.x, cell.z)] && Math.abs(grid.heights[index(cell.x, cell.z)] - desiredHeight) < 1.6) return cell;
+    let fallback: { x: number; z: number } | undefined;
+    if (!grid.blocked[index(cell.x, cell.z)] && !forbiddenVehicleCell(cell.x, cell.z)) {
+      if (Math.abs(grid.heights[index(cell.x, cell.z)] - desiredHeight) < 1.6) return cell;
+      fallback = cell;
+    }
     for (let ring = 1; ring <= 5; ring++) {
       for (let dz = -ring; dz <= ring; dz++) for (let dx = -ring; dx <= ring; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
         const x = cell.x + dx;
         const z = cell.z + dz;
         if (x < 0 || z < 0 || x >= grid.width || z >= grid.height) continue;
-        if (!grid.blocked[index(x, z)] && Math.abs(grid.heights[index(x, z)] - desiredHeight) < 1.6) return { x, z };
+        if (!grid.blocked[index(x, z)] && !forbiddenVehicleCell(x, z)) {
+          fallback ??= { x, z };
+          if (Math.abs(grid.heights[index(x, z)] - desiredHeight) < 1.6) return { x, z };
+        }
       }
     }
-    return cell;
+    return vehicleOnly ? fallback ?? cell : cell;
   };
   const source = seekFree(navCell(start), groundHeightAt(start));
   const target = seekFree(navCell(destination), groundHeightAt(destination));
   const startIndex = index(source.x, source.z);
   const goalIndex = index(target.x, target.z);
-  if (startIndex === goalIndex) return [destination];
+  if (startIndex === goalIndex) return [vehicleOnly ? navPoint(target.x, target.z) : destination];
   const g = new Float32Array(count).fill(Number.POSITIVE_INFINITY);
   const previous = new Int32Array(count).fill(-1);
   const closed = new Uint8Array(count);
@@ -850,7 +1170,7 @@ function findRoute(start: Point, destination: Point): Point[] {
       const nz = cz + dz;
       if (nx < 0 || nz < 0 || nx >= grid.width || nz >= grid.height) continue;
       const ni = index(nx, nz);
-      if (grid.blocked[ni] || closed[ni]) continue;
+      if (grid.blocked[ni] || closed[ni] || forbiddenVehicleCell(nx, nz)) continue;
       if (Math.abs(grid.heights[current.index] - grid.heights[ni]) > 1.6) continue;
       if (dx && dz && (grid.blocked[index(cx + dx, cz)] || grid.blocked[index(cx, cz + dz)])) continue;
       const cost = g[current.index] + (dx && dz ? scale / 10 : 1);
@@ -860,7 +1180,7 @@ function findRoute(start: Point, destination: Point): Point[] {
       push({ index: ni, f: cost + heuristic(nx, nz) });
     }
   }
-  if (previous[goalIndex] < 0) return [start];
+  if (previous[goalIndex] < 0) return vehicleOnly ? [] : [start];
   const cells: number[] = [];
   let cursor = goalIndex;
   while (cursor !== startIndex && cursor >= 0 && cells.length < count) {
@@ -869,14 +1189,21 @@ function findRoute(start: Point, destination: Point): Point[] {
   }
   cells.reverse();
   const points = cells.map((i) => navPoint(i % grid.width, Math.floor(i / grid.width)));
-  points.push(destination);
+  if (!vehicleOnly) points.push(destination);
   const smoothed: Point[] = [];
   let anchor = start;
   for (let i = 0; i < points.length; i++) {
-    if (i === points.length - 1 || !lineOfSight(
+    const nextPoint = points[i + 1];
+    const crossesVehicleStairs = vehicleOnly && nextPoint && Array.from({ length: Math.ceil(distance(anchor.x, anchor.z, nextPoint.x, nextPoint.z) / .35) + 1 }, (_, sample) => {
+      const t = sample / Math.max(1, Math.ceil(distance(anchor.x, anchor.z, nextPoint.x, nextPoint.z) / .35));
+      const x = THREE.MathUtils.lerp(anchor.x, nextPoint.x, t);
+      const z = THREE.MathUtils.lerp(anchor.z, nextPoint.z, t);
+      return x >= 121 && x <= 129 && z >= 64 && z <= 72;
+    }).some(Boolean);
+    if (i === points.length - 1 || (crossesVehicleStairs || !lineOfSight(
       new THREE.Vector3(anchor.x, groundHeightAt(anchor) + .9, anchor.z),
-      new THREE.Vector3(points[i + 1].x, groundHeightAt(points[i + 1]) + .9, points[i + 1].z), .08,
-    )) {
+      new THREE.Vector3(nextPoint.x, groundHeightAt(nextPoint) + .9, nextPoint.z), .08,
+    ))) {
       smoothed.push(points[i]);
       anchor = points[i];
     }
@@ -903,6 +1230,44 @@ function moveActor(actor: Character, direction: Point, speed: number, dt: number
   actor.facing = Math.atan2(-direction.x, -direction.z);
 }
 
+function recoverPlayerFromBlock(direction: Point, expectedDistance: number, movedDistance: number, dt: number): void {
+  if (expectedDistance < .001) { blockedPlayerSeconds = 0; return; }
+  const current = { x: city.player.position.x, z: city.player.position.z };
+  if (movedDistance > expectedDistance * .28) {
+    blockedPlayerSeconds = 0;
+    if (isAreaClear(current.x, current.z, .42)) lastSafePlayerPosition = current;
+    return;
+  }
+  blockedPlayerSeconds += dt;
+  if (blockedPlayerSeconds < 1.8) return;
+  const floorY = groundHeightAt(current);
+  let recovery: Point | null = null;
+  for (const radius of [.65, 1, 1.45, 1.9, 2.4]) {
+    const candidates = Array.from({ length: 16 }, (_, index) => {
+      const angle = index * Math.PI / 8;
+      return { x: current.x + Math.cos(angle) * radius, z: current.z + Math.sin(angle) * radius };
+    }).filter((point) => Math.abs(groundHeightAt(point) - floorY) < 1.1 && isAreaClear(point.x, point.z, .42));
+    if (candidates.length) {
+      candidates.sort((a, b) => {
+        const aBack = -((a.x - current.x) * direction.x + (a.z - current.z) * direction.z);
+        const bBack = -((b.x - current.x) * direction.x + (b.z - current.z) * direction.z);
+        return bBack - aBack;
+      });
+      recovery = candidates[0];
+      break;
+    }
+  }
+  if (!recovery && Math.abs(groundHeightAt(lastSafePlayerPosition) - floorY) < 1.1
+    && distance(current.x, current.z, lastSafePlayerPosition.x, lastSafePlayerPosition.z) < 3.2
+    && isAreaClear(lastSafePlayerPosition.x, lastSafePlayerPosition.z, .42)) recovery = lastSafePlayerPosition;
+  if (recovery && distance(current.x, current.z, recovery.x, recovery.z) > .25) {
+    setPlayerPosition(recovery);
+    lastSafePlayerPosition = recovery;
+    showMessage('Le passage était bloqué. Tu es replacé sur un sol libre à proximité.', 2.8);
+  }
+  blockedPlayerSeconds = 0;
+}
+
 function canSeeTarget(observer: Character, range: number, fovCos: number): boolean {
   if (!observer.alive) return false;
   const target = actorPoint();
@@ -915,7 +1280,24 @@ function canSeeTarget(observer: Character, range: number, fovCos: number): boole
   if ((forwardX * dx + forwardZ * dz) / length < fovCos) return false;
   const source = new THREE.Vector3(observer.position.x, observer.position.y + .25, observer.position.z);
   const targetPoint = new THREE.Vector3(target.x, groundHeightAt(target) + (vehicleMode ? .95 : 1.0), target.z);
-  return lineOfSight(source, targetPoint, .28);
+  return lineOfSight(source, targetPoint, .28) && !trafficOccludesLine(city,
+    { x: source.x, z: source.z }, { x: targetPoint.x, z: targetPoint.z }, 1.15, vehicleMode ? .95 : 1,
+  );
+}
+
+function canPursuitSeeTarget(patrol: PursuitVehicle, target: Point): boolean {
+  if (!patrol.active || Math.abs(groundHeightAt(target) - groundHeightAt({ x: patrol.position.x, z: patrol.position.z })) > 1.4) return false;
+  const dx = target.x - patrol.position.x;
+  const dz = target.z - patrol.position.z;
+  const length = Math.hypot(dx, dz);
+  if (length > 62 || length < .5) return false;
+  const forwardX = -Math.sin(patrol.yaw);
+  const forwardZ = -Math.cos(patrol.yaw);
+  if ((forwardX * dx + forwardZ * dz) / length < -.25) return false;
+  const source = { x: patrol.position.x, z: patrol.position.z };
+  const from = new THREE.Vector3(source.x, groundHeightAt(source) + 1.22, source.z);
+  const to = new THREE.Vector3(target.x, groundHeightAt(target) + (vehicleMode ? .95 : 1), target.z);
+  return lineOfSight(from, to, .25) && !trafficOccludesLine(city, source, target, 1.22, vehicleMode ? .95 : 1);
 }
 
 function cameraSeesPlayer(): boolean {
@@ -928,34 +1310,67 @@ function cameraSeesPlayer(): boolean {
   const yaw = city.cameraUnit.rotation.y;
   const dot = (-Math.sin(yaw) * dx - Math.cos(yaw) * dz) / length;
   if (dot < Math.cos(.57)) return false;
-  return lineOfSight(new THREE.Vector3(CAMERA_POINT.x, groundHeightAt(CAMERA_POINT) + 1.55, CAMERA_POINT.z), new THREE.Vector3(target.x, groundHeightAt(target) + 1, target.z), .2);
+  const source = new THREE.Vector3(CAMERA_POINT.x, groundHeightAt(CAMERA_POINT) + 1.55, CAMERA_POINT.z);
+  const targetPoint = new THREE.Vector3(target.x, groundHeightAt(target) + (vehicleMode ? .95 : 1), target.z);
+  return lineOfSight(source, targetPoint, .2) && !trafficOccludesLine(city,
+    { x: source.x, z: source.z }, target, 1.55, vehicleMode ? .95 : 1,
+  );
 }
 
 function securityActive(): boolean {
   return mainState === 'accepted' || mainState === 'chip' || gameTime < violenceAlarmUntil;
 }
 
+function currentAlertLevel(): number {
+  if (!securityActive()) return 0;
+  const sinceSeen = gameTime - lastSeenAt;
+  const hotPursuit = pursuitStartedAt > -500 && gameTime - pursuitStartedAt >= 14
+    && (observed >= .42 || gameTime - lastPoliceSightAt < 5);
+  if (hotPursuit) return 4;
+  if (gameTime < violenceAlarmUntil || observed >= 1.05) return 3;
+  if (observed >= .42) return 2;
+  if (observed > .04 || sinceSeen < 5 || city.pursuitVehicles.some((patrol) => patrol.active)
+    || city.guards.some((guard) => guard.alive && (guard.state === 'chase' || guard.state === 'investigate' || guard.state === 'search'))) return 1;
+  return 0;
+}
+
+function rememberPlayer(point: Point): void {
+  lastKnownPlayerPosition = { ...point };
+  lastSeenAt = gameTime;
+  const seenLevel = gameTime < violenceAlarmUntil || observed >= 1.05 ? 3 : observed >= .42 ? 2 : 1;
+  lastSeenWantedLevel = Math.max(lastSeenWantedLevel, seenLevel);
+  for (const patrol of city.pursuitVehicles) {
+    if (!patrol.active) continue;
+    patrol.lastSeenTarget = { ...point };
+    patrol.lastSeenAt = gameTime;
+  }
+}
+
 function chooseGuardTarget(guard: Guard, target: Point): void {
+  const targetMoved = !guard.memory || distance(guard.memory.x, guard.memory.z, target.x, target.z) > 2.2;
+  if (guard.state !== 'chase' || targetMoved) {
+    guard.route = [];
+    guard.pathClock = 0;
+  }
   guard.memory = { ...target };
   guard.state = 'chase';
-  guard.stateUntil = gameTime + 10;
-  guard.route = [];
-  guard.pathClock = 0;
+  guard.stateUntil = gameTime + (lastSeenWantedLevel >= 3 ? 30 : lastSeenWantedLevel >= 2 ? 22 : 12);
 }
 
 function updateGuard(guard: Guard, dt: number, direct: boolean): void {
   if (!guard.alive) return;
   guard.walking = false;
+  const guardMemoryWindow = lastSeenWantedLevel >= 3 ? 38 : lastSeenWantedLevel >= 2 ? 30 : 16;
   if (guard.state === 'stunned') {
     if (gameTime < guard.stateUntil) return;
     guard.collider.setEnabled(true);
-    guard.state = securityActive() && gameTime - confirmedAt < 10 ? 'chase' : 'search';
+    guard.state = securityActive() && lastSeenAt > -500 && gameTime - lastSeenAt < guardMemoryWindow ? 'chase' : 'search';
     guard.stateUntil = gameTime + 4;
   }
   const target = actorPoint();
   if (direct && securityActive()) chooseGuardTarget(guard, target);
 
-  if (!direct && securityActive() && gameTime - confirmedAt > 10 && (guard.state === 'chase' || guard.state === 'investigate')) {
+  if (!direct && securityActive() && lastSeenAt > -500 && gameTime - lastSeenAt > guardMemoryWindow && (guard.state === 'chase' || guard.state === 'investigate')) {
     guard.state = 'search';
     guard.stateUntil = gameTime + 5;
     guard.route = [];
@@ -1051,14 +1466,17 @@ function updateSecurity(dt: number): void {
   city.cameraCone.rotation.y = city.cameraUnit.rotation.y;
   const cameraDirect = active && cameraSeesPlayer();
   const guardDirect = city.guards.some((guard) => guard.alive && canSeeTarget(guard, 15, Math.cos(.72)));
-  const direct = cameraDirect || guardDirect;
+  const target = actorPoint();
+  const pursuitDirect = city.pursuitVehicles.some((patrol) => canPursuitSeeTarget(patrol, target));
+  if (pursuitDirect) lastPoliceSightAt = gameTime;
+  const direct = cameraDirect || guardDirect || pursuitDirect;
   const wasConfirmed = observed >= 1.05;
   if (direct) {
     observed = Math.min(1.45, observed + dt * .95);
+    rememberPlayer(target);
     if (observed >= 1.05) {
       if (!wasConfirmed) playAlarm();
       confirmedAt = gameTime;
-      const target = actorPoint();
       for (const guard of city.guards) if (guard.alive) chooseGuardTarget(guard, target);
     }
   } else {
@@ -1098,13 +1516,16 @@ function hitPlayer(damage: number): void {
     if (mainState === 'accepted' || mainState === 'chip') showFailure();
     else {
       city.player.health = 100;
-      setPlayerPosition(MINA_GARAGE);
+      const refuge = save.homeId ? HOME_CATALOG[save.homeId].interior : MINA_GARAGE;
+      setPlayerPosition(refuge);
       if (vehicleMode) {
         vehicleMode = false;
+        releaseControlledVehicle();
+        applyFleetSave();
         city.player.collider.setEnabled(true);
         city.player.group.visible = true;
       }
-      showMessage('Tu as perdu connaissance. Réveil au garage; 20 ¢ pour les soins.', 4);
+      showMessage(save.homeId ? 'Tu as perdu connaissance. Réveil au refuge; 20 ¢ pour les soins.' : 'Tu as perdu connaissance. Réveil au garage; 20 ¢ pour les soins.', 4);
       save.credits = Math.max(0, save.credits - 20);
       persist();
     }
@@ -1135,6 +1556,7 @@ function hitGuard(guard: Guard, damage: number): void {
   confirmedAt = gameTime;
   observed = Math.max(observed, 1.2);
   violenceAlarmUntil = gameTime + 20;
+  rememberPlayer(target);
   if (guard.health <= 0) {
     guard.health = 0;
     guard.alive = false;
@@ -1151,12 +1573,23 @@ function hitGuard(guard: Guard, damage: number): void {
 }
 
 function fireWeapon(): void {
-  if (!started || paused || dialogOpen || journalOpen || vehicleMode || gameTime < weaponReadyAt) return;
-  weaponReadyAt = gameTime + .24;
-  playShot();
+  if (!started || paused || dialogOpen || journalOpen || vehicleMode || gameTime < weaponReadyAt || reloadFinishesAt > gameTime) return;
+  const weapon = save.equippedWeapon;
+  const stats = WEAPON_STATS[weapon];
+  const ammo = save.ammo[weapon];
+  if (ammo.magazine <= 0) {
+    weaponReadyAt = gameTime + .35;
+    showMessage(ammo.reserve > 0 ? `${WEAPON_NAMES[weapon]} vide · G pour recharger.` : `${WEAPON_NAMES[weapon]} vide · retourne au garage pour acheter des munitions.`, 2.1);
+    return;
+  }
   const origin = actorPoint();
   const direction = new THREE.Vector2(aimPoint.x - origin.x, aimPoint.z - origin.z);
   if (direction.lengthSq() < .05) return;
+  ammo.magazine--;
+  persist();
+  updateHud();
+  weaponReadyAt = gameTime + stats.delay;
+  playShot();
   direction.normalize();
   playerAim.set(direction.x, 0, direction.y).normalize();
   city.player.facing = Math.atan2(-direction.x, -direction.y);
@@ -1167,18 +1600,19 @@ function fireWeapon(): void {
     const dz = guard.position.z - origin.z;
     const along = dx * direction.x + dz * direction.y;
     const error = Math.abs(dx * direction.y - dz * direction.x);
-    if (along > .4 && along < 16 && error < .64 && lineOfSight(new THREE.Vector3(origin.x, groundHeightAt(origin) + 1.12, origin.z), new THREE.Vector3(guard.position.x, groundHeightAt(guard.position) + 1, guard.position.z), .15)) {
+    if (along > .4 && along < stats.range && error < stats.spread && lineOfSight(new THREE.Vector3(origin.x, groundHeightAt(origin) + 1.12, origin.z), new THREE.Vector3(guard.position.x, groundHeightAt(guard.position) + 1, guard.position.z), .15)) {
       candidates.push({ guard, along, error });
     }
   }
   candidates.sort((a, b) => a.along - b.along || a.error - b.error);
   if (candidates.length) {
-    const victim = candidates[0].guard;
+    const victims = weapon === 'shotgun' ? candidates.slice(0, 2) : candidates.slice(0, 1);
+    const victim = victims[0].guard;
     spawnTrace(origin, { x: victim.position.x, z: victim.position.z });
-    hitGuard(victim, 36);
+    for (const target of victims) hitGuard(target.guard, stats.damage);
   } else {
     spawnTrace(origin, { x: aimPoint.x, z: aimPoint.z });
-    showMessage('Le coup de feu résonne dans la cour.', 2);
+    showMessage(`${WEAPON_NAMES[weapon]} · ${ammo.magazine}/${ammo.reserve}. Le tir résonne dans la cour.`, 1.7);
     const heard = city.guards.filter((guard) => guard.alive && distance(guard.position.x, guard.position.z, origin.x, origin.z) < 20);
     const witnessed = cameraSeesPlayer() || city.guards.some((guard) => guard.alive && canSeeTarget(guard, 15, Math.cos(.72)));
     if (witnessed) {
@@ -1196,6 +1630,45 @@ function fireWeapon(): void {
       }
     }
   }
+}
+
+function equipWeapon(weapon: WeaponId): void {
+  if (!save.ownedWeapons.includes(weapon)) {
+    showMessage(`${WEAPON_NAMES[weapon]} disponible au garage de Mina.`, 2.4);
+    return;
+  }
+  reloadFinishesAt = 0;
+  reloadWeapon = null;
+  save.equippedWeapon = weapon;
+  persist();
+  updateHud();
+  showMessage(`${WEAPON_NAMES[weapon]} équipée · ${save.ammo[weapon].magazine}/${save.ammo[weapon].reserve}.`, 2.2);
+}
+
+function startReload(): void {
+  const weapon = save.equippedWeapon;
+  const stats = WEAPON_STATS[weapon];
+  const ammo = save.ammo[weapon];
+  if (reloadFinishesAt > gameTime) return;
+  if (ammo.magazine >= stats.magazine) { showMessage('Chargeur déjà plein.', 1.7); return; }
+  if (ammo.reserve <= 0) { showMessage('Plus de munitions en réserve. Passe au garage de Mina.', 2.3); return; }
+  reloadWeapon = weapon;
+  reloadFinishesAt = gameTime + stats.reload;
+  showMessage(`Recharge du ${WEAPON_NAMES[weapon]}…`, stats.reload + .4);
+}
+
+function updateReload(): void {
+  if (!reloadWeapon || gameTime < reloadFinishesAt) return;
+  const weapon = reloadWeapon;
+  const ammo = save.ammo[weapon];
+  const amount = Math.min(WEAPON_STATS[weapon].magazine - ammo.magazine, ammo.reserve);
+  ammo.magazine += amount;
+  ammo.reserve -= amount;
+  reloadWeapon = null;
+  reloadFinishesAt = 0;
+  persist();
+  updateHud();
+  showMessage(`${WEAPON_NAMES[weapon]} rechargé · ${ammo.magazine}/${ammo.reserve}.`, 1.8);
 }
 
 function useImplant(slot: 0 | 1): void {
@@ -1265,14 +1738,14 @@ function updateVehicle(dt: number): void {
   const brake = pressed.has('KeyS') || pressed.has('ArrowDown');
   const left = pressed.has('KeyA') || pressed.has('KeyQ') || pressed.has('ArrowLeft');
   const right = pressed.has('KeyD') || pressed.has('ArrowRight');
-  if (accelerate) car.speed = Math.min(9.1, car.speed + 8.6 * dt);
+  if (accelerate) car.speed = Math.min(car.maxSpeed, car.speed + car.acceleration * dt);
   if (brake) {
     if (car.speed > .25) car.speed = Math.max(0, car.speed - 17 * dt);
     else car.speed = Math.max(-4.1, car.speed - 5.8 * dt);
   }
   if (!accelerate && !brake) car.speed = Math.abs(car.speed) < .1 ? 0 : car.speed - Math.sign(car.speed) * Math.min(Math.abs(car.speed), 1.75 * dt);
   const steering = (right ? 1 : 0) - (left ? 1 : 0);
-  if (steering) car.yaw += steering * Math.min(1, Math.abs(car.speed) / 2.2) * 1.6 * dt * (car.speed >= 0 ? 1 : -1);
+  if (steering) car.yaw += steering * Math.min(1, Math.abs(car.speed) / 2.2) * car.steering * dt * (car.speed >= 0 ? 1 : -1);
   const forward = new THREE.Vector3(-Math.sin(car.yaw), 0, -Math.cos(car.yaw));
   const desired = { x: forward.x * car.speed * dt, z: forward.z * car.speed * dt };
   const intendedEnd = { x: car.position.x + desired.x, z: car.position.z + desired.z };
@@ -1281,7 +1754,7 @@ function updateVehicle(dt: number): void {
   const candidates: ImpactTarget[] = impactSpeed > .01 ? [
     ...city.guards.filter((guard) => guard.alive).map((entity) => ({ kind: 'guard' as const, entity, range: 1.95 })),
     ...city.citizens.filter((person) => person.alive).map((entity) => ({ kind: 'citizen' as const, entity, range: 1.9 })),
-    ...city.traffic.filter((traffic) => traffic.collider.isEnabled()).map((entity) => ({ kind: 'traffic' as const, entity, range: 2.5 })),
+    ...city.traffic.filter((traffic) => traffic !== car && traffic.collider.isEnabled()).map((entity) => ({ kind: 'traffic' as const, entity, range: 2.5 })),
   ] : [];
   const impactTarget = candidates
     .map((candidate) => ({ candidate, distance: distanceToSegment(candidate.entity.position, { x: car.position.x, z: car.position.z }, intendedEnd) }))
@@ -1389,10 +1862,11 @@ function updateVehicle(dt: number): void {
     showMessage(severity > 5 ? 'Choc grave. Les vigiles et les passants réagissent.' : 'Collision. Les passants s’écartent.', 3);
     contacts.add(impactTarget.entity.collider.handle);
   }
-  const nearbyActors: Array<{ entity: Character | typeof city.citizens[number] | typeof city.traffic[number]; range: number }> = [
+  const nearbyActors: Array<{ entity: Character | typeof city.citizens[number] | typeof city.traffic[number] | typeof city.pursuitVehicles[number]; range: number }> = [
     ...city.guards.map((entity) => ({ entity, range: 2.45 })),
     ...city.citizens.map((entity) => ({ entity, range: 2.4 })),
-    ...city.traffic.map((entity) => ({ entity, range: 3 })),
+    ...city.traffic.filter((entity) => entity !== car).map((entity) => ({ entity, range: 3 })),
+    ...city.pursuitVehicles.filter((entity) => entity.active).map((entity) => ({ entity, range: 3 })),
   ];
   for (const { entity, range } of nearbyActors) {
     if (previousContacts.has(entity.collider.handle) && distance(car.position.x, car.position.z, entity.position.x, entity.position.z) < range) {
@@ -1402,8 +1876,173 @@ function updateVehicle(dt: number): void {
   car.contactHandles = contacts;
 }
 
+function spawnPursuitVehicle(vehicle: PursuitVehicle, target: Point): boolean {
+  const floorY = groundHeightAt(target);
+  const candidates = PURSUIT_SPAWNS.filter((point) =>
+    Math.abs(groundHeightAt(point) - floorY) < 1.4
+    && distance(point.x, point.z, target.x, target.z) > 11
+    && ROAD_ROUTES.every((route) => route.points.slice(0, -1).every((segment, index) =>
+      distanceToSegment(point, segment, route.points[index + 1]) > route.width / 2 + 1.8,
+    ))
+    && !ROAD_JUNCTIONS.some((junction) => distance(point.x, point.z, junction.point.x, junction.point.z) < 6.4)
+    && isAreaClear(point.x, point.z, 1.05, city.controlledVehicle ?? undefined)
+    && city.pursuitVehicles.filter((other) => other.active).every((other) => distance(point.x, point.z, other.position.x, other.position.z) > 8),
+  );
+  if (!candidates.length) return false;
+  candidates.sort((a, b) => Math.abs(distance(a.x, a.z, target.x, target.z) - 24) - Math.abs(distance(b.x, b.z, target.x, target.z) - 24));
+  const spawn = candidates[0];
+  setVehiclePosition(vehicle, spawn);
+  vehicle.spawn = { ...spawn };
+  vehicle.yaw = Math.atan2(-(target.x - spawn.x), -(target.z - spawn.z));
+  vehicle.body.setRotation({ x: 0, y: Math.sin(vehicle.yaw / 2), z: 0, w: Math.cos(vehicle.yaw / 2) }, true);
+  vehicle.group.rotation.y = vehicle.yaw;
+  vehicle.route = findRoute(spawn, target, true);
+  if (!vehicle.route.length) {
+    setVehiclePosition(vehicle, vehicle.spawn);
+    return false;
+  }
+  vehicle.lastSeenTarget = { ...target };
+  vehicle.lastSeenAt = gameTime;
+  vehicle.active = true;
+  vehicle.group.visible = true;
+  vehicle.collider.setEnabled(true);
+  vehicle.routeIndex = 0;
+  vehicle.replanClock = .45;
+  vehicle.stuckSeconds = 0;
+  vehicle.group.userData.reverseUntil = 0;
+  return true;
+}
+
+function deactivatePursuitVehicle(vehicle: PursuitVehicle): void {
+  vehicle.active = false;
+  vehicle.group.visible = false;
+  vehicle.collider.setEnabled(false);
+  vehicle.route = [];
+  vehicle.lastSeenTarget = null;
+  vehicle.lastSeenAt = -1000;
+  setVehiclePosition(vehicle, vehicle.spawn);
+}
+
+function clearAlertState(): void {
+  violenceAlarmUntil = 0;
+  observed = 0;
+  confirmedAt = -1000;
+  lastSeenAt = -1000;
+  lastKnownPlayerPosition = null;
+  lastSeenWantedLevel = 0;
+  pursuitStartedAt = -1000;
+  lastPoliceSightAt = -1000;
+  pursuitDispatchAt = gameTime;
+  for (const patrol of city.pursuitVehicles) if (patrol.active) deactivatePursuitVehicle(patrol);
+}
+
+function updatePursuit(dt: number): void {
+  const target = actorPoint();
+  if (city.pursuitVehicles.some((vehicle) => canPursuitSeeTarget(vehicle, target))) {
+    lastPoliceSightAt = gameTime;
+    rememberPlayer(target);
+  }
+  let level = currentAlertLevel();
+  let activeCount = city.pursuitVehicles.filter((vehicle) => vehicle.active).length;
+  const desiredUnits = level >= 4 ? 4 : level >= 3 ? 2 : level >= 2 ? 1 : 0;
+  if (desiredUnits > activeCount && gameTime >= pursuitDispatchAt) {
+    const available = city.pursuitVehicles.find((vehicle) => !vehicle.active);
+    if (available && spawnPursuitVehicle(available, lastKnownPlayerPosition ?? target)) {
+      if (pursuitStartedAt < 0) pursuitStartedAt = gameTime;
+      activeCount++;
+      const delay = activeCount === 1 ? 7 : level >= 4 ? 6 : 8;
+      pursuitDispatchAt = gameTime + delay;
+      showMessage(activeCount === 1 ? 'Gyrophares dans le rétro. Une patrouille vous poursuit.' : 'Renforts en voiture envoyés sur votre dernière position.', 3.2);
+      level = currentAlertLevel();
+    } else {
+      pursuitDispatchAt = gameTime + 1.5;
+    }
+  }
+
+  const memoryWindow = lastSeenWantedLevel >= 3 ? 24 : lastSeenWantedLevel >= 2 ? 18 : 12;
+  for (const vehicle of city.pursuitVehicles) {
+    if (!vehicle.active) continue;
+    if (gameTime - vehicle.lastSeenAt > memoryWindow) {
+      deactivatePursuitVehicle(vehicle);
+      continue;
+    }
+    const lastKnown = vehicle.lastSeenTarget ?? lastKnownPlayerPosition ?? target;
+    const lostFor = gameTime - vehicle.lastSeenAt;
+    let destination = lastKnown;
+    if (lostFor > 5 && distance(vehicle.position.x, vehicle.position.z, lastKnown.x, lastKnown.z) < 4.5) {
+      const searchPoint = Math.floor((lostFor - 5) / 2) % 4;
+      const searchOffsets = [{ x: 6, z: 0 }, { x: 0, z: 6 }, { x: -6, z: 0 }, { x: 0, z: -6 }];
+      destination = { x: lastKnown.x + searchOffsets[searchPoint].x, z: lastKnown.z + searchOffsets[searchPoint].z };
+    }
+    vehicle.replanClock -= dt;
+    if (!vehicle.route.length || vehicle.replanClock <= 0) {
+      vehicle.route = findRoute({ x: vehicle.position.x, z: vehicle.position.z }, destination, true);
+      vehicle.routeIndex = 0;
+      vehicle.replanClock = .48;
+    }
+    if (!vehicle.route.length) {
+      vehicle.speed = THREE.MathUtils.damp(vehicle.speed, 0, 2.8, dt);
+      continue;
+    }
+    while (vehicle.routeIndex < vehicle.route.length - 1) {
+      const waypoint = vehicle.route[vehicle.routeIndex];
+      if (distance(vehicle.position.x, vehicle.position.z, waypoint.x, waypoint.z) > 1.8) break;
+      vehicle.routeIndex++;
+    }
+    const waypoint = vehicle.route[Math.min(vehicle.routeIndex, Math.max(0, vehicle.route.length - 1))] ?? target;
+    const dx = waypoint.x - vehicle.position.x;
+    const dz = waypoint.z - vehicle.position.z;
+    const waypointDistance = Math.hypot(dx, dz);
+    const desiredYaw = Math.atan2(-dx, -dz);
+    let yawDelta = desiredYaw - vehicle.yaw;
+    yawDelta = ((yawDelta + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    const reverseUntil = Number(vehicle.group.userData.reverseUntil ?? 0);
+    const closeToTarget = distance(vehicle.position.x, vehicle.position.z, destination.x, destination.z) < 3.5;
+    let desiredSpeed = reverseUntil > gameTime ? -2.4 : closeToTarget ? 2.2 : Math.min(8.2, 5.6 + waypointDistance * .16);
+    if (Math.abs(yawDelta) > .82) desiredSpeed *= .7;
+    vehicle.speed = THREE.MathUtils.damp(vehicle.speed, desiredSpeed, 2.8, dt);
+    vehicle.yaw += THREE.MathUtils.clamp(yawDelta, -1, 1) * Math.min(1, Math.abs(vehicle.speed) / 2) * vehicle.steering * dt * Math.sign(vehicle.speed || 1);
+    const forward = new THREE.Vector3(-Math.sin(vehicle.yaw), 0, -Math.cos(vehicle.yaw));
+    const move = { x: forward.x * vehicle.speed * dt, z: forward.z * vehicle.speed * dt };
+    const start = { x: vehicle.position.x, z: vehicle.position.z };
+    const oldFloor = groundHeightAt(start);
+    const nextFloor = groundHeightAt({ x: start.x + move.x, z: start.z + move.z });
+    vehicle.controller.computeColliderMovement(vehicle.collider, { x: move.x, y: nextFloor - oldFloor, z: move.z });
+    const moved = vehicle.controller.computedMovement();
+    const movedDistance = Math.hypot(moved.x, moved.z);
+    vehicle.position.x += moved.x;
+    vehicle.position.z += moved.z;
+    const floorY = groundHeightAt({ x: vehicle.position.x, z: vehicle.position.z });
+    vehicle.position.y = floorY + .57;
+    vehicle.body.setTranslation({ x: vehicle.position.x, y: vehicle.position.y, z: vehicle.position.z }, true);
+    vehicle.body.setRotation({ x: 0, y: Math.sin(vehicle.yaw / 2), z: 0, w: Math.cos(vehicle.yaw / 2) }, true);
+    vehicle.group.position.set(vehicle.position.x, floorY, vehicle.position.z);
+    vehicle.group.rotation.y = vehicle.yaw;
+    if (movedDistance < Math.hypot(move.x, move.z) * .32 && Math.abs(vehicle.speed) > 1) {
+      vehicle.stuckSeconds += dt;
+      if (vehicle.stuckSeconds > 1.25) {
+        vehicle.group.userData.reverseUntil = gameTime + .62;
+        vehicle.replanClock = 0;
+        vehicle.stuckSeconds = 0;
+      }
+    } else vehicle.stuckSeconds = Math.max(0, vehicle.stuckSeconds - dt * 2);
+    const flash = Math.floor(gameTime * 8 + (vehicle.spawn.x % 3)) % 2 === 0;
+    vehicle.lightbar.children[0].visible = flash;
+    vehicle.lightbar.children[1].visible = !flash;
+  }
+
+  activeCount = city.pursuitVehicles.filter((vehicle) => vehicle.active).length;
+  if (!activeCount && level === 0 && gameTime - lastSeenAt > 42) {
+    pursuitStartedAt = -1000;
+    lastKnownPlayerPosition = null;
+    lastSeenWantedLevel = 0;
+    lastPoliceSightAt = -1000;
+  }
+}
+
 function fixedUpdate(dt: number): void {
   gameTime += dt;
+  updateReload();
   const fleeingAlarm = observed >= .72 || gameTime < violenceAlarmUntil || mainState === 'chip' && gameTime - confirmedAt < 12;
   const activityPhase = updateForgesLife(city, dt, gameTime, actorPoint(), fleeingAlarm);
   if (previousActivityPhase >= 0 && activityPhase !== previousActivityPhase) {
@@ -1414,7 +2053,16 @@ function fixedUpdate(dt: number): void {
     const x = Number(pressed.has('KeyD') || pressed.has('ArrowRight')) - Number(pressed.has('KeyA') || pressed.has('KeyQ') || pressed.has('ArrowLeft'));
     const z = Number(pressed.has('KeyS') || pressed.has('ArrowDown')) - Number(pressed.has('KeyW') || pressed.has('KeyZ') || pressed.has('ArrowUp'));
     city.player.walking = Boolean(x || z);
-    if (x || z) moveActor(city.player, { x, z }, 4.4, dt);
+    if (x || z) {
+      const before = { x: city.player.position.x, z: city.player.position.z };
+      moveActor(city.player, { x, z }, 4.4, dt);
+      recoverPlayerFromBlock({ x, z }, Math.hypot(x, z) > 1 ? 4.4 * dt : Math.hypot(x, z) * 4.4 * dt, distance(before.x, before.z, city.player.position.x, city.player.position.z), dt);
+    } else {
+      blockedPlayerSeconds = 0;
+      const safe = { x: city.player.position.x, z: city.player.position.z };
+      if (isAreaClear(safe.x, safe.z, .42)) lastSafePlayerPosition = safe;
+    }
+    if (mouseHeld) fireWeapon();
     const dx = aimPoint.x - city.player.position.x;
     const dz = aimPoint.z - city.player.position.z;
     if (Math.hypot(dx, dz) > .1) city.player.facing = Math.atan2(-dx, -dz);
@@ -1423,6 +2071,8 @@ function fixedUpdate(dt: number): void {
     updateVehicle(dt);
   }
   updateSecurity(dt);
+  updatePursuit(dt);
+  updateAlertHud();
   physics.step();
 }
 
@@ -1497,8 +2147,13 @@ function updateInteraction(): void {
     key = 'E'; label = 'OBJECTIF'; text = 'Prendre la puce';
   } else if (distance(actor.x, actor.z, city.mina.position.x, city.mina.position.z) < 2.8 && (mainState === 'available' || save.secondaryUnlocked && save.secondaryStage === 0 && !save.sideRewardPaid)) {
     key = 'E'; label = 'CONTACT'; text = mainState === 'available' ? 'Écouter Mina' : 'Nouvelle quête · Mina';
-  } else if (!vehicleMode && city.car.available && distance(actor.x, actor.z, city.car.position.x, city.car.position.z) < 3.2) {
+  } else if (!vehicleMode && (Object.keys(HOME_CATALOG) as HomeId[]).some((home) => distance(actor.x, actor.z, HOME_CATALOG[home].door.x, HOME_CATALOG[home].door.z) < 2.4)) {
+    const home = (Object.keys(HOME_CATALOG) as HomeId[]).find((key) => distance(actor.x, actor.z, HOME_CATALOG[key].door.x, HOME_CATALOG[key].door.z) < 2.4)!;
+    key = 'E'; label = 'REFUGE'; text = save.ownedHomes.includes(home) ? `Activer ${HOME_CATALOG[home].name}` : `Voir ${HOME_CATALOG[home].name}`;
+  } else if (!vehicleMode && nearestPlayerVehicle(actor) && distance(actor.x, actor.z, nearestPlayerVehicle(actor)!.position.x, nearestPlayerVehicle(actor)!.position.z) < 3.2) {
     key = 'E'; label = 'VÉHICULE'; text = 'Prendre le volant';
+  } else if (!vehicleMode && nearestTrafficVehicle(actor) && distance(actor.x, actor.z, nearestTrafficVehicle(actor)!.position.x, nearestTrafficVehicle(actor)!.position.z) < 3.3) {
+    key = 'E'; label = 'CIRCULATION'; text = 'Intercepter cette voiture';
   } else if (distance(actor.x, actor.z, city.mina.position.x, city.mina.position.z) < 3 || distance(actor.x, actor.z, MINA_GARAGE.x, MINA_GARAGE.z) < 3.2 && mainState !== 'chip') {
     key = 'E'; label = 'CONTACT'; text = mainState === 'available' ? 'Écouter Mina' : 'Parler à Mina';
   } else if (mainState === 'accepted' && city.gateMesh.visible && distance(actor.x, actor.z, GATE_POINT.x, GATE_POINT.z) < 4.4) {
@@ -1511,6 +2166,15 @@ function updateInteraction(): void {
   interactionText.textContent = text;
 }
 
+function updateAlertHud(): void {
+  const alertLevel = currentAlertLevel();
+  const alertNames = ['', 'Soupçons', 'Signalé', 'Poursuite', 'Renforts'];
+  alertText.textContent = alertLevel ? `${alertNames[alertLevel]} · ${'★'.repeat(alertLevel)}` : 'Hors surveillance';
+  alertPill.dataset.level = String(alertLevel);
+  alertPill.classList.toggle('observed', alertLevel === 1 || alertLevel === 2);
+  alertPill.classList.toggle('confirmed', alertLevel >= 3);
+}
+
 function updateHud(): void {
   if (!city) return;
   refreshObjective();
@@ -1519,6 +2183,11 @@ function updateHud(): void {
   healthBar.style.width = `${health}%`;
   healthBar.style.background = health < 30 ? 'linear-gradient(90deg,#ed6470,#d8374d)' : 'linear-gradient(90deg,#6dd9c3,#d5d682)';
   cashValue.textContent = `${save.credits} ¢`;
+  const equippedWeapon = save.equippedWeapon;
+  const ammo = save.ammo[equippedWeapon];
+  $('#weapon-name').textContent = WEAPON_NAMES[equippedWeapon];
+  $('#ammo-value').textContent = reloadFinishesAt > gameTime ? 'RECHARGEMENT' : `${ammo.magazine} / ${ammo.reserve}`;
+  $('#home-value').textContent = save.homeId ? HOME_CATALOG[save.homeId].name : 'Aucun';
   const implants = save.equippedImplants;
   $('#implant-one b').textContent = IMPLANT_NAMES[implants[0]];
   $('#implant-two b').textContent = IMPLANT_NAMES[implants[1]];
@@ -1528,16 +2197,11 @@ function updateHud(): void {
   const cooldownTwo = $('#cooldown-two');
   cooldownOne.textContent = implantReadyAt[0] > gameTime ? `${(implantReadyAt[0] - gameTime).toFixed(0)} s` : 'PRÊT';
   cooldownTwo.textContent = implantReadyAt[1] > gameTime ? `${(implantReadyAt[1] - gameTime).toFixed(0)} s` : 'PRÊT';
-  const alert = observed > .04
-    ? observed >= 1.05 ? 'Repéré · poursuite' : `Observé · ${Math.round(Math.min(1, observed / 1.05) * 100)}%`
-    : securityActive() && gameTime - confirmedAt < 10 ? 'Dernière position connue' : 'Hors surveillance';
-  alertText.textContent = alert;
-  alertPill.classList.toggle('observed', observed > .04 && observed < 1.05);
-  alertPill.classList.toggle('confirmed', observed >= 1.05 || securityActive() && gameTime - confirmedAt < 4);
+  updateAlertHud();
   const timeLabel = $('#district-time');
   if (timeLabel) timeLabel.textContent = `LES FORGES · ${['AUBE', 'JOUR', 'NUIT'][Math.max(0, city.activityPhase)]}`;
   if (messageUntil > gameTime) messageLine.textContent = lastMessage;
-  else messageLine.textContent = vehicleMode ? `VITESSE ${Math.abs(city.car.speed * 12).toFixed(0)} KM/H` : '';
+  else messageLine.textContent = vehicleMode ? `${city.car.modelName.toUpperCase()} · ${Math.abs(city.car.speed * 12).toFixed(0)} KM/H` : '';
   updateInteraction();
 }
 
@@ -1620,14 +2284,22 @@ function drawMap(): void {
       ctx.strokeStyle = '#e86f80'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cam.x, cam.y, 4, 0, Math.PI * 2); ctx.stroke();
     }
   }
-  if (city.car.available) {
-    const car = mapPoint({ x: city.car.position.x, z: city.car.position.z }, size);
-    ctx.save(); ctx.translate(car.x, car.y); ctx.rotate(city.car.yaw);
-    ctx.fillStyle = vehicleMode ? '#d4ffff' : '#60c8ca'; ctx.fillRect(-2.2, -3.4, 4.4, 6.8); ctx.restore();
+  for (const vehicle of city.playerVehicles) {
+    if (!vehicle.available) continue;
+    const car = mapPoint({ x: vehicle.position.x, z: vehicle.position.z }, size);
+    ctx.save(); ctx.translate(car.x, car.y); ctx.rotate(vehicle.yaw);
+    ctx.fillStyle = vehicleMode && vehicle === city.car ? '#d4ffff' : vehicle === city.car ? '#60c8ca' : '#4b9695';
+    ctx.fillRect(-Math.max(1.6, vehicle.halfWidth * scaleX), -Math.max(2.4, vehicle.halfLength * scaleZ), Math.max(3.2, vehicle.halfWidth * scaleX * 2), Math.max(4.8, vehicle.halfLength * scaleZ * 2)); ctx.restore();
   }
   for (const traffic of city.traffic) {
     const pos = mapPoint({ x: traffic.position.x, z: traffic.position.z }, size);
     ctx.fillStyle = '#c89d68'; ctx.beginPath(); ctx.arc(pos.x, pos.y, 1.6, 0, Math.PI * 2); ctx.fill();
+  }
+  for (const patrol of city.pursuitVehicles) {
+    if (!patrol.active) continue;
+    const pos = mapPoint({ x: patrol.position.x, z: patrol.position.z }, size);
+    ctx.fillStyle = '#f06c7c'; ctx.beginPath(); ctx.arc(pos.x, pos.y, 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(240,108,124,.55)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(pos.x, pos.y, 4.4, 0, Math.PI * 2); ctx.stroke();
   }
   const player = mapPoint(actor, size);
   const angle = vehicleMode ? city.car.yaw : city.player.facing;
@@ -1677,6 +2349,11 @@ function onKeyDown(event: KeyboardEvent): void {
   if (event.code === 'KeyR') useImplant(0);
   if (event.code === 'KeyF') useImplant(1);
   if (event.code === 'KeyJ') showJournal();
+  if (event.code === 'KeyG') startReload();
+  if (event.code === 'Digit1') equipWeapon('pistol');
+  if (event.code === 'Digit2') equipWeapon('smg');
+  if (event.code === 'Digit3') equipWeapon('shotgun');
+  if (event.code === 'Digit4') equipWeapon('ion');
 }
 
 function onKeyUp(event: KeyboardEvent): void {
@@ -1687,6 +2364,7 @@ function setupInput(): void {
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', () => {
+    mouseHeld = false;
     pressed.clear();
     if (started && !dialogOpen && !journalOpen) {
       paused = true;
@@ -1705,6 +2383,7 @@ function setupInput(): void {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       pressed.clear();
+      mouseHeld = false;
       if (started && !dialogOpen && !journalOpen) {
         paused = true;
         pauseLayer.classList.remove('hidden');
@@ -1778,6 +2457,9 @@ async function initialize(): Promise<void> {
     physics = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     physics.timestep = STEP;
     city = buildCity($('#world'), physics);
+    applyFleetSave();
+    checkpointPosition = save.homeId ? { ...HOME_CATALOG[save.homeId].interior } : { ...INITIAL_POSITION };
+    lastSafePlayerPosition = { ...INITIAL_POSITION };
     city.scene.add(objectiveMarker);
     city.scene.add(bulletPoints);
     city.secondaryPackage.visible = save.secondaryStage === 1;
@@ -1796,8 +2478,10 @@ async function initialize(): Promise<void> {
     city.renderer.domElement.addEventListener('pointermove', pointerMove);
     city.renderer.domElement.addEventListener('pointerdown', (event) => {
       pointerMove(event);
-      if (event.button === 0) fireWeapon();
+    if (event.button === 0) { mouseHeld = true; fireWeapon(); }
     });
+  window.addEventListener('pointerup', () => { mouseHeld = false; });
+  window.addEventListener('pointercancel', () => { mouseHeld = false; });
     city.renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
     city.renderer.domElement.tabIndex = 0;
     city.renderer.domElement.style.cursor = 'none';

@@ -1,3 +1,5 @@
+import{Atmosphere}from'./effects.ts';
+import{VEHICLES,type VehicleId}from'../economy.ts';
 import * as T from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Physics, type Obstacle, type Impact } from './physics.ts';
@@ -5,6 +7,7 @@ import { PATHS, BUILDINGS, DISTRICTS, GATES, LOC,RAIL_DECKS,RAIL_FENCES,CURBS, l
 import { pathMesh, atDistance, rectangleContains, type Vec3, type Rect } from './geometry.ts';
 import {TERRAIN}from'./terrain.ts';
 import{FURNITURE}from'./furniture.ts';
+import{roadMesh}from'./roads.ts';
 
 const unitBox=new T.BoxGeometry(1,1,1),unitSphere=new T.SphereGeometry(1,9,7),identity=new T.Matrix4();
 export const standard=new T.MeshStandardMaterial({vertexColors:true,roughness:.82,metalness:.12});
@@ -32,21 +35,24 @@ export function makeHuman(color:number,role:'courier'|'guard'|'civilian'|'mina'=
 }
 export function animateHuman(group:T.Group,walking:boolean,time:number,speed=1){const angle=walking?Math.sin(time*8*speed+group.id)*.42:0;group.userData.legL.rotation.x=angle;group.userData.legR.rotation.x=-angle;}
 
-const carGeometry=new Map<number,T.BufferGeometry>();
-export function makeCar(color=0xb99a6d){
- let geo=carGeometry.get(color);if(!geo){const parts=[coloredBox(0,.57,0,1.96,.65,4.15,color),coloredBox(0,.96,-.25,1.74,.50,2.05,0x3c5661),coloredBox(0,1.24,-.25,1.73,.16,1.6,0xc4beb0),coloredBox(0,.86,1.38,1.80,.08,1.1,0x847c69),coloredBox(0,.70,2.1,1.72,.16,.12,0x32424a),coloredBox(0,.70,-2.1,1.72,.16,.12,0x32424a)];
+const carGeometry=new Map<string,T.BufferGeometry>();
+export function makeCar(color=0xb99a6d,model:VehicleId='courier'){
+ const profile=VEHICLES[model],cacheKey=color+'/'+model;let geo=carGeometry.get(cacheKey);if(!geo){const parts=[coloredBox(0,.57,0,1.96,.65,4.15,color),coloredBox(0,.96,-.25,1.74,.50,2.05,0x3c5661),coloredBox(0,1.24,-.25,1.73,.16,1.6,0xc4beb0),coloredBox(0,.86,1.38,1.80,.08,1.1,0x847c69),coloredBox(0,.70,2.1,1.72,.16,.12,0x32424a),coloredBox(0,.70,-2.1,1.72,.16,.12,0x32424a)];
   for(const x of [-1,1])for(const z of [-1.35,1.3])parts.push(coloredBox(x,.43,z,.24,.70,.76,0x18252c));
   for(const x of [-.65,.65]){parts.push(coloredBox(x,.69,2.16,.43,.18,.05,0xffe5a9),coloredBox(x,.69,-2.16,.43,.14,.05,0x873c3b));}
   // The courier carries delivery tools behind the cabin.
   parts.push(coloredBox(0,.95,-1.55,1.0,.26,.4,0x526e69),coloredBox(-.38,1.11,-1.55,.10,.07,.48,0xd6bc87),coloredBox(.38,1.11,-1.55,.10,.07,.48,0xd6bc87));
-  geo=mergeGeometries(parts,false)!;parts.forEach(p=>p.dispose());carGeometry.set(color,geo);
+  if(model==='van')parts.push(coloredBox(0,1.35,-.55,1.85,1.1,2.7,color),coloredBox(0,1.95,-.55,1.9,.10,2.8,0xc6c5b6));
+  if(model==='utility')parts.push(coloredBox(0,1.1,-1.5,1.7,.6,1.15,color),coloredBox(0,1.6,-.4,1.65,.18,1.35,color));
+  if(model==='sport')parts.push(coloredBox(0,1,-1.9,1.85,.09,.25,0x252f35));
+  geo=mergeGeometries(parts,false)!;parts.forEach(p=>p.dispose());carGeometry.set(cacheKey,geo);
  }
  const group=new T.Group(),body=new T.Mesh(geo,standard);body.castShadow=true;group.add(body);
  const brakeMat=new T.MeshBasicMaterial({color:0xff5248}),brakes=new T.Mesh(new T.BoxGeometry(1.5,.12,.04),brakeMat);brakes.position.set(0,.74,-2.19);brakes.visible=false;group.add(brakes);
  const lightMaterial=new T.MeshBasicMaterial({color:0xffe9b9});const lamps=new T.Mesh(new T.BoxGeometry(1.6,.13,.04),lightMaterial);lamps.position.set(0,.76,2.18);group.add(lamps);
  const damageMarks=Array.from({length:12},()=>{const mesh=new T.Mesh(new T.BoxGeometry(.06,.10,.75),new T.MeshBasicMaterial({color:0xd8ceba}));mesh.visible=false;group.add(mesh);return mesh;});
  const dents=Array.from({length:8},()=>{const mesh=new T.Mesh(new T.BoxGeometry(.4,.25,.35),new T.MeshStandardMaterial({color:0x4c5759,roughness:.95}));mesh.visible=false;group.add(mesh);return mesh;});
- group.userData={body,brakes,lamps,damageMarks,dents,damageCount:0,damage:{front:0,rear:0,left:0,right:0}};return group;
+ group.scale.set(profile.width/2,model==='sport'?.88:1,profile.length/4.2);group.userData={model,body,brakes,lamps,damageMarks,dents,damageCount:0,damage:{front:0,rear:0,left:0,right:0}};return group;
 }
 export function applyCarDamage(group:T.Group,impact:Impact){
  const state=group.userData;state.damage[impact.side]=Math.min(3,state.damage[impact.side]+impact.severity);const mark=state.damageMarks[state.damageCount++%state.damageMarks.length]as T.Mesh;
@@ -58,9 +64,9 @@ export function applyCarDamage(group:T.Group,impact:Impact){
 }
 export function repairCar(group:T.Group){for(const m of [...group.userData.damageMarks,...group.userData.dents]as T.Mesh[])m.visible=false;group.userData.damage={front:0,rear:0,left:0,right:0};group.userData.damageCount=0;group.userData.lamps.visible=true;}
 
-export interface WorldView {scene:T.Scene;roofs:Map<string,T.Group>;gates:Map<string,T.Group>;props:Map<number,T.Object3D>;lamps:T.Mesh[];train:T.Group;clockSigns:T.Sprite[];update:(p:Vec3,time:number,hour:number,flags:Set<string>)=>void;}
+export interface WorldView {effects:Atmosphere;scene:T.Scene;roofs:Map<string,T.Group>;gates:Map<string,T.Group>;props:Map<number,T.Object3D>;lamps:T.Mesh[];train:T.Group;clockSigns:T.Sprite[];update:(p:Vec3,time:number,hour:number,flags:Set<string>)=>void;}
 export function makeWorld(physics:Physics):WorldView {
- const scene=new T.Scene();scene.background=new T.Color(0x263a47);scene.fog=new T.FogExp2(0x263a47,.0034);
+ const scene=new T.Scene();const effects=new Atmosphere(scene);scene.background=new T.Color(0x263a47);scene.fog=new T.FogExp2(0x263a47,.0034);
  const hemi=new T.HemisphereLight(0xc5dce6,0x5a5351,2.5);scene.add(hemi);const ambient=new T.AmbientLight(0xb0c7d4,.9);scene.add(ambient);
  const sun=new T.DirectionalLight(0xffe5bb,2.5);sun.position.set(-60,100,50);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-70,right:70,top:70,bottom:-70,near:2,far:220});sun.shadow.bias=-.0005;sun.shadow.normalBias=.12;scene.add(sun);scene.add(sun.target);
  const roofGroups=new Map<string,T.Group>(),gateMeshes=new Map<string,T.Group>(),props=new Map<number,T.Object3D>(),lamps:T.Mesh[]=[],clockSigns:T.Sprite[]=[];
@@ -72,11 +78,11 @@ export function makeWorld(physics:Physics):WorldView {
   const geom=new T.BufferGeometry();geom.setAttribute('position',new T.Float32BufferAttribute(positions,3));geom.setIndex(new T.BufferAttribute(indices,1));geom.computeVertexNormals();
   const mesh=new T.Mesh(geom,new T.MeshStandardMaterial({color:district.id==='forges'?0x58656a:district.id==='dalle'?0x8d8377:district.id==='node'?0x6c7880:district.id==='quais'?0x7b8176:0x8e887d,roughness:.93}));mesh.receiveShadow=true;scene.add(mesh);
  }
- const river=new T.Mesh(new T.PlaneGeometry(620,90,70,8),new T.MeshStandardMaterial({color:0x315b69,metalness:.5,roughness:.25}));river.rotation.x=-Math.PI/2;river.position.set(195,-.4,268);scene.add(river);
+ const river=new T.Mesh(new T.PlaneGeometry(620,90,70,8),effects.water);river.rotation.x=-Math.PI/2;river.position.set(195,-.4,268);scene.add(river);
  for(let i=0;i<40;i++)detail({id:'water-ripple',x:25+i*11,z:244+Math.sin(i)*7,y:-.37,w:4+(i%3),d:.12,h:.02},0x72979c);
  for(const path of PATHS){
   if(path.mode==='rail')continue;
-  const surface=(width:number,offset:number,lift:number,color:number)=>{const {positions,indices}=pathMesh(path,width,offset,lift);const g=new T.BufferGeometry();g.setAttribute('position',new T.BufferAttribute(positions,3));g.setIndex(new T.BufferAttribute(indices,1));g.computeVertexNormals();const m=new T.Mesh(g,new T.MeshStandardMaterial({color,roughness:.94}));m.receiveShadow=true;scene.add(m);};
+  const surface=(width:number,offset:number,lift:number,color:number)=>{const {positions,indices}=path.mode==='road'?roadMesh(path,width,offset,lift,width===path.sidewalk):pathMesh(path,width,offset,lift);const g=new T.BufferGeometry();g.setAttribute('position',new T.BufferAttribute(positions,3));g.setIndex(new T.BufferAttribute(indices,1));g.computeVertexNormals();const m=new T.Mesh(g,path.mode==='road'&&width===path.width?effects.asphalt:new T.MeshStandardMaterial({color,roughness:.94}));m.receiveShadow=true;scene.add(m);};
   surface(path.width,0,.015,path.mode==='road'?0x303b42:0x9b9a86);
   if(path.mode==='road'){
    for(const side of [-1,1])surface(path.sidewalk,side*(path.width/2+path.sidewalk/2),.035,0x90988f);
@@ -124,23 +130,25 @@ export function makeWorld(physics:Physics):WorldView {
   const mesh=combine([coloredBox(0,r.h/2,0,r.w,r.h,r.d,r.kind==='tree'?0x6a6852:r.color,r.angle)]);mesh.position.set(r.x,r.y,r.z);mesh.castShadow=true;scene.add(mesh);props.set(obstacle.collider.handle,mesh);
   if(r.kind==='lamp')detail({id:r.id+'-head',x:r.x,z:r.z,y:r.y+3.8,w:.6,h:.10,d:.7},0xf5ce8c,true);
   if(r.kind==='tree'){const geo=unitSphere.clone();geo.scale(1.6,1.9,1.6);geo.translate(r.x,r.y+3.8,r.z);const tree=new T.Mesh(geo,new T.MeshStandardMaterial({color:r.color,roughness:1}));tree.castShadow=true;scene.add(tree);}
+  if(r.kind==='bed'){detail({id:r.id+'-pillow',x:r.x-r.w*.28,z:r.z,y:r.y+r.h+.05,w:.6,h:.14,d:r.d*.8},0xd8d1b9);detail({id:r.id+'-cover',x:r.x+r.w*.12,z:r.z,y:r.y+r.h+.02,w:r.w*.65,h:.06,d:r.d*.94},0x829894);}
+  if(r.kind==='shelf')for(const y of [.4,.9,1.4])detail({id:r.id+'-shelf',x:r.x,z:r.z,y:r.y+y,w:r.w+.05,h:.05,d:r.d+.05},0xb6a181);
+  if(r.kind==='counter')for(let i=-2;i<=2;i++)detail({id:r.id+'-stock',x:r.x+i*.9,z:r.z,y:r.y+r.h+.03,w:.55,h:.08,d:.2},i%2?0xbbb4a0:0x435755);
   if(r.kind==='stall'){detail({id:r.id+'-awning',x:r.x,z:r.z,y:r.y+2.4,w:3.8,h:.10,d:2.3},r.x%2?0xa46e5c:0x789a87);for(let i=0;i<3;i++)detail({id:r.id+'-fruit',x:r.x-1+i,z:r.z,y:r.y+1.02,w:.7,h:.25,d:.7},[0xc69259,0x96a06c,0xb97d5a][i]);}
  }
  if(staticGeos.length){const mesh=combine(staticGeos);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);}
  if(emissiveGeos.length){const mesh=combine(emissiveGeos,new T.MeshBasicMaterial({vertexColors:true,toneMapped:false}));scene.add(mesh);lamps.push(mesh);}
- for(const p of [{x:32,y:8.8,z:42},{x:103,y:9,z:54},{x:125,y:2.2,z:80},{x:300,y:14.2,z:-8},{x:235,y:10,z:8}]){const light=new T.PointLight(0xffc279,35,15,2);light.position.set(p.x,p.y,p.z);scene.add(light);}
  const serviceLights:T.PointLight[]=[],serviceBulbs:T.Mesh[]=[];
  for(const z of [74,81.5]){const l=new T.PointLight(0xffc279,40,12,2);l.position.set(52,2.2,z);scene.add(l);serviceLights.push(l);const bulb=new T.Mesh(new T.BoxGeometry(.20,.2,.35),new T.MeshBasicMaterial({color:0x465b5b}));bulb.position.set(53.5,2.1,z);scene.add(bulb);serviceBulbs.push(bulb);}
  const relayFlags=['endingPublish','service:C03-F','service:C03-Q'];const relayPoints=[{x:319,y:12,z:-143},LOC.workshopTerminal,LOC.offline];const relays=relayPoints.map((p,i)=>{const g=new T.Group();g.position.set(p.x,p.y,p.z);g.add(combine([coloredBox(0,.65,0,.55,1.3,.4,0x628b7b)],new T.MeshBasicMaterial({vertexColors:true})));const sign=textSprite(i===0?'RELAIS / DROITS PROVISOIRES':'RELAIS EN LIGNE','#b6e2be',8);sign.position.y=2;g.add(sign);scene.add(g);return g;});
  const update=(p:Vec3,time:number,hour:number,flags:Set<string>)=>{
-  const daylight=hour>=7&&hour<19;hemi.intensity=daylight?2.9:1.7;ambient.intensity=daylight?1:.9;sun.intensity=daylight?2.6:1.35;sun.color.set(daylight?0xffedca:0xa7c8da);scene.background=new T.Color(daylight?0x83959a:0x263a47);(scene.fog as T.FogExp2).color.copy(scene.background);
+  effects.update(p,time,hour,flags);const daylight=hour>=7&&hour<19;hemi.intensity=daylight?2.9:1.7;ambient.intensity=daylight?1:.9;sun.intensity=daylight?2.6:1.35;sun.color.set(daylight?0xffedca:0xa7c8da);scene.background=new T.Color(daylight?0x83959a:0x263a47);(scene.fog as T.FogExp2).color.copy(scene.background);
   sun.position.set(p.x-60,p.y+100,p.z+50);sun.target.position.set(p.x,p.y,p.z);
-  for(const [id,roof]of roofGroups){const b=BUILDINGS.find(b=>b.id===id)!;const behind=Math.abs(p.x-b.x)<b.w/2+2&&p.z>b.z-b.d/2&&p.z<b.z+b.d/2+b.h*.6&&p.y<b.y+b.h;roof.visible=!behind;}
+  for(const [id,roof]of roofGroups){const b=BUILDINGS.find(b=>b.id===id)!;const behind=Math.abs(p.x-b.x)<b.w/2+2&&p.z>b.z-b.d/2-(b.h+3)*.72&&p.z<b.z+b.d/2+b.h*.6&&p.y<b.y+b.h;roof.visible=!behind;}
   for(const [id,g]of gateMeshes)g.visible=!physics.open.has(id);
   for(const piece of railPieces){const under=p.y<2&&p.x>piece.x0-2&&p.x<piece.x1+2&&p.z>68&&p.z<83;const material=piece.mesh.material as T.MeshStandardMaterial;material.opacity=T.MathUtils.lerp(material.opacity,under?.12:1,.15);material.depthWrite=material.opacity>.6;}
   train.position.set((time*9)%260-40,3.3,75);train.visible=train.position.x>-30&&train.position.x<210;
   serviceLights.forEach(l=>l.visible=flags.has('shortcutLit'));serviceBulbs.forEach(b=>(b.material as T.MeshBasicMaterial).color.set(flags.has('shortcutLit')?0xffd393:0x465b5b));relays.forEach((g,i)=>g.visible=flags.has(relayFlags[i]));
   for(const o of physics.obstacles)if(o.fragile&&o.broken){const mesh=props.get(o.collider.handle);if(mesh){mesh.rotation.z=.8;mesh.position.y=o.y;}}
  };
- return{scene,roofs:roofGroups,gates:gateMeshes,props,lamps,train,clockSigns,update};
+ return{effects,scene,roofs:roofGroups,gates:gateMeshes,props,lamps,train,clockSigns,update};
 }

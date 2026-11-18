@@ -19,16 +19,21 @@
           <div id="city-time" class="city-time"></div>
           <h1 id="mission-name">Puce fantôme</h1>
           <p id="objective-text">Parler à Mina au garage</p>
+          <p id="activity-clock" class="activity-clock" hidden></p>
           <div class="objective-meta"><span id="distance"></span><button id="journal" class="text-btn"><kbd>Tab</kbd> Journal</button></div>
         </section>
         <div id="danger" class="danger plate" data-state="clear" role="status">
           <i></i><span id="alert-text">Hors détection</span><span id="alert-meter"></span>
         </div>
+        <div id="wanted" class="wanted plate" hidden>
+          <span id="wanted-stars" aria-hidden="true">◆◇◇</span><span id="wanted-label" role="status"></span>
+          <span id="wanted-countdown"></span>
+        </div>
         <div class="top-actions"><span id="purge-clock" class="plate account" hidden></span><span id="money" class="plate account">0 ₡</span><button id="pause" class="plate icon-btn" aria-label="Mettre en pause" title="Pause (Échap)">Ⅱ</button></div>
       </div>
       <div id="waypoints"></div>
       <div id="crosshair" data-valid="false"></div>
-      <div id="prompt" class="prompt plate" hidden><kbd>E</kbd><span id="prompt-text"></span></div>
+      <div id="prompt" class="prompt plate" hidden><kbd id="prompt-key">E</kbd><span id="prompt-text"></span></div>
       <div id="notice" class="notice plate" role="status" hidden></div>
       <div class="hud-foot">
         <section class="equipment plate" aria-label="Santé et implants">
@@ -38,12 +43,13 @@
             <div class="slot" id="slot-1"><kbd>1</kbd><b></b><span></span><small></small></div>
             <div class="slot" id="slot-2"><kbd>2</kbd><b></b><span></span><small></small></div>
           </div>
+          <button type="button" id="weapon-hud" class="weapon-hud" aria-label="Ouvrir l’inventaire des armes" title="Inventaire (I) · recharger (R)"><span id="weapon-name">Étincelle</span><strong id="ammo-count">12 / 36</strong><kbd>I</kbd></button>
         </section>
         <div id="speed" class="speed plate" hidden><strong>0</strong><span>km/h</span></div>
         <section class="map plate" aria-label="Minicarte">
           <div class="map-top"><span id="map-name">Les Forges</span><button id="open-map" class="text-btn" aria-label="Ouvrir la carte"><kbd>M</kbd> Carte</button></div>
           <canvas id="minimap" width="215" height="151"></canvas>
-          <div class="map-bottom"><span class="you-dot"></span> Vous <span class="goal-dot"></span> Objectif</div>
+          <div class="map-bottom"><span class="you-dot"></span> Vous <span class="goal-dot"></span> Objectif <button id="open-activities" class="text-btn" title="Activités de ville libre"><kbd>G</kbd> Activités</button></div>
         </section>
       </div>
     </div>

@@ -1,5 +1,7 @@
 import { extensionBlocks, extensionBuildings, extensionNavigation, extensionWalls } from './expansion';
 import { roadHeight } from './roads';
+export { streets as roads } from './roads';
+import { venues, venueGates, venueRooms, venueWalls } from './venues';
 
 
 export function foundation([x,z,w,d]: Rect) {
@@ -30,14 +32,7 @@ export const blocks: Rect[] = [
   ...extensionBlocks,
 ];
 
-export const roads: Rect[] = [
-  [-7, 0, 100, 12], [115, 0, 30, 11], [206.5, 0, 61, 11], [-53, -2.5, 8, 89], [43, 11.5, 12, 75], [-0.5, 5, 9, 84],
-  [-2, 43, 110, 9], [23, -51, 47, 8], [-13, -53, 42, 5], [-22, 12, 49, 5],
-  [105, 3, 7, 85], [144, 1, 8, 89], [175, -1, 8, 90], [149, 43, 150, 7],
-  [198, -46, 54, 7], [49.6,-9.9,6.9,7],
-];
-
-export const buildings: Building[] = [
+export const buildings: Building[] = ([
   { id: 'garage-back', area: [-24, 13.9, 14, 3.2], height: 3.5, style: 'workshop', sign: 'GARAGE MINA', accent: '#68f0cd' },
   { id: 'forge-press', area: [-41, 24, 12, 16], height: 7, style: 'brick', sign: 'ATELIERS 06', accent: '#ffbd66' },
   { id: 'repair', area: [-22, 34, 12, 7], height: 3.8, style: 'workshop', sign: 'RÉPARATIONS', accent: '#81c9e6' },
@@ -60,7 +55,7 @@ export const buildings: Building[] = [
   { id: 'node-east', area: [210, 24, 17, 18], height: 13, style: 'civic', sign: 'IDENTITÉ', accent: '#a6bcff' },
   { id: 'node-back', area: [214, -28, 10, 25], height: 12.6, style: 'civic', sign: 'SERVEURS', accent: '#a6bcff' },
   ...extensionBuildings,
-];
+] satisfies Building[]).filter(building=>!venues.some(venue=>venue.building===building.id));
 
 export const rooms = [
   { id: 'garage', area: [-24, 18.1, 14, 8.5] as Rect, height: 3.55, accent: '#64eccb' },
@@ -71,6 +66,7 @@ export const rooms = [
   { id:'housing',area:[105,-47,19,12] as Rect,height:4.8,accent:'#f4be92' },
   { id:'shop',area:[82.3,18.1,7.2,5.3] as Rect,height:3.8,accent:'#e2ae94' },
   { id:'paper',area:[72,-91,15,8] as Rect,height:6.4,accent:'#abdacb' },
+  ...venueRooms,
 ];
 
 export const gates: Gate[] = [
@@ -86,6 +82,7 @@ export const gates: Gate[] = [
   { id:'paper-way',area:[138.7,-95,.48,3.2],accent:'#81e6c8',label:'Raccourci du coteau' },
   { id:'night-exit',area:[221.4,-16.75,4.2,.45],accent:'#8de1c8',label:'Sortie de nuit' },
   { id:'night-passage',area:[197.5,-39,4.9,.56],accent:'#a9bafb',label:'Coursive nord' },
+  ...venueGates,
 ];
 
 export const walls: Wall[] = [
@@ -142,6 +139,7 @@ export const walls: Wall[] = [
   {area:[138.7,-98.8,.46,4.5],height:1.65}, {area:[138.7,-91.1,.46,4.62],height:1.65},
   {area:[219,-16.75,.6,.5],height:1.65}, {area:[223.9,-16.75,.8,.5],height:1.65},
   ...extensionWalls,
+  ...venueWalls,
 ];
 
 export const sensors: Sensor[] = [
@@ -182,12 +180,14 @@ export const navigation: Point[] = [
 ];
 
 export const districtNames = ['Les Forges', 'La Dalle', 'Le Nœud', 'Les Quais', 'Les Belvédères'] as const;
-export const vehicleExclusions: Rect[] = [[13, -42.2, 8.15, 14.7], [100,-106,107,8]];
+export const vehicleExclusions: Rect[] = [[13, -42.2, 8.15, 14.7], [100,-106,107,8], ...venueRooms.map(venue=>venue.area)];
 export const crossingSurfaces = {
   bridge: { area:[43,-42,11.92,8.45] as Rect, base:5.58, height:.4 },
-  railway: { area:[13,-42,9,7.4] as Rect, base:2.23, height:.44 },
+  railway: { area:[13,-42,9,5.8] as Rect, base:2.56, height:.44 },
   tunnel: { area:[13,-45.3,7.95,8.5] as Rect, base:-.27, height:.27 },
 };
+export const tunnelStairs = {top:-35.9,bottom:-39.35,left:8.97,right:17.13};
+export const onTunnelStairs=(x:number,z:number)=>x>tunnelStairs.left-.32&&x<tunnelStairs.right+.32&&z<tunnelStairs.top+.18&&z>tunnelStairs.bottom-.18;
 export const districtAt = (x: number, z = 0) => z < -63 && x > 38 && x < 158 ? 3
   : z > 55 && x > 96 ? 4 : x < 59 ? 0 : x < 151 ? 1 : 2;
 export const inRect = (x: number, z: number, [cx, cz, w, d]: Rect, pad = 0) =>
@@ -203,7 +203,12 @@ export function elevation(x: number, z: number) {
     const railGround = 6 - 3.37 * clamp((-z - 36.4) / 1.15,0,1) - 2.63 * clamp((-z - 44.5) / 3,0,1);
     ground = ground + (railGround-ground) * clamp((60-x)/3,0,1);
   }
-  if (z < -35.1 && x >= 8.9 && x <= 17.05) ground = Math.min(ground, 6 * clamp((z+41.2)/6.1,0,1));
+  if (z < tunnelStairs.top && z > -49) {
+    const {top,bottom,left,right}=tunnelStairs;
+    const tunnel=clamp((x-left+.62)/.62,0,1)*clamp((right+.62-x)/.62,0,1);
+    const ramp=6*clamp((z-bottom)/(top-bottom),0,1);
+    ground+=(ramp-ground)*tunnel;
+  }
   if(x >= 48 && x < 156 && z < -63) {
     const quay = 2 * clamp((z+105) / 25,0,1);
     ground += (quay-ground)*clamp((-z-63)/6,0,1);
@@ -212,6 +217,9 @@ export function elevation(x: number, z: number) {
     const terrace=4+8*clamp((x-109)/88,0,1);
     ground+=(terrace-ground)*clamp((z-53)/8,0,1);
   }
+  // The turn onto J05 begins on the same graded bench as the southern avenue.
+  const dalleJunction=clamp((16-Math.abs(x-105))/9,0,1)*clamp((z-29)/10,0,1)*clamp((54-z)/6,0,1);
+  ground+=(3.5-ground)*dalleJunction;
   const path=roadHeight(x,z);
   return path ? ground+(path.height-ground)*path.weight : ground;
 }

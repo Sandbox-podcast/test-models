@@ -1,10 +1,14 @@
 import R from '@dimforge/rapier3d-compat';
 import './style.css';
 import { Game, type Menu, type Pin } from './game';
-import { blocks, bounds, buildings, clamp, distance, districtAt, districtNames, gates, roads, walls, type Point, type Rect } from './level';
+import { blocks, bounds, buildings, clamp, distance, districtAt, districtNames, gates, rooms, walls, type Point, type Rect } from './level';
 import { effects, getSide, implants, objectives, type Implant } from './progression';
-import { ribbons } from './roads';
+import { fillPaving, ribbons } from './roads';
 import { populationHour, populationPeriod } from './population';
+import { weaponIds, weapons } from './arsenal';
+import { showroom, vehicleClasses, vehicleIds } from './fleet';
+import { venues } from './venues';
+import { activityIds, activitySpec } from './activities';
 
 const get = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id)! as T;
 const viewport = get<HTMLCanvasElement>('viewport');
@@ -73,18 +77,23 @@ function commands() {
     '<dt>Se déplacer / conduire</dt><dd><kbd>ZQSD</kbd> <kbd>WASD</kbd> <kbd>↑ ↓ ← →</kbd></dd>' +
     '<dt>Courir à pied</dt><dd><kbd>Maj</kbd></dd>' +
     '<dt>Viser et tirer</dt><dd>Souris et clic gauche</dd>' +
+    '<dt>Changer d’arme, inventaire, recharger</dt><dd><kbd>F</kbd> <kbd>I</kbd> <kbd>R</kbd></dd>' +
     '<dt>Parler, récupérer, entrer, sortir</dt><dd><kbd>E</kbd></dd>' +
     '<dt>Utiliser les implants</dt><dd><kbd>1</kbd> <kbd>2</kbd></dd>' +
     '<dt>Freiner en voiture</dt><dd><kbd>Espace</kbd></dd>' +
+    '<dt>Se dégager du décor ou du véhicule</dt><dd><kbd>T</kbd></dd>' +
+    '<dt>Activités de ville libre</dt><dd><kbd>G</kbd></dd>' +
     '<dt>Journal, carte et pause</dt><dd><kbd>Tab</kbd> <kbd>M</kbd> <kbd>Échap</kbd></dd></dl>');
   button('Fermer', leave);
 }
 function pause() {
   if (!game?.running) return;
   current = 'pause';
-  show('DeadLine', 'En pause', '<p>La progression est enregistrée au briefing et à la fin de chaque contrat.</p>');
+  show('DeadLine', 'En pause', '<p>Les contrats, vos achats et vos munitions sont enregistrés automatiquement.</p>');
   button('Reprendre', leave);
   button('Commandes', commands, 'secondary');
+  button('Se dégager du décor',()=>{leave();game?.recover();},'secondary');
+  if(game.activity) button('Abandonner l’activité',()=>{game?.cancelActivity();leave();},'secondary');
   button(game.sound.muted ? 'Activer le son' : 'Couper le son', () => {
     game!.sound.silence(!game!.sound.muted);
     pause();
@@ -132,35 +141,54 @@ function overview() {
   if(!game?.running) return;
   const g=game;
   current='overview';
-  show('Plan de la ville','Les cinq quartiers','<canvas id="city-overview" width="720" height="510" aria-label="Carte des cinq quartiers"></canvas><p class="caption">Vert clair pour votre position, or pour l’objectif. Les liaisons piétonnes sont en pointillés.</p>');
+  show('Plan de la ville','Les cinq quartiers','<canvas id="city-overview" width="720" height="510" aria-label="Carte des cinq quartiers avec les routes, les commerces et les activités"></canvas><p class="caption">Vert clair · vous. Or · objectif. Mauve · lieu visitable. Orange · activité. Bleu · patrouille proche.</p>');
   button('Retour au jeu',leave);
+  button('Activités de ville libre',()=>menu('activities'),'secondary');
+  actions.classList.add('grid');
+  for(const venue of venues) button(venue.name,()=>{g.markVenue(venue.id);leave();},'secondary');
+  if(g.destination) button('Effacer le repère',()=>{g.destination=undefined;overview();},'secondary');
   const map=get<HTMLCanvasElement>('city-overview'), c=map.getContext('2d')!;
   const f=Math.min((map.width-60)/(bounds.east-bounds.west),(map.height-74)/(bounds.south-bounds.north));
   const x=(value:number)=>map.width/2+(value-(bounds.west+bounds.east)/2)*f;
-  const z=(value:number)=>map.height/2+(value-(bounds.north+bounds.south)/2)*f;
+  const z=(value:number)=>map.height/2-(value-(bounds.north+bounds.south)/2)*f;
   c.fillStyle='#15222b';c.fillRect(0,0,map.width,map.height);
+  c.fillStyle='#254c60';c.fillRect(x(43.5),z(-111),111*f,12.2*f);
+  c.fillStyle='#83b1c2';c.font='600 13px Segoe UI';c.fillText('Charente',x(88),z(-118));
   for(const [cx,cz,w,d] of blocks){c.fillStyle='#263c46';c.fillRect(x(cx-w/2),z(cz-d/2),w*f,d*f);}
-  for(const [cx,cz,w,d] of roads){c.fillStyle='#51626a';c.fillRect(x(cx-w/2),z(cz-d/2),w*f,d*f);}
+  fillPaving(c,x,z,'#66737d','#3e625d');
+  for(const {area:[cx,cz,w,d]} of [...buildings,...rooms]){c.fillStyle='#344853';c.fillRect(x(cx-w/2),z(cz-d/2),w*f,d*f);}
   c.lineCap='round';
   for(const r of ribbons) {
-    c.strokeStyle=r.pedestrian?'#84c6af':'#88918b';
-    c.lineWidth=Math.max(2,r.width*f);
+    c.strokeStyle=r.pedestrian?'#84c6af':r.id==='P01'?'#ffc183':'#a7aea5';
+    c.lineWidth=r.id==='P01'?2.8:1.45;
     c.setLineDash(r.pedestrian?[4,6]:[]);
     c.beginPath();for(const [i,s] of r.samples.entries()){if(i)c.lineTo(x(s.x),z(s.z));else c.moveTo(x(s.x),z(s.z));}c.stroke();
+    if(/^J0[1-6]$|^P01$|^S02$/.test(r.id)){
+      const p=r.samples[Math.round(r.samples.length*.57)];
+      c.font='600 10px Segoe UI';c.fillStyle='#f2e6d4';c.fillText(r.id,x(p.x)+5,z(p.z)-6);
+    }
   }
   c.setLineDash([]);
-  const areas:Point[]=[[-29,-26],[82,27],[184,-48],[87,-93],[155,63]];
+  c.beginPath();c.moveTo(x(-55),z(-41.9));c.lineTo(x(58),z(-41.9));c.strokeStyle='#ac9480';c.lineWidth=1.15;c.stroke();
+  c.setLineDash([3,3]);c.beginPath();c.moveTo(x(13),z(-35.5));c.lineTo(x(13),z(-50));c.strokeStyle='#8ce9bd';c.lineWidth=2;c.stroke();c.setLineDash([]);
+  c.fillStyle='#d3e1d2';c.font='600 10px Segoe UI';c.fillText('S01',x(13)+4,z(-46));
+  const areas:Point[]=[[-46,22],[77,-31],[176,26],[80,-98],[148,101]];
   c.font='600 17px Segoe UI';c.textAlign='left';c.textBaseline='middle';
   for(const [i,at] of areas.entries()){
     c.lineWidth=3;c.strokeStyle='#13202b';c.fillStyle='#e3ede7';
     c.strokeText(districtNames[i],x(at[0]),z(at[1]));c.fillText(districtNames[i],x(at[0]),z(at[1]));
   }
+  c.font='700 13px Segoe UI';c.fillStyle='#b7d1d3';c.fillText('N ↑',map.width-50,24);
   const marker=(at:Point,color:string)=>{
     c.beginPath();c.arc(x(at[0]),z(at[1]),5.7,0,Math.PI*2);c.fillStyle=color;c.fill();
     c.lineWidth=1.8;c.strokeStyle='#0d2123';c.stroke();
   };
   const destination=g.objective().pins[0];
   if(destination) marker(destination.at,'#f1db89');
+  for(const venue of venues) marker(venue.entrance,g.destination?.label===venue.name?'#fff0bc':'#c2acd6');
+  for(const id of activityIds){const job=activitySpec(id);marker(job.start,g.destination?.label===job.name?'#fff0bc':'#efa675');}
+  for(const at of g.police.audible) if(distance(at,g.at)<46) marker(at,'#77b9f9');
+  if(g.destination?.kind==='car') marker(g.destination.at,'#a9d8fb');
   marker(g.at,'#9cf1cb');
 }
 
@@ -169,6 +197,74 @@ function menu(which:Menu) {
   const {chapter,ending,route,records}=g.save, brief=objectives[chapter];
   current=which;
   switch(which){
+    case 'activities': {
+      show('Ville libre','Activités de ville libre','<p>Choisissez une activité pour voir son départ et vos résultats.</p>');
+      actions.classList.add('grid');
+      for(const id of activityIds){
+        const job=activitySpec(id), record=g.save.activities[id];
+        choice({label:job.name,now:districtNames[job.district]+' · '+job.reward+' ₡.',later:record?`${record.count} terminée${record.count>1?'s':''}.`:job.vehicle?'En voiture.':'À pied.'},()=>g.showActivity(id));
+      }
+      button('Retour au jeu',leave,'secondary');
+      break;
+    }
+    case 'activity': {
+      const id=g.activityId,job=activitySpec(id),record=g.save.activities[id];
+      const details=[job.vehicle?'En voiture':'À pied',job.time?job.time+' s':'Sans chrono',job.reward+' ₡'].join(' · ');
+      const active=g.activity?.id===id;
+      const access=active?'L’activité est en cours.':g.busy?'Terminez le contrat ou l’activité en cours.':g.police.level?'Attendez la fin de la recherche.':
+        job.vehicle?'Arrêtez-vous au départ en voiture et appuyez sur G.':'Rejoignez le départ à pied et appuyez sur E.';
+      show(districtNames[job.district],job.name,'<p>'+job.description+'</p><p class="caption">'+details+'</p><p>'+access+'</p>'+
+        (record?`<p>Terminée ${record.count} fois${job.time?' · record '+record.best.toFixed(1)+' s':''}.</p>`:''));
+      if(g.canStartActivity(id)) button('Démarrer l’activité',()=>{g.startActivity(id);leave();});
+      else if(!active) button('Indiquer le départ sur la carte',()=>{g.markActivity(id);leave();});
+      if(active) button('Abandonner l’activité',()=>{g.cancelActivity();leave();},'secondary');
+      button(active?'Reprendre l’activité':'Retour au jeu',leave,'secondary');
+      if(!active) button('Toutes les activités',()=>menu('activities'),'secondary');
+      break;
+    }
+    case 'arsenal': {
+      show('Équipement','Arsenal','<p>Chaque arme conserve son propre chargeur et sa réserve.</p>');
+      actions.classList.add('grid');
+      for(const id of weaponIds){
+        const ammo=g.save.arsenal.ammo[id], item=weapons[id];
+        if(!ammo) continue;
+        const equipped=id===g.save.arsenal.equipped;
+        choice({label:item.name+(equipped?' · Équipé':''),now:`${ammo.loaded} chargées, ${ammo.spare} en réserve.`,later:item.description},()=>{g.equipWeapon(id);menu('arsenal');},equipped);
+      }
+      button('Retour au jeu',leave,'secondary');
+      break;
+    }
+    case 'venue': {
+      const venue=g.venue;
+      const amount=(value:number)=>value.toLocaleString('fr-FR')+' ₡';
+      show(districtNames[venue.district],venue.name,
+        '<p>'+venue.description+'</p><p class="caption">Solde '+amount(g.save.credits)+'</p>');
+      actions.classList.add('grid');
+      if(venue.kind==='arsenal') for(const id of weaponIds) {
+        const item=weapons[id],ammo=g.save.arsenal.ammo[id];
+        if(!ammo) choice({label:`Acheter ${item.name} · ${amount(item.price)}`,now:item.description,later:`Livré avec ${item.magazine} chargées et ${item.reserve} en réserve.`},
+          ()=>{g.buyWeapon(id);menu('venue');},g.save.credits<item.price);
+        else choice({label:`Munitions ${item.name} · ${amount(item.ammoPrice)}`,now:`Réserve ${ammo.spare}/${item.reserve}.`,later:`Ajoute jusqu’à ${item.box} munitions.`},
+          ()=>{g.buyAmmo(id);menu('venue');},ammo.spare===item.reserve||g.save.credits<item.ammoPrice);
+      }
+      if(venue.kind==='showroom') for(const id of vehicleIds) {
+        const item=showroom[id], spec=vehicleClasses[item.kind], owned=g.save.vehicles.includes(id);
+        choice({label:owned?'Récupérer '+item.name:`Acheter ${item.name} · ${amount(item.price)}`,now:`${spec.name} · ${Math.round(spec.speed*3.6)} km/h.`,later:owned?'Place de livraison indiquée sur la carte.':'Véhicule livré sur le parvis.'},
+          ()=>{if(owned)g.collectVehicle(id);else g.buyVehicle(id);leave();},!owned&&g.save.credits<item.price);
+      }
+      if(venue.kind==='home') {
+        const purchased=g.save.properties.includes(venue.id);
+        if(purchased) button('Se reposer et enregistrer ici',()=>{g.restHome(venue.id);leave();});
+        else button('Acheter la maison · '+amount(venue.price),()=>{g.buyHome(venue.id);leave();},'primary',g.save.credits<venue.price);
+      }
+      if(venue.kind==='public'){
+        const closed=venue.id==='market'&&populationPeriod(g.time)==='evening'&&distance(g.at,venue.use)>2.4;
+        if(closed) body.insertAdjacentHTML('beforeend','<p>Ouverture à 5 h. Fermeture à 19 h.</p>');
+        else button('Prendre un repas · 18 ₡',()=>{g.buyMeal();leave();},'primary',g.health>=100||g.save.credits<18);
+      }
+      button('Retour au jeu',leave,'secondary');
+      break;
+    }
     case 'garage': {
       const loadout=g.save.loadout;
       const equipment=g.availableImplants.map(i=>'<label><input type="checkbox" data-implant="'+i+'"'+(loadout.includes(i)?' checked':'')+'><span>'+
@@ -250,7 +346,9 @@ function menu(which:Menu) {
       button('Remettre les preuves à Lise',()=>{g.finishBlackmail('give');leave();},'secondary');
       break;
     case 'failed':
-      show('Intégrité à zéro','Séquence interrompue','<p>Le point de reprise restaure le garage, la voiture, les vigiles et le premier objectif du contrat.</p>',true);
+      show(g.policeArrested?'Interpellation':'Intégrité à zéro','Séquence interrompue',g.policeArrested
+        ?'<p>La patrouille vous a arrêté. Reprenez depuis votre point de sauvegarde.</p>'
+        :'<p>Le point de reprise restaure le garage, la voiture, les vigiles et le premier objectif du contrat.</p>',true);
       button(g.busy?'Reprendre au point de sauvegarde':'Revenir au garage',()=>{current=null;g.retry(false);leave();});
       if(g.busy) button('Abandonner le contrat',()=>{current=null;g.retry(true);leave();},'secondary');
       break;
@@ -283,19 +381,14 @@ function minimap(g: Game, markers: Pin[]) {
   };
   ctx.fillStyle = '#131f29';
   ctx.fillRect(0, 0, w, h);
-  for (const r of roads) area(r, '#293d48');
   for (const r of blocks) area(r, '#20313a');
-  ctx.lineCap='round';
-  for(const r of ribbons){
-    ctx.strokeStyle=r.pedestrian?'#496e64':'#495963';
-    ctx.lineWidth=r.width*scale;
-    ctx.beginPath();
-    r.samples.forEach((point,i)=>i?ctx.lineTo(sx(point.x),sy(point.z)):ctx.moveTo(sx(point.x),sy(point.z)));
-    ctx.stroke();
-  }
+  fillPaving(ctx,sx,sy,'#495963','#496e64');
   for (const b of buildings) area(b.area, '#37505b');
   for (const b of walls) if (b.height >= 1.6) area(b.area, '#445c65');
   for (const gate of gates) if (g.city.gateMeshes.get(gate.id)?.visible) area(gate.area, '#8d7771');
+  for(const venue of venues) area([...venue.entrance,2.65,2.65],'#c2acd6');
+  for(const id of activityIds) area([...activitySpec(id).start,2.5,2.5],'#efa675');
+  for(const at of g.police.audible) area([...at,2.7,2.7],'#77b9f9');
   for (const guard of g.guards) {
     if (guard.health <= 0) continue;
     ctx.fillStyle = guard.state === 'pursue' ? '#ff9b79' : '#ac7464';
@@ -330,6 +423,7 @@ function paint(g: Game) {
   const width = window.innerWidth, height = window.innerHeight;
   const now = performance.now();
   const activePins = objective.pins.filter(pin => pin.kind === 'goal' || distance(pin.at, g.at) < (pin.kind === 'car' ? 25 : 36));
+  if(g.destination) activePins.push(g.destination);
   markerElements.forEach((el, i) => { el.hidden = i >= activePins.length; });
   for (const [i, pin] of activePins.entries()) {
     let el = markerElements[i];
@@ -369,9 +463,15 @@ function paint(g: Game) {
   text('map-name', district);
   text('mission-name', objective.name);
   text('objective-text', objective.text);
+  get('activity-clock').hidden=!g.activity||!activitySpec(g.activity.id).time;
+  text('activity-clock',Math.ceil(g.activityRemaining)+' s restantes');
   text('distance', objective.pins[0] ? Math.ceil(distance(g.at, objective.pins[0].at)) + ' m' : '');
   text('money', g.save.credits.toLocaleString('fr-FR') + ' ₡');
   text('health-number', String(Math.ceil(g.health)));
+  get('weapon-hud').hidden=g.driven;
+  text('weapon-name',g.weapon.name);
+  text('ammo-count',g.reloadLeft>0?'Recharge…':`${g.ammo.loaded} / ${g.ammo.spare}`);
+  get('weapon-hud').dataset.empty=String(g.ammo.loaded===0);
   get('health-fill').style.width = g.health + '%';
   get('health-track').setAttribute('aria-valuenow', String(g.health));
   get('health-track').dataset.low = String(g.health <= 28);
@@ -393,8 +493,19 @@ function paint(g: Game) {
   text('alert-text', alert);
   get('alert-meter').style.setProperty('--progress', (state === 'delivery' || g.confirmed ? 100 : g.observation * 100) + '%');
   const prompt = g.interaction();
-  get('prompt').hidden = !prompt;
-  text('prompt-text', prompt?.label ?? '');
+  const nearby=g.driven&&g.nearbyActivity&&Math.abs(g.car.speed)<4?activitySpec(g.nearbyActivity):null;
+  get('prompt').hidden = !prompt&&!nearby;
+  text('prompt-key',nearby?'G':'E');
+  text('prompt-text', nearby?.name??prompt?.label??'');
+  const police=g.police, wanted=get('wanted');
+  get('danger').hidden=police.level>0&&state==='clear';
+  wanted.hidden=!police.level;
+  wanted.dataset.phase=police.phase;
+  wanted.dataset.withAlert=String(!get('danger').hidden);
+  text('wanted-stars','◆'.repeat(police.level)+'◇'.repeat(3-police.level));
+  text('wanted-label',police.arrest>.12?`Interpellation · ${Math.floor(police.arrest*100)} %`:
+    police.phase==='search'?`Recherche ${police.level}/3`:`Poursuite ${police.level}/3`);
+  text('wanted-countdown',police.remaining?'· '+Math.ceil(police.remaining)+' s':'');
   get('notice').hidden = g.messageTime <= 0;
   text('notice', g.message);
   get('speed').hidden = !g.driven;
@@ -418,6 +529,8 @@ window.addEventListener('keydown', event => {
   }
   if (current || !game?.running || event.ctrlKey || event.metaKey || event.altKey) return;
   if (key==='m' && !event.repeat) { event.preventDefault(); overview();return; }
+  if(key==='i'&&!event.repeat) {event.preventDefault();if(!game.driven) menu('arsenal');return;}
+  if(key==='g'&&!event.repeat) {event.preventDefault();game.activitiesMenu();return;}
   if (event.code === 'Tab') { event.preventDefault(); if (!event.repeat) journal(); return; }
   if (moveKeys.has(key)) {
     event.preventDefault();
@@ -425,6 +538,9 @@ window.addEventListener('keydown', event => {
   }
   if (event.repeat) return;
   if (key === 'e') { event.preventDefault(); game.interact(); }
+  if(key==='r') game.reload();
+  if(key==='f') game.cycleWeapon();
+  if(key==='t') game.recover();
   const slot = key === '1' || event.code === 'Digit1' ? 0 : key === '2' || event.code === 'Digit2' ? 1 : null;
   if (slot !== null) { event.preventDefault(); game.implant(slot); }
 });
@@ -445,6 +561,8 @@ get('title-help').addEventListener('click', commands);
 get('pause').addEventListener('click', pause);
 get('journal').addEventListener('click', journal);
 get('open-map').addEventListener('click',overview);
+get('open-activities').addEventListener('click',()=>game?.activitiesMenu());
+get('weapon-hud').addEventListener('click',()=>menu('arsenal'));
 close.addEventListener('click', leave);
 function begin() {
   if (!game) return;

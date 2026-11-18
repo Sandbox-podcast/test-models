@@ -28,7 +28,10 @@
    if(tick===25999)issues.push('Temps de parcours dépassé '+label);
   }g.keys.clear()
  };
- driveCircuit(loop,'Boucle aller');driveCircuit([...loop].reverse(),'Boucle retour');
+ for(const model of ['courier','veloce','gabare']){
+  g.save.inventory.vehicle=model;driveCircuit(loop,'Boucle aller '+model);driveCircuit([...loop].reverse(),'Boucle retour '+model)
+ }
+ g.save.inventory.vehicle='courier';g.restore();
  events.push('Double boucle à gabarit réel · '+Math.round(length)+' m par sens');
  const impact=(x,z,a,speed,frames=48)=>{g.driving=true;g.car=p(x,z);g.q={...g.car};g.prev={...g.q};g.speed=speed;g.carAngle=a;g.paused=false;g.keys.clear();for(let i=0;i<frames;i++)g.simulate(1/60)};
  g.restore();g.paused=false;impact(32,55.3,0,3.6);const scratch=g.view.carMarks.at(-1);assert(scratch&&scratch.position.z>0,'Rayure localisée avant');

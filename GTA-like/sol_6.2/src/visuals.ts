@@ -1,9 +1,12 @@
 import * as T from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { furniture, type Furniture } from './furniture';
-import { ribbons } from './roads';
+import { onStreet, ribbons } from './roads';
+import { groundBounds, makeWater, paveGround } from './lighting';
+import { vehicleClasses, type VehicleClass } from './fleet';
+import { venues } from './venues';
 import { places } from './places';
-import { blocks, bounds, buildings, clamp, crossingSurfaces, elevation, foundation, gates, inRect, roads, rooms, walls, type Building, type Point, type Rect } from './level';
+import { blocks, buildings, clamp, crossingSurfaces, elevation, foundation, gates, inRect, rooms, tunnelStairs, walls, type Building, type Point, type Rect } from './level';
 
 const unit = new T.BoxGeometry();
 const plane = new T.PlaneGeometry(1, 1);
@@ -122,30 +125,6 @@ function surface(area: Rect, mat: T.Material, offset: number, cuts = 2.5) {
   }
   g.computeVertexNormals();
   return new T.Mesh(g, mat);
-}
-
-function ribbonSurface(axis: (typeof ribbons)[number]['samples'], width: number, material: T.Material, offset: number) {
-  const vertices: number[] = [], uvs: number[] = [], indices: number[] = [];
-  const across = Math.max(3,Math.ceil(width/2.1));
-  const stride = across+1;
-  for(const [i,p] of axis.entries()){
-    for(let j=0;j<=across;j++){
-      const side = (j/across-.5)*width;
-      const x=p.x+Math.cos(p.yaw)*side,z=p.z-Math.sin(p.yaw)*side;
-      vertices.push(x,elevation(x,z)+offset,z);
-      uvs.push(x/7,-z/7);
-      if(i>0&&j>0){
-        const k=i*stride+j;
-        indices.push(k-stride-1,k,k-stride,k-stride-1,k-1,k);
-      }
-    }
-  }
-  const mesh=new T.BufferGeometry();
-  mesh.setAttribute('position',new T.Float32BufferAttribute(vertices,3));
-  mesh.setAttribute('uv',new T.Float32BufferAttribute(uvs,2));
-  mesh.setIndex(indices);
-  mesh.computeVertexNormals();
-  return new T.Mesh(mesh,material);
 }
 
 const textMaterials = new Map<string, T.MeshBasicMaterial>();
@@ -387,6 +366,8 @@ export class City {
   private readonly marketClosed = new T.Group();
   private railDeck = new T.Group();
   private fadeRail: ReturnType<typeof fader>;
+  private readonly daylight: {value:number};
+  private readonly water=makeWater();
 
   constructor(scene: T.Scene) {
     randomState = 61287;
@@ -395,34 +376,37 @@ export class City {
     const decor = new T.Group();
     this.group.add(decor);
     const base = slabTexture('#34414a', false);
-    for (let x=bounds.west-12;x<bounds.east+12;x+=31) {
-      for (let z=bounds.north-10;z<bounds.south+10;z+=31) decor.add(surface([x+15.5,z+15.5,31,31],base,-.035,1.85));
-    }
     const roadmat = asphalt();
-    for (const area of roads) decor.add(surface(area, roadmat, .012, 1.5));
     const walkmat = slabTexture('#53616e', true);
+    this.daylight=paveGround(base,roadmat.map!,walkmat.map!);
+    const {west,east,north,south}=groundBounds;
+    for (let x=west;x<east;x+=30) {
+      for (let z=north;z<south;z+=30) {
+        const w=Math.min(30,east-x),d=Math.min(30,south-z);
+        decor.add(surface([x+w/2,z+d/2,w,d],base,-.025,1));
+      }
+    }
     for(const road of ribbons) {
-      if(!road.pedestrian) decor.add(ribbonSurface(road.samples,road.width+2.8,walkmat,.047));
-      decor.add(ribbonSurface(road.samples,road.width,road.pedestrian?walkmat:roadmat,.083));
       if (road.pedestrian) continue;
       for(const [i,p] of road.samples.entries()){
-        if(i%4!==0 || i===0 || i===road.samples.length-1) continue;
-        const mark=box(decor,'#bcb098',p.x,elevation(p.x,p.z)+.105,p.z,.13,.015,1.59);
+        if(i%4!==0 || p.length<2 || p.length>road.samples.at(-1)!.length-2 || onStreet(p.x,p.z,road.id)) continue;
+        const mark=box(decor,'#bcb098',p.x,elevation(p.x,p.z)+.057,p.z,.13,.015,1.59);
         mark.rotation.y=p.yaw;
       }
     }
     for (const area of blocks) {
-      decor.add(surface(area, walkmat, .038));
       const [x, z, w, d] = area;
       for (let i = -w / 2; i <= w / 2; i += 1.1) {
         for (const side of [-1, 1]) {
           const zx = z + side * d / 2;
+          if(onStreet(x+i,zx)) continue;
           box(decor, '#7a807d', x + i, elevation(x + i, zx) + .064, zx, 1.03, .14, .22);
         }
       }
       for (let j = -d / 2; j < d / 2; j += 1.1) {
         for (const side of [-1, 1]) {
           const xx = x + side * w / 2;
+          if(onStreet(xx,z+j)) continue;
           box(decor, '#7a807d', xx, elevation(xx, z + j) + .064, z + j, .21, .14, 1.03);
         }
       }
@@ -442,6 +426,10 @@ export class City {
         box(decor, '#b1b6a9', x + i * .8, elevation(x + i * .8, 5.3) + .041, 5.3, .46, .016, 1.62);
         box(decor, '#b1b6a9', x + i * .8, elevation(x + i * .8, -5.3) + .041, -5.3, .46, .016, 1.62);
       }
+    }
+    for(const x of [126,171]) for(let i=-5;i<=5;i++) {
+      const z=i*.9;
+      box(decor,'#c2c4af',x,elevation(x,z)+.039,z,2.4,.013,.46);
     }
     const roofMats = { steel: slabTexture('#394b58', true), felt: slabTexture('#4d4650', true) };
     for (const b of buildings) structure(decor, b, roofMats);
@@ -482,11 +470,27 @@ export class City {
         box(mesh, '#657680', x + offset * w, y + r.height + .76, z + d * .14, 1.9, .05, .98);
       }
       const names: Record<string, string> = { garage:'MINA / GARAGE',depot:'DÉPÔT F-07',archive:'ARCHIVES CIVIS',core:'NŒUD / REGISTRE',records:'ARCHIVES D’ATELIER',housing:'RÉSIDENCE HAUTE',shop:'ARRIÈRE-BOUTIQUE',paper:'PAPETERIE' };
-      sign(mesh, names[r.id], r.accent, x, y + r.height + .27, z + d * .30, Math.min(12, w - 1), 1.72, true);
+      const venue=venues.find(v=>v.id===r.id);
+      sign(mesh, (names[r.id]??venue?.name??r.id).toLocaleUpperCase('fr'), r.accent, x, y + r.height + .27, z + d * .30, Math.min(12, w - 1), 1.72, true);
       box(mesh, r.accent, x, y + r.height - .08, z + d / 2 + .225, w - .18, .09, .15, true);
       glow(decor, r.accent, x, y + .09, z + d / 2, 16, 8, .85);
       this.group.add(mesh, slice);
       this.roofs.push({ area: r.area, fade: fader(mesh), slice });
+      if(venue) {
+        const [ex,ez]=venue.entrance, base=elevation(ex,ez);
+        for(const side of [-1,1]) box(decor,r.accent,ex+side*1.31,base+1.45,ez,.09,2.9,.20,true);
+        box(decor,r.accent,ex,base+2.91,ez,2.68,.10,.32,true);
+        glow(decor,r.accent,ex,base+.08,ez,5,4,.66);
+        for(const {area:[fx,fz,fw,fd], height, tint, kind} of venue.furniture) {
+          const fy=elevation(fx,fz);
+          box(decor,tint,fx,fy+height*.47,fz,fw,height*.88,fd);
+          box(decor,kind==='bed'?'#c3baa2':'#9b9d8d',fx,fy+height*.93,fz,fw*.965,height*.14,fd*.92);
+          if(kind==='stall'||kind==='counter'||kind==='shelf') {
+            for(let i=0;i<4;i++) box(decor,i%2?r.accent:'#506977',fx+(.23*i-.32)*fw,fy+height+.11,fz,Math.min(fw*.12,.47),.23,fd*.43);
+          }
+          if(kind==='bed'||kind==='sofa') box(decor,'#d5c9ba',fx,fy+height+.075,fz-fd*.30,fw*.68,.18,fd*.29);
+        }
+      }
     }
     for (const gate of gates) {
       const [x, z, w, d] = gate.area, y = elevation(x, z);
@@ -523,11 +527,7 @@ export class City {
       glow(decor, color, x + .46, y + .09, z - .90, 1.55, 5.7, .42);
     }
     this.railway(decor);
-    const water=new T.MeshStandardMaterial({color:'#284d5d',roughness:.36,metalness:.41});
-    decor.add(surface([99,-117.1,111,12.2],water,.16,1.5));
-    for(let x=48;x<154;x+=4.9){
-      for(let i=0;i<3;i++) box(decor,i%2?'#4f727b':'#3a6370',x,.185,-112.6-i*3,3.2+i*.35,.007,.067);
-    }
+    decor.add(surface([99,-117.1,111,12.2],this.water,.16,1.5));
     sign(this.garageMap,'CARTE DU COTEAU','#f3cd95',-24.45,elevation(-24.45,16)+1.8,16.00,3.6,.74);
     sign(this.civicSigns,'CELLULE D’APPEL','#bacfec',195,elevation(195,12)+1.9,12,5.15,.90);
     sign(this.relaySigns,'DROITS / RELAIS','#a5e8b8',198.6,elevation(198.6,10.9)+1.9,10.9,5.6,.90);
@@ -554,7 +554,7 @@ export class City {
         box(decor, '#657678', x, elevation(x, z) + .18, z, .11, .55, .54);
       }
     }
-    for (let z = -34.6; z > -39.1; z -= .47) {
+    for (let z = tunnelStairs.top; z > tunnelStairs.bottom; z -= .245) {
       box(decor, '#6c848a', 13, elevation(13, z) + .055, z, 7.4, .105, .14);
     }
     batchBoxes(decor);
@@ -604,6 +604,12 @@ export class City {
   setPeriod(period:'morning'|'day'|'evening') {
     this.marketOpen.visible=period!=='evening';
     this.marketClosed.visible=period==='evening';
+  }
+
+  setLight(time:number,daylight:number) {
+    this.daylight.value=daylight;
+    this.water.uniforms.daylight.value=daylight;
+    this.water.uniforms.time.value=time;
   }
 
   damageProp(id: string, dx: number, dz: number, strength: number) {
@@ -757,8 +763,10 @@ export class CarModel extends T.Group {
   }
 }
 
-export function makeCar(color = '#48636d') {
+export function makeCar(color = '#48636d', kind:VehicleClass='sedan') {
   const car = new CarModel();
+  const size=vehicleClasses[kind];
+  car.scale.set(size.x,size.y,size.z);
   shadow(car, 4.8, 7.5);
   box(car, '#1a2430', 0, .38, 0, 1.92, .47, 3.9);
   box(car, color, 0, .71, 0, 1.86, .49, 3.85);
@@ -770,6 +778,16 @@ export function makeCar(color = '#48636d') {
   const rear = box(car, '#456678', 0, 1.081, -.95, 1.35, .06, .51);
   rear.rotation.x = -.45;
   box(car, color, 0, 1.397, -.25, 1.29, .083, .93);
+  if(kind==='van') {
+    box(car,color,0,1.28,-.94,1.69,.79,1.74);
+    box(car,'#858a80',0,1.685,-.94,1.59,.09,1.7);
+    box(car,'#354a58',0,1.44,-1.825,1.19,.4,.05);
+  }
+  if(kind==='compact') box(car,color,0,1.31,-1.05,1.52,.24,.55);
+  if(kind==='sport') {
+    for(const x of [-.47,.47]) box(car,'#202d3e',x,1.18,-1.57,.12,.42,.14);
+    box(car,color,0,1.42,-1.59,1.78,.11,.32);
+  }
   box(car, '#b8a777', 0, .966, 1.26, .13, .028, 1.25);
   box(car, '#28383e', 0, .997, -1.30, .84, .09, .52);
   for (const x of [-.29,.29]) box(car,'#b3a077',x,1.06,-1.3,.06,.045,.56);
@@ -852,6 +870,7 @@ export class Effects {
     }
     for (let i = 0; i < 13; i++) {
       const mesh = box(scene, '#ffe0a0', 0, 0, 0, .045, .045, 1, true);
+      mesh.material=mesh.material.clone();
       mesh.visible = false;
       this.tracers.push({ mesh, age: 0 });
     }
@@ -884,8 +903,9 @@ export class Effects {
     m.scale.set(size, size * scatter(.6, 1.3), 1);
     m.visible = true;
   }
-  trace(from: T.Vector3, to: T.Vector3) {
+  trace(from: T.Vector3, to: T.Vector3, color='#ffe0a0') {
     const t = this.tracers[this.cursor.tracer++ % this.tracers.length];
+    (t.mesh.material as T.MeshBasicMaterial).color.set(color);
     t.mesh.position.copy(from).add(to).multiplyScalar(.5);
     t.mesh.scale.z = from.distanceTo(to);
     t.mesh.lookAt(to);

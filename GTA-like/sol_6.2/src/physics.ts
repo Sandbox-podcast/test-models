@@ -1,12 +1,16 @@
 import R from '@dimforge/rapier3d-compat';
-import { buildings, clamp, crossingSurfaces, distance, elevation, foundation, gates, inRect, navigation, vehicleExclusions, walls, type Point, type Rect } from './level';
+import { bounds, buildings, clamp, crossingSurfaces, distance, elevation, foundation, gates, inRect, navigation, onTunnelStairs, tunnelStairs, vehicleExclusions, walls, type Point, type Rect } from './level';
 import { footprint, furniture } from './furniture';
+import { vehicleClasses, type VehicleClass } from './fleet';
+import { venues } from './venues';
 
 const identity = { x: 0, y: 0, z: 0, w: 1 };
 const rotation = (yaw: number) => ({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) });
 export const step = 1 / 60;
 const foot = new R.Cuboid(.39, .65, .39);
-const car = new R.Cuboid(.98, .54, 1.96);
+const cars=Object.fromEntries(Object.entries(vehicleClasses).map(([id,size])=>[id,new R.Cuboid(.98*size.x,.54*size.y,1.96*size.z)])) as Record<VehicleClass,R.Cuboid>;
+const vehicleCenter=(kind:VehicleClass)=>.62*vehicleClasses[kind].y;
+export const insideCity=([x,z]:Point)=>x>bounds.west+.55&&x<bounds.east-.55&&z>bounds.north+.55&&z<bounds.south-.55;
 type Obstacle = { id: string; type: 'structure' | 'furniture' | 'vehicle' };
 export type Contact = Obstacle & { normal: Point; point: Point };
 type Motion = { at: Point; hit: boolean; contact?: Contact };
@@ -14,9 +18,9 @@ type Motion = { at: Point; hit: boolean; contact?: Contact };
 export class Physics {
   private readonly world = new R.World({ x: 0, y: -9.81, z: 0 });
   private readonly doors = new Map<string, R.Collider>();
-  private readonly parked: R.Collider;
   private readonly props = new Map<string, R.Collider>();
   private readonly vehicles = new Map<string, R.Collider>();
+  private readonly vehicleKinds = new Map<string,VehicleClass>();
   private readonly obstacle = new Map<number, Obstacle>();
   private readonly support = new Set<number>();
   private graphDirty = true;
@@ -32,9 +36,9 @@ export class Physics {
       this.support.add(this.solid(id,surface.area,surface.height,surface.base).handle);
     }
     for (const prop of furniture) this.addProp(prop.id, footprint(prop), prop.size[1]);
+    for (const venue of venues) for(const [index,prop] of venue.furniture.entries())
+      this.solid(`venue-${venue.id}-${index}`,prop.area,prop.height);
     for (const g of gates) this.doors.set(g.id, this.solid(g.id, g.area, 2.35));
-    this.parked = this.world.createCollider(R.ColliderDesc.cuboid(.98, .54, 1.96).setEnabled(false));
-    this.obstacle.set(this.parked.handle, { id:'player-car', type:'vehicle' });
     this.world.step();
   }
 
@@ -62,16 +66,15 @@ export class Physics {
   }
 
   setParked(at: Point, yaw: number, enabled: boolean) {
-    this.parked.setEnabled(enabled);
-    this.parked.setTranslation({ x: at[0], y: elevation(...at) + .55, z: at[1] });
-    this.parked.setRotation(rotation(yaw));
-    this.world.propagateModifiedBodyPositionsToColliders();
+    this.placeVehicle('player-car',at,yaw,enabled);
   }
 
-  addVehicle(id: string, at: Point, yaw: number) {
-    const collider = this.world.createCollider(R.ColliderDesc.cuboid(.98, .54, 1.96)
-      .setTranslation(at[0], elevation(...at) + .55, at[1]).setRotation(rotation(yaw)));
+  addVehicle(id: string, at: Point, yaw: number, kind:VehicleClass='sedan') {
+    const size=vehicleClasses[kind];
+    const collider = this.world.createCollider(R.ColliderDesc.cuboid(.98*size.x, .54*size.y, 1.96*size.z)
+      .setTranslation(at[0], elevation(...at) + vehicleCenter(kind), at[1]).setRotation(rotation(yaw)));
     this.vehicles.set(id, collider);
+    this.vehicleKinds.set(id,kind);
     this.obstacle.set(collider.handle, { id, type:'vehicle' });
   }
 
@@ -80,7 +83,7 @@ export class Physics {
     if (!collider) return;
     collider.setEnabled(enabled);
     if (!enabled) return;
-    collider.setTranslation(this.pos(at, .55));
+    collider.setTranslation(this.pos(at,vehicleCenter(this.vehicleKinds.get(id)!)));
     collider.setRotation(rotation(yaw));
   }
 
@@ -98,26 +101,52 @@ export class Physics {
   private readonly obstacleFilter=(collider:R.Collider)=>!this.support.has(collider.handle);
   private readonly walkingFilter=(collider:R.Collider)=>this.obstacleFilter(collider)&&this.obstacle.get(collider.handle)?.type!=='vehicle';
 
-  private collide(at: Point, yaw: number, driving: boolean, ignoreCar = false) {
-    const shape = driving ? car : foot;
-    const filter = ignoreCar || driving ? this.parked : undefined;
-    return this.world.intersectionWithShape(this.pos(at, driving ? .62 : .73), rotation(yaw), shape,
-      undefined, undefined, filter, undefined, this.obstacleFilter) !== null;
+  private collide(at: Point, yaw: number, kind?:VehicleClass, ignoreVehicle?:string) {
+    if(!insideCity(at)||kind&&vehicleExclusions.some(area=>inRect(...at,area))) return true;
+    return this.world.intersectionWithShape(this.pos(at, kind ? vehicleCenter(kind) : .73), rotation(yaw), kind ? cars[kind] : foot,
+      undefined, undefined, ignoreVehicle?this.vehicles.get(ignoreVehicle):undefined, undefined, this.obstacleFilter) !== null;
   }
 
-  canStand(at: Point) { return !this.collide(at, 0, false, false); }
-  canTurn(at: Point, yaw: number) { return !this.collide(at, yaw, true); }
+  canStand(at: Point) { return !this.collide(at, 0); }
+  canTurn(at: Point, yaw: number, kind:VehicleClass='sedan', vehicle?:string) { return !this.collide(at,yaw,kind,vehicle); }
 
-  move(at: Point, dx: number, dz: number, yaw = 0, driving = false, ignoreVehicle?: string): Motion {
+  policeClearance(at:Point,yaw:number,other:Point,facing:number,kind?:VehicleClass){
+    if(distance(at,other)>4.8) return true;
+    const shape=kind?cars[kind]:foot;
+    return !cars.sedan.intersectsShape(this.pos(at,vehicleCenter('sedan')),rotation(yaw),shape,
+      this.pos(other,kind?vehicleCenter(kind):.73),rotation(facing));
+  }
+
+  escapeOnFoot(at:Point) {
+    return this.canStand(at)&&([0,1,2,3,4,5,6,7]).some(i=>{
+      const heading=i*Math.PI/4, dx=.83*Math.sin(heading),dz=.83*Math.cos(heading);
+      return distance(at,this.move(at,dx,dz).at)>.71;
+    });
+  }
+
+  exitVehicle(at:Point,yaw:number,kind:VehicleClass,id:string) {
+    const size=vehicleClasses[kind], c=Math.cos(yaw),s=Math.sin(yaw);
+    for(const reach of [0,.45]) for(const [side,end] of [[1,0],[-1,0],[1,-1],[-1,-1],[1,1],[-1,1],[0,-1],[0,1]]){
+      const x=side*(.98*size.x+.68+reach),z=end*(end&&side ? 1.22*size.z : 1.96*size.z+.70+reach);
+      const target:Point=[at[0]+x*c+z*s,at[1]-x*s+z*c];
+      if(Math.abs(elevation(...target)-elevation(...at))>.86 || this.ray(at,target,.90,.90,id)<.99 || !this.escapeOnFoot(target)) continue;
+      return target;
+    }
+  }
+
+  move(at: Point, dx: number, dz: number, yaw = 0, driving = false, ignoreVehicle?: string, kind:VehicleClass='sedan'): Motion {
     if (Math.abs(dx) + Math.abs(dz) < .000001) return { at, hit: false };
-    const shape = driving ? car : foot;
-    const height = driving ? .62 : .73;
+    const shape = driving ? cars[kind] : foot;
+    const height = driving ? vehicleCenter(kind) : .73;
     const from = this.pos(at, height);
-    const excluded = ignoreVehicle ? this.vehicles.get(ignoreVehicle) : driving ? this.parked : undefined;
+    const excluded = ignoreVehicle ? this.vehicles.get(ignoreVehicle) : undefined;
     const test = (start: typeof from, x: number, z: number) => {
+      if(!insideCity([start.x+x,start.z+z])) return {ratio:0};
       if (driving && vehicleExclusions.some(area => inRect(start.x + x, start.z + z, area))) return {ratio:0};
       const dy = elevation(start.x + x, start.z + z) - elevation(start.x, start.z);
-      if (Math.abs(dy) > .86) return {ratio:0};
+      const stair=!driving&&(onTunnelStairs(start.x,start.z)||onTunnelStairs(start.x+x,start.z+z));
+      const slope=driving?.73:stair?1.85:1.3;
+      if (Math.abs(dy) > Math.max(driving?.16:.21, Math.hypot(x,z)*slope+.065)) return {ratio:0};
       const hit = this.world.castShape(start, rotation(yaw), { x, y: dy, z }, shape,
         .017, 1, false, undefined, undefined, excluded, undefined, this.obstacleFilter);
       return {ratio:hit ? clamp(hit.time_of_impact - .006, 0, 1) : 1, hit};
@@ -146,12 +175,12 @@ export class Physics {
     } };
   }
 
-  ray(from: Point, to: Point, fromHeight = 1.18, toHeight = 1.18, ignoreCar = false) {
+  ray(from: Point, to: Point, fromHeight = 1.18, toHeight = 1.18, ignoreVehicle?:string) {
     const o = this.pos(from, fromHeight), t = this.pos(to, toHeight);
     const len = Math.hypot(t.x - o.x, t.y - o.y, t.z - o.z);
     if (len < .001) return 1;
     const dir = { x: (t.x - o.x) / len, y: (t.y - o.y) / len, z: (t.z - o.z) / len };
-    const hit = this.world.castRay(new R.Ray(o, dir), len, true, undefined, undefined, ignoreCar ? this.parked : undefined);
+    const hit = this.world.castRay(new R.Ray(o, dir), len, true, undefined, undefined, ignoreVehicle?this.vehicles.get(ignoreVehicle):undefined);
     return hit ? hit.timeOfImpact / len : 1;
   }
 
@@ -170,7 +199,9 @@ export class Physics {
 
   private walkable(from:Point,to:Point) {
     const length=distance(from,to);
-    const checks=Math.max(1,Math.ceil(length/1.3));
+    const tunnel=Math.min(from[0],to[0])<tunnelStairs.right&&Math.max(from[0],to[0])>tunnelStairs.left
+      &&Math.min(from[1],to[1])<tunnelStairs.top&&Math.max(from[1],to[1])>tunnelStairs.bottom;
+    const checks=Math.max(1,Math.ceil(length/(tunnel?.63:1.3)));
     let at=this.pos(from,.73);
     for(let i=1;i<=checks;i++){
       const t=i/checks;

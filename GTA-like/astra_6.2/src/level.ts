@@ -44,6 +44,18 @@ for(const [name,x,z,w,d,h] of [
 for(let i=1;i<plans.length;i++)for(const [j,row] of plans[i].buildings.entries()){
  let [x,z,w,d]=row.slice(0,4).map(Number);if(i===2&&row[4]==='Dépôt technique'){x-=6;z-=1.4;w-=7}if(i===2&&row[4]==='Centre de commande')w-=5.5;if(i===1&&row[4]==='Galerie haute')z-=1.6;if(i===4&&row[4]==='Commerces')z+=2.5;block(String(row[4]),i,x+w/2,z+d/2,w,d,([0,7,8,5,6][i])+(j%3)*.9)
 }
+export const premises={
+ dealer:blocks.find(b=>b.district===0&&b.name==='Hangar')!,
+ arms:blocks.find(b=>b.district===0&&b.name==='Magasin')!,
+ cour:blocks.find(b=>b.district===0&&b.name==='Maisons')!,
+ terrasse:blocks.find(b=>b.district===4&&b.name==='Logements')!,
+ cafe:blocks.find(b=>b.district===3&&b.name==='Buvette')!
+}
+export const parkingBays=[p(49.3,18.6),p(36.5,19.4),p(53.3,18)]
+function reservedApproach(q:Point,w:number,d:number){
+ return Object.values(premises).some(b=>Math.abs(q.x-b.x)<1.85+w/2&&Math.abs(q.z-(b.z+b.d/2+1.5))<2.3+d/2)||
+  parkingBays.some(b=>Math.abs(b.x-q.x)<1.45+w/2&&Math.abs(b.z-q.z)<2.8+d/2)
+}
 export type Sample=Point & {y:number,s:number,angle:number}
 export type Route={id:string,points:Sample[],width:number,road:boolean,zone:number,length:number}
 export const routes:Route[]=[]
@@ -64,6 +76,7 @@ function baseHeight(q:Point,i:number){const z=q.z-origins[i].z
  return 4+8*clamp((110-z)/85)
 }
 for(const [i,plan] of plans.entries())for(const [k,r] of plan.paths.entries()){
+ if(i===0&&k===1)continue // Replaced by the full garage apron and the depot driveway below.
  for(const [j,part] of r.path.split('M').filter(Boolean).entries()){
   const id=['forges','dalle','noeud','quais','belvederes'][i]+'-'+k+'-'+j
   const lane=route(id,i,'M'+part,r.width,r.road,.25,origins[i],(q,f)=>{
@@ -77,11 +90,11 @@ for(const [i,plan] of plans.entries())for(const [k,r] of plan.paths.entries()){
  }
 }
 const globalRoute=(id:string,path:string,road:boolean,h1:number,h2:number,width=road?11:4)=>route(id,-1,path,width,road,1,p(0,0),(_,t)=>h1+(h2-h1)*t)
-globalRoute('J01','M136 30 C167 29 177 20 211 20',true,6,4)
+globalRoute('J01','M136 30 C138 15 158 11 176 15 S197 20 211 20',true,6,4)
 globalRoute('J02','M141 100 C141 116 151 131.75 169 131.75 S192 131.75 208 131.75',true,0,2)
 globalRoute('J03','M275.5 106 C275.5 78 311 91 311 62 L311 23',true,2,4)
 globalRoute('J04','M371 20 C411 20 413 -58 374 -61 L308 -61 Q281 -61 278.5 -86',true,4,12)
-globalRoute('J05','M211 20 C179 20 202 -47 158 -54 S66 -57 48.5 -99',true,4,4)
+globalRoute('J05','M211 20 C209 0 202 -47 158 -54 S66 -57 48.5 -99',true,4,4)
 globalRoute('J06','M192 -187 C219 -187 229 -174 256 -174',true,12,12)
 globalRoute('S02','M249.75 -45 C254 -72 333 -57 338 -86',false,12,12)
 globalRoute('Sentier des ateliers','M140 40 Q174 45 191 32 L211 30',false,6,4)
@@ -90,7 +103,7 @@ globalRoute('Terrasses du coteau','M211 -17.5 C187 -25 148 -48 112 -66 L87.25 -9
 globalRoute('Grille des ateliers','M33 65 L33 82 Q22 82 22 97',false,6,0)
 globalRoute('Parvis du garage','M32 30 L32 54',true,6,6,8)
 globalRoute('Quai du dépôt','M111 46 L111 60 L98 60 L88 57',false,6,6)
-globalRoute('Parking du dépôt','M112 30 L112 41',true,6,6,7)
+globalRoute('Parking du dépôt','M112 30 L112 48',true,6,6,7)
 export const junctions=routes.filter(r=>/^J0[1-6]$/.test(r.id)).map(r=>({id:r.id,a:{...r.points[0],width:r.width},b:{...r.points.at(-1)!,width:r.width},route:r}))
 export const roads=routes.filter(r=>r.road)
 export function along(r:Route,s:number,lateral=0):Sample{
@@ -152,12 +165,12 @@ for(const x of underpasses)for(const side of [-1,1])for(let z=66.5;z<82;z+=1.25)
 export const vehicleBarriers:Wall[]=underpasses.map(x=>({x,z:68,w:8,d:.8,h:12,base:0}))
 export const streetProps:Wall[]=[]
 for(const lane of roads)for(let s=10;s<lane.length-8;s+=28){const q=along(lane,s,lane.width/2+2.35),near=nearestLane(q,true)
- if(!near||near.d<near.r.width/2+1||blocks.some(b=>inside(q,b,1.1))||Object.values(sites).some(v=>distance(v,q)<4)||distance(q,p(165,75))<20)continue
+ if(reservedApproach(q,.3,.3)||!near||near.d<near.r.width/2+1||blocks.some(b=>inside(q,b,1.1))||Object.values(sites).some(v=>distance(v,q)<4)||distance(q,p(165,75))<20)continue
  streetProps.push({...q,w:.28,d:.28,h:3.6,kind:'light'})}
 export const fixtures:{point:Wall,label:string}[]=[]
 function furnish(q:Point,kind:NonNullable<Wall['kind']>,w:number,d:number,h:number,label=''){
  const item={...q,kind,w,d,h},lane=nearestLane(q,true)
- if(!inCity(q)||blocks.some(b=>inside(q,b,Math.max(w,d)/2+.4))||lane&&lane.d<lane.r.width/2+Math.max(w,d)/2+.65||Object.values(sites).some(s=>distance(s,q)<1.25))return
+ if(reservedApproach(q,w,d)||!inCity(q)||blocks.some(b=>inside(q,b,Math.max(w,d)/2+.4))||lane&&lane.d<lane.r.width/2+Math.max(w,d)/2+.65||Object.values(sites).some(s=>distance(s,q)<1.25))return
  streetProps.push(item);fixtures.push({point:item,label})
 }
 for(const [i,kind,label] of [[0,'box','Ateliers'],[1,'bench','Permanence'],[2,'stop','Accueil Civis'],[3,'stall','Halle du quai'],[4,'table','Café des remparts']] as const){

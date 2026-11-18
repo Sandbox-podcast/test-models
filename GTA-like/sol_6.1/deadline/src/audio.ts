@@ -1,5 +1,8 @@
+import type{WeaponId}from'./economy.ts';
 export class Sound {
  ctx: AudioContext | null = null; volume=.25; ambient: GainNode|null=null;
+ private sirenAt=0;
+ siren(time:number,level:number,active:boolean){if(!active||!level||time<this.sirenAt)return;this.sirenAt=time+.7;this.tone(Math.floor(time*2)%2?490:650,.45,'sine',.12);}
  private city:GainNode|null=null;private river:GainNode|null=null;private engine:OscillatorNode|null=null;private motor:GainNode|null=null;
  start(){
   if(!this.ctx){
@@ -11,6 +14,7 @@ export class Sound {
   }this.ctx.resume().catch(()=>{});
  }
  tone(freq:number,duration=.12,type:OscillatorType='sine',vol=.2){if(!this.ctx)return;const o=this.ctx.createOscillator(),g=this.ctx.createGain();o.type=type;o.frequency.setValueAtTime(freq,this.ctx.currentTime);o.frequency.exponentialRampToValueAtTime(Math.max(20,freq*.45),this.ctx.currentTime+duration);g.gain.setValueAtTime(vol*this.volume,this.ctx.currentTime);g.gain.exponentialRampToValueAtTime(.001,this.ctx.currentTime+duration);o.connect(g);g.connect(this.ctx.destination);o.start();o.stop(this.ctx.currentTime+duration);}
+ weaponShot(id:WeaponId){if(id==='shotgun'){this.tone(65,.25,'sawtooth',.6);this.tone(240,.12,'square',.20);}else if(id==='rifle'){this.tone(80,.2,'sawtooth',.55);this.tone(940,.04,'square',.12);}else if(id==='smg'){this.tone(120,.08,'sawtooth',.32);this.tone(560,.025,'square',.08);}else this.shot();}
  shot(){this.tone(96,.13,'sawtooth',.5);this.tone(680,.035,'square',.13);}
  ui(){this.tone(660,.09,'sine',.3);}
  alert(){this.tone(340,.35,'triangle',.3);}

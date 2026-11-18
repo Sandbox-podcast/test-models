@@ -1,3 +1,5 @@
+import {riverSurface} from './lighting'
+import {pavement} from './pavement'
 import * as T from 'three'
 import {origins,routes,nearestLane,ground,ribbon,along,sites,type Block} from './level'
 
@@ -49,20 +51,21 @@ export function streetscape(scene:T.Scene){
   for(const [j,v] of rim.entries()){const [x,y,z]=xyz.slice(v*3,v*3+3);face.push(x,y,z,x,-4.8,z);if(j){const k=j*2;tris.push(k-2,k-1,k,k,k-1,k+1)}}
   mesh(new Float32Array(face),new Uint32Array(tris),groundMats[i])
  }
+ for(const surface of pavement){
+  const data=surface.vertices.slice();for(let i=1;i<data.length;i+=3)data[i]+=surface.kind==='verge'?-.08:.045
+  mesh(data,surface.indices,surface.kind==='road'?road:surface.kind==='sidewalk'?side:surface.kind==='path'?path:groundMats[0])
+ }
  for(const lane of routes){
-  const width=lane.width/2
-  const draw=(a:number,b:number,h:number,m:T.Material)=>{const data=ribbon(lane,a,b,h);mesh(data.vertices,data.indices,m)}
-  if(lane.zone<0)draw(-width-3.1,width+3.1,-.08,groundMats[0]);
-  if(lane.road){draw(-width-1.55,width+1.55,.025,side);draw(-width,width,.06,road)
+  if(lane.road){
    if(lane.length>50)for(let s=3;s<lane.length;s+=5.3){const q=along(lane,s);stripe(q.x,q.y+.09,q.z,q.angle,.115,2)}
-  }else draw(-width,width,.046,path)
+  }
  }
  for(const z of [38,65.5])for(let i=-3;i<=3;i++)stripe((z===38?112:125)+i*.9,ground(z===38?112:125,z)+.10,z,0,.46,1.5)
  for(const lane of routes.filter(r=>r.road&&r.zone>=0&&r.length>50)){
   for(const s of [22,lane.length*.48]){const q=along(lane,s);for(let v=-4;v<=4;v++){stripe(q.x+Math.cos(q.angle)*v,q.y+.105,q.z-Math.sin(q.angle)*v,q.angle,.49,1.8)}}
  }
  stripes.count=count;scene.add(stripes)
- const water=new T.Mesh(new T.PlaneGeometry(167,22),roadMaterial('#295b68'));water.rotation.x=-Math.PI/2;water.position.set(origins[3].x+80,.06,origins[3].z+100);scene.add(water)
+ const water=new T.Mesh(new T.PlaneGeometry(167,22),riverSurface());water.rotation.x=-Math.PI/2;water.position.set(origins[3].x+80,.06,origins[3].z+100);scene.add(water)
  function stencil(x:number,z:number,w:number,d:number,text:string,color:string){
   const cv=document.createElement('canvas');cv.width=512;cv.height=128;const c=cv.getContext('2d')!;c.fillStyle=color;c.font='bold 78px monospace';c.textAlign='center';c.textBaseline='middle';c.fillText(text,256,65,500)
   const mesh=new T.Mesh(new T.PlaneGeometry(w,d),new T.MeshBasicMaterial({map:texture(cv),transparent:true,opacity:.72,depthWrite:false}));mesh.rotation.x=-Math.PI/2;mesh.position.set(x,ground(x,z)+.15,z);scene.add(mesh)

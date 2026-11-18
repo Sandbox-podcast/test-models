@@ -1,3 +1,6 @@
+import {rooms,parkingBays,type Room} from './rooms'
+import {vehicles,weapons,type Vehicle,type Weapon} from './equipment'
+import {Lighting} from './lighting'
 import * as T from 'three'
 import {streetscape,roofSkin,roofing,stonework,halo} from './surfaces'
 import {blocks,walls,streetProps,ground,fixtures,sites,trackZ,underpasses,type Point} from './level'
@@ -16,14 +19,20 @@ function badge(txt:string,color:string,size:number){
  sprite.scale.set(size,size*80/512,1);return sprite
 }
 export class Actor{
- obj=new T.Group(); body=new T.Group(); legs:T.Mesh[]=[]; arms:T.Mesh[]=[]
+ obj=new T.Group(); body=new T.Group();private held=new T.Group(); legs:T.Mesh[]=[]; arms:T.Mesh[]=[]
  constructor(scene:T.Scene,color:string,isPlayer=false){
   scene.add(this.obj);this.obj.add(this.body)
   cube(this.body,0,.98,0,.74,.7,.43,color);cube(this.body,0,1.48,0,.4,.41,.38,'#c09278')
   cube(this.body,0,1.68,-.04,.45,.14,.42,isPlayer?'#232931':'#303743');cube(this.body,0,1.48,.21,.31,.09,.05,isPlayer?'#b8ffff':'#fa8e6c')
   for(const n of [-1,1]){this.legs.push(cube(this.body,n*.19,.36,0,.26,.71,.3,'#252b32'));this.arms.push(cube(this.body,n*.44,.94,.07,.22,.62,.23,color))}
   if(color==='#519a8d'){cube(this.body,-.16,1.2,.25,.19,.15,.06,'#fff0ab').material=glow('#ffdb8c');cube(this.body,.27,.89,.2,.13,.39,.12,'#c39864')}if(color==='#aa6662'){cube(this.body,0,1.22,0,.99,.29,.48,'#556069');cube(this.body,0,1.66,.02,.50,.21,.47,'#333c49')}
-  if(isPlayer){cube(this.body,0,1.12,-.27,.53,.5,.19,'#b1bf43');cube(this.body,.34,1.12,.19,.13,.08,.65,'#899599')}
+  if(isPlayer){cube(this.body,0,1.12,-.27,.53,.5,.19,'#b1bf43');this.held.position.set(.34,1.12,.23);this.body.add(this.held);this.equip('courier')}
+ }
+ equip(id:Weapon){
+  this.held.clear()
+  if(id==='courier'){cube(this.held,0,0,.08,.13,.12,.53,'#929c98');return}
+  const arc=id==='arc';cube(this.held,0,0,.23,arc?.19:.32,.20,arc?.94:.58,arc?'#476a77':'#655765')
+  for(const side of [-1,1])cube(this.held,side*(arc?.11:.18),.035,.26,arc?.04:.09,.085,arc?.61:.41,weapons[id].color)
  }
  dress(zone:number,role:number){if(role%5===0){cube(this.body,0,1.72,.03,.48,.14,.47,zone===0||zone===3?'#c9a856':'#6c6e75');cube(this.body,0,1.08,.25,.65,.08,.04,'#d2c9a0')}else if(role%5===1){cube(this.body,0,.91,.23,.52,.78,.06,zone===3?'#9caa8a':'#64757b')}else if(role%5===2){cube(this.body,-.36,.85,-.18,.3,.45,.3,'#a3815c')}this.obj.scale.setScalar(.91+role%4*.047)}
  draw(q:Point,angle:number,phase:number,move:number,down:number,recoil=0){
@@ -33,7 +42,7 @@ export class Actor{
 }
 export class View{
  scene=new T.Scene();cam=new T.OrthographicCamera(-30,30,20,-20,.1,170);renderer:T.WebGLRenderer;sun=new T.DirectionalLight('#ffdfb3',2.1)
- player:Actor;car=new T.Group();marker=new T.Group();aim=new T.Group(); gates=new Map<string,T.Object3D>()
+ lighting:Lighting;private vehicleExtra=new T.Group();private flashLines:T.Mesh[]=[];private flashIndex=0;player:Actor;car=new T.Group();marker=new T.Group();aim=new T.Group(); gates=new Map<string,T.Object3D>()
  roofs:{obj:T.Group,x:number,z:number,w:number,d:number,h:number}[]=[];freight=new T.Group();tracks=new T.Group()
  furniture=new Map<object,T.Group>();market=new T.Group();publicRelays=new T.Group();official=new T.Group();annotated=new T.Group();purge=new T.Group();nightExit=new T.Group();hemi?:T.HemisphereLight;carMarks:T.Mesh[]=[];brokenLights=new Set<number>(); brakeLights:T.Mesh[]=[];serviceLights=new T.Group();lure=new T.Group();lureUntil=0
  cones:T.Mesh[]=[];lamps:T.Mesh[]=[]; private batch=new Map<string,T.Matrix4[]>();private temp=new T.Object3D()
@@ -52,6 +61,7 @@ export class View{
   for(const x of [-1,1]){for(const z of [-1.33,1.26])cube(this.car,x*.99,.36,z,.26,.61,.67,'#111619')
    cube(this.car,x*.64,.65,2.1,.61,.13,.05,'#eeffff').material=glow('#e9ffde');const tail=cube(this.car,x*.69,.65,-2.1,.48,.14,.04,'#ff3a65');tail.material=glow('#a42636');this.brakeLights.push(tail)}
   for(const x of [-.55,.55])cube(this.car,x,.90,-1.4,.10,.09,.8,'#584332')
+  this.car.add(this.vehicleExtra);this.lighting=new Lighting(this.scene,this.car,rooms.map(r=>r.entrance))
   this.scene.add(this.marker,this.aim,this.lure,this.serviceLights);this.lure.visible=false
   const pulse=new T.Mesh(new T.RingGeometry(.91,1,40),glow('#73efe1'));pulse.rotation.x=-Math.PI/2;this.lure.add(pulse)
   for(const z of [71,78,82]){const lamp=cube(this.serviceLights,36.65,1.9,z,.35,.32,.55,'#c3ffe1');lamp.material=glow('#aeffcc');halo(this.serviceLights,35.3,.12,z,3.6,'#81e3af',.65)}
@@ -59,6 +69,7 @@ export class View{
   const diamond=new T.Mesh(new T.OctahedronGeometry(.42),glow('#e6ff3a'));diamond.position.y=2.7;this.marker.add(diamond)
   const ret=new T.Mesh(new T.RingGeometry(.24,.32,24),glow('#f5ffda'));ret.rotation.x=-Math.PI/2;this.aim.add(ret)
   this.beam=new T.Mesh(geo,glow('#ffe88a'));this.beam.visible=false;this.scene.add(this.beam)
+  this.flashLines=[this.beam];for(let i=1;i<7;i++){const line=new T.Mesh(geo,glow('#ffe88a'));line.visible=false;this.scene.add(line);this.flashLines.push(line)}
   for(let i=0;i<70;i++){const o=new T.Mesh(geo,mat(i%2?'#991a35':'#d63450'));o.visible=false;this.scene.add(o);this.effects.push({o,life:0,vx:0,vz:0,vy:0})}
   for(let i=0;i<42;i++){const o=new T.Mesh(new T.CircleGeometry(1,8),glow(i%2?'#6c2438':'#792137'));o.rotation.x=-Math.PI/2;o.visible=false;this.scene.add(o);this.stains.push(o)}
   this.scene.traverse(o=>{if(o instanceof T.Mesh&&!(o.material as T.Material).transparent){o.receiveShadow=true;o.castShadow=o.geometry.type!=='PlaneGeometry'&&o.geometry.type!=='BufferGeometry'}});this.resize();this.snap(sites.spawn)
@@ -68,8 +79,45 @@ export class View{
   if(!this.batch.has(color))this.batch.set(color,[]);this.batch.get(color)!.push(t.matrix.clone())
  }
  private flush(){for(const [color,matrices] of this.batch){const m=new T.InstancedMesh(geo,mat(color),matrices.length);matrices.forEach((v,i)=>m.setMatrixAt(i,v));this.scene.add(m)}this.batch.clear()}
+ setVehicle(key:Vehicle){
+  const spec=vehicles[key],body=this.car.children[0] as T.Mesh,hood=this.car.children[3] as T.Mesh
+  body.material=mat(spec.color);hood.material=mat(key==='courier'?'#a7a566':spec.color)
+  this.car.scale.set(spec.width/2.08,1,spec.length/4.24);this.vehicleExtra.clear()
+  if(key==='gabare'){cube(this.vehicleExtra,0,1.37,-.65,1.92,1.22,2.58,spec.color);for(const x of [-.50,.50])cube(this.vehicleExtra,x,1.54,-1.96,.77,.46,.045,'#42595c');cube(this.vehicleExtra,0,2,-.66,1.96,.11,2.61,'#ded7bd')}
+  if(key==='veloce'){cube(this.vehicleExtra,0,1.04,-1.62,2.02,.10,.34,'#393e46');for(const x of [-.49,.49])cube(this.vehicleExtra,x,.95,1.28,.19,.065,1.38,'#ddd0b1')}
+ }
+ private room(r:Room){
+  const b=r.building,home=!!r.door,base=ground(b.x,b.z),warm=home?'#c4a987':r.id==='arms'?'#738c93':r.id==='dealer'?'#a9aa92':'#af9381'
+  const floor:number[]=[],indices:number[]=[],nx=Math.ceil(b.w),nz=Math.ceil(b.d)
+  for(let j=0;j<=nz;j++)for(let i=0;i<=nx;i++){const x=b.x+b.w*(i/nx-.5),z=b.z+b.d*(j/nz-.5);floor.push(x,ground(x,z)+.035,z);const v=j*(nx+1)+i;if(i<nx&&j<nz)indices.push(v,v+nx+1,v+1,v+1,v+nx+1,v+nx+2)}
+  const geoFloor=new T.BufferGeometry();geoFloor.setAttribute('position',new T.Float32BufferAttribute(floor,3));geoFloor.setIndex(indices);geoFloor.computeVertexNormals();const deck=new T.Mesh(geoFloor,mat(home?'#997a5a':'#6d7773'));deck.receiveShadow=true;this.scene.add(deck)
+  for(const w of r.walls){this.box(w.x,w.base!+w.h/2,w.z,w.w,w.h,w.d,warm);this.box(w.x,w.base!+w.h,w.z,w.w+.08,.10,w.d+.08,'#655e51')}
+  for(const f of r.fittings){const y=ground(f.x,f.z);this.box(f.x,y+f.h/2,f.z,f.w,f.h,f.d,f.color);this.box(f.x,y+f.h+.04,f.z,f.w+.07,.1,f.d+.06,home?'#dfc39e':'#b6ae90')
+   if(f.label==='Lit')this.box(f.x-f.w*.30,y+f.h+.13,f.z,.54,.15,f.d*.82,'#e3d6bc')
+   if(f.label==='Caisse')this.box(f.x+.65,y+f.h+.28,f.z,.44,.43,.26,'#344f52')}
+  const roof=new T.Group();roof.position.set(b.x,base,b.z);this.scene.add(roof);const panel=cube(roof,0,3.43,0,b.w+.5,.20,b.d+.45,warm);panel.material=roofing(home?'#886d5a':'#65757b');this.roofs.push({...b,h:3.6,obj:roof})
+  if(r.id==='dealer')for(const [index,q] of parkingBays.entries()){
+   for(const side of [-1,1])this.box(q.x+side*1.48,ground(q.x+side*1.48,q.z)+.075,q.z,.10,.05,5.3,'#c9c4a7')
+   const slip=badge('PARC 0'+(index+1),'#cfe1aa',2.4);slip.position.set(q.x,ground(q.x,q.z)+.35,q.z-2.68);this.scene.add(slip)}
+  for(const f of r.fittings){const y=ground(f.x,f.z)+f.h+.1
+   if(f.label==='Canapé'){this.box(f.x,y+.23,f.z-.38,f.w,.5,.16,'#766b65');for(const side of [-1,1])this.box(f.x+side*(f.w/2-.09),y+.13,f.z,.18,.31,f.d,'#776c66')}
+   if(f.label==='Bibliothèque')for(let shelf=0;shelf<3;shelf++){this.box(f.x,y-1.3+shelf*.47,f.z+.03,.75,.075,.75,'#c5ab83');for(let j=0;j<4;j++)this.box(f.x-.24+j*.15,y-1.13+shelf*.47,f.z+.36,.10,.22,.15,['#8b7669','#808e7b','#c6a87c','#717d8d'][j])}
+   if(f.label==='Présentoir'){this.box(f.x,y+.16,f.z,.86,.18,.40,'#a6b9a6');this.box(f.x,y+.32,f.z,.55,.17,.28,'#7d9db1')}
+   if(f.label==='Cuisine')for(const x of [-.65,-.12])this.box(f.x+x,y+.02,f.z,.36,.05,.34,'#495054')
+   if(f.label==='Vitrine')for(const v of [-1,0,1]){this.box(f.x+v*.51,y+.14,f.z,.31,.27,.44,['#d3b16c','#659ba7','#957a9c'][v+1]);this.box(f.x+v*.51,y+.30,f.z,.29,.07,.41,'#343d44')}
+   if(f.label==='Établi'){this.box(f.x,y+.1,f.z,1.3,.22,.55,'#c5b57d');this.box(f.x-.09,y+.32,f.z,.57,.22,.47,'#566d76')}
+   if(f.label==='Banquette')this.box(f.x,y+.23,f.z-.34,f.w,.56,.16,'#aa714f')}
+  for(const x of [-1,1]){
+   const xx=b.x+x*b.w*.32,zz=b.z-b.d/2+.17,h=ground(xx,zz)
+   this.box(xx,h+1.75,zz,2.1,1.27,.10,'#485860');this.box(xx,h+1.77,zz+.09,1.91,1.03,.06,home?'#c6ab82':'#89adab');this.box(xx,h+1.77,zz+.13,.08,1.04,.04,'#60625b');this.box(xx,h+1.05,zz,2.24,.12,.31,'#9a8e79')
+  }
+  const front=r.entrance.z-.89,tag=badge(r.name.toLocaleUpperCase('fr'),home?'#ebc998':'#b8ffe6',Math.min(9,b.w-.5));tag.position.set(b.x,ground(b.x,front)+3.2,front);this.scene.add(tag)
+  for(const x of [-1,1])this.box(b.x+x*1.6,ground(b.x,front)+1.5,front,.15,3.05,.38,home?'#efbb82':'#8ccab6')
+  if(r.door){const w=r.door,g=new T.Group();g.position.set(w.x,ground(w.x,w.z),w.z);cube(g,0,1.38,0,w.w,2.76,w.d,'#967953');cube(g,.83,1.16,.2,.26,.08,.09,'#e2c085');this.scene.add(g);this.gates.set(w.id!,g)}
+ }
  private city(){
   blocks.forEach((b,i)=>{
+   const room=rooms.find(r=>r.building===b);if(room){this.room(room);return}
    const gr=ground(b.x,b.z),palette=[['#b7aa93','#8d877d','#948574'],['#cbbdad','#b49884','#8d796e'],['#d6dce1','#99a3ac','#647080'],['#aba08f','#859591','#a99481'],['#c5b49b','#a2a091','#b1a18e']][b.district]
    const g=new T.Group();g.position.set(b.x,gr,b.z);this.scene.add(g);this.roofs.push({...b,obj:g})
    const add=(x:number,y:number,z:number,w:number,h:number,d:number,col:string)=>cube(g,x,y,z,w,h,d,col)
@@ -160,7 +208,7 @@ export class View{
  camera(q:Point,dt:number,angle:number,speed:number){const target=new T.Vector3(q.x+Math.sin(angle)*speed*.33,ground(q.x,q.z),q.z+Math.cos(angle)*speed*.33);this.follow.lerp(target,1-Math.exp(-dt*7));this.sun.target.position.copy(this.follow);this.sun.position.copy(this.follow).add(new T.Vector3(-28,45,-30));this.cam.position.copy(this.follow).add(new T.Vector3(0,39,23));this.cam.lookAt(this.follow);this.cam.updateMatrixWorld()}
  pick(nx:number,ny:number,height:number){this.ray.setFromCamera(new T.Vector2(nx,ny),this.cam);this.plane.constant=-height;const v=new T.Vector3();this.ray.ray.intersectPlane(this.plane,v);return {x:v.x,z:v.z}}
  screen(q:Point){const v=new T.Vector3(q.x,ground(q.x,q.z)+1.8,q.z).project(this.cam);return {x:(v.x+1)*innerWidth/2,y:(1-v.y)*innerHeight/2}}
- shot(a:Point,b:Point){const dx=b.x-a.x,dz=b.z-a.z;this.beam.visible=true;this.beamTime=.075;this.beam.position.set((a.x+b.x)/2,ground(a.x,a.z)+1,(a.z+b.z)/2);this.beam.rotation.y=Math.atan2(dx,dz);this.beam.scale.set(.06,.06,Math.hypot(dx,dz))}
+ shot(a:Point,b:Point,color='#ffe88a'){const beam=this.flashLines[this.flashIndex++%this.flashLines.length],dx=b.x-a.x,dz=b.z-a.z;beam.visible=true;this.beamTime=.075;(beam.material as T.MeshBasicMaterial).color.set(color);beam.position.set((a.x+b.x)/2,ground(a.x,a.z)+1,(a.z+b.z)/2);beam.rotation.y=Math.atan2(dx,dz);beam.scale.set(.065,.065,Math.hypot(dx,dz));this.lighting.pulse(a,color)}
  impact(q:Point,dx:number,dz:number,heavy:boolean){for(let i=0;i<(heavy?13:5);i++){const e=this.effects[this.effectIndex++%this.effects.length];e.life=.4+Math.random()*.35;e.o.visible=true;e.o.scale.setScalar(.09+Math.random()*.13);e.o.position.set(q.x,ground(q.x,q.z)+1,q.z);e.vx=dx*2+(Math.random()-.5)*4;e.vz=dz*2+(Math.random()-.5)*4;e.vy=1+Math.random()*3}
   const s=this.stains[this.stainIndex++%this.stains.length];s.visible=true;s.position.set(q.x,ground(q.x,q.z)+.15,q.z);s.scale.set(heavy?.88:.36,heavy?.53:.23,1);s.rotation.z=Math.random()*3}
  carImpact(side:number,end:number,severity:number,front:boolean){
@@ -171,12 +219,12 @@ export class View{
   if(severity>=3&&front&&end>0){const lamp=cube(this.car,Math.sign(side||1)*.64,.65,2.14,.62,.16,.06,'#27272a');this.carMarks.push(lamp)}
   while(this.carMarks.length>32)this.car.remove(this.carMarks.shift()!)
  }
- resetEffects(){this.lureUntil=0;this.lure.visible=false;this.beamTime=0;this.beam.visible=false;for(const m of this.carMarks)this.car.remove(m);this.carMarks=[];for(const g of this.furniture.values())g.rotation.z=0;for(const s of this.stains)s.visible=false;for(const e of this.effects){e.o.visible=false;e.life=0}}
+ resetEffects(){this.lureUntil=0;this.lure.visible=false;this.beamTime=0;for(const line of this.flashLines)line.visible=false;for(const m of this.carMarks)this.car.remove(m);this.carMarks=[];for(const g of this.furniture.values())g.rotation.z=0;for(const s of this.stains)s.visible=false;for(const e of this.effects){e.o.visible=false;e.life=0}}
  render(q:Point,dt:number,time:number){this.marker.children[1].position.y=2.7+Math.sin(time*3)*.18;this.marker.children[1].rotation.y=time
   for(const b of this.roofs){const fade=Math.abs(q.x-b.x)<b.w/2+1&&q.z<b.z+b.d/2+.8&&q.z>b.z-b.d/2-b.h*.72; if(Boolean(b.obj.userData.faded)!==fade){b.obj.userData.faded=fade;for(const m of b.obj.children){if(m instanceof T.InstancedMesh){const a=m.material as T.MeshStandardMaterial;a.transparent=fade;a.opacity=fade?.20:1;a.depthWrite=!fade}else m.visible=!fade}}}
   this.tracks.visible=!(Math.abs(q.z-trackZ)<6&&underpasses.some(x=>Math.abs(q.x-x)<4.5))
   const trainX=(time%61)*6.5-90;this.freight.position.set(trainX,3.13,73.4);this.freight.visible=trainX>1&&trainX<185;this.lure.visible=time<this.lureUntil;if(this.lure.visible)this.lure.scale.setScalar(.5+((this.lureUntil-time)*2%1)*3)
-  this.beamTime-=dt;if(this.beamTime<=0)this.beam.visible=false
+  this.beamTime-=dt;if(this.beamTime<=0)for(const line of this.flashLines)line.visible=false
   for(const e of this.effects)if(e.life>0){e.life-=dt;e.vy-=dt*12;e.o.position.x+=e.vx*dt;e.o.position.y+=e.vy*dt;e.o.position.z+=e.vz*dt;if(e.life<=0)e.o.visible=false}
   this.frameTotal+=dt;this.frames++
   if(this.frameTotal>=1.3){const average=this.frameTotal/this.frames;let next=this.drawingScale

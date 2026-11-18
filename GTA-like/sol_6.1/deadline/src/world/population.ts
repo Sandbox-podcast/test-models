@@ -1,3 +1,5 @@
+import{VEHICLES,type VehicleId}from'../economy.ts';
+import{RoadTraffic,type MotorAgent,type DriverContext}from'./driving.ts';
 import * as T from 'three';
 import { DISTRICTS, PATHS, LOC, landHeight, isClear, surfacesNear, type DistrictId } from './data.ts';
 import { atDistance, distance, clamp, mix, type Vec3, type Path, type Sample } from './geometry.ts';
@@ -7,14 +9,14 @@ import { makeHuman,animateHuman,makeCar,applyCarDamage,repairCar } from './rende
 export type Period='matin'|'journée'|'soirée';
 export const periodAt=(hour:number):Period=>hour>=6&&hour<11?'matin':hour>=11&&hour<19?'journée':'soirée';
 export interface Citizen {id:string;district:DistrictId;mesh:T.Group;position:Vec3;hp:number;state:'walk'|'wait'|'work'|'talk'|'refuge'|'dead';origin:string;destination:string;path:Vec3[];index:number;speed:number;wait:number;age:number;activity:string;}
-export interface Traffic {id:string;district:DistrictId;mesh:T.Group;body:Body;track:Path;s:number;direction:1|-1;speed:number;desired:number;wait:number;angle:number;blocked:number;destination:string;}
+export interface Traffic extends MotorAgent {model:VehicleId;id:string;district:DistrictId;mesh:T.Group;body:Body;track:Path;s:number;direction:1|-1;speed:number;desired:number;wait:number;angle:number;blocked:number;destination:string;stolen?:boolean;}
 interface Place {id:string;position:Vec3;activity:string}
 const COLORS=[0x8c725e,0x7f8f87,0x9a8192,0x5e7d8d,0xa79566,0x6d7b70,0x9b6860,0xa6aa94];
 export class Population {
  citizens:Citizen[]=[];traffic:Traffic[]=[];places=new Map<DistrictId,Place[]>();period:Period='soirée';private tickCounter=0;
- physics:Physics;scene:T.Scene;pedestrians:SurfaceNavigation;
+ physics:Physics;scene:T.Scene;pedestrians:SurfaceNavigation;roads:RoadTraffic;
  constructor(physics:Physics,scene:T.Scene,pedestrians:SurfaceNavigation){
-  this.physics=physics;this.scene=scene;this.pedestrians=pedestrians;
+  this.physics=physics;this.scene=scene;this.pedestrians=pedestrians;this.roads=new RoadTraffic(physics);
   const activities:Record<DistrictId,string[]>= {forges:['atelier','arrêt de la gare','domicile','livraison'],dalle:['école','commerce','permanence','hall'],node:['guichet','bureau','relève','salle d’attente'],quais:['marché','manutention','promenade','halle'],belvederes:['café','banc','rempart','terrasse']};
   for(const district of DISTRICTS){
    const paths=PATHS.filter(p=>p.district===district.id&&!p.id.startsWith('J')&&p.mode==='road');const places:Place[]=[];
@@ -33,12 +35,16 @@ export class Population {
    }
    const trafficPaths=paths.filter(p=>p.width>8);
    for(let i=0;i<district.traffic*2-(district.id==='belvederes'?1:0);i++){
-    const track=trafficPaths[district.id==='forges'&&i<4?0:i%trafficPaths.length];if(!track)continue;const direction=i%2?1:-1,s=district.id==='forges'&&i<4?12+i*19:(.1+(i*.17)% .8)*track.points.at(-1)!.s,p=atDistance(track,s,direction*2.3);const body=physics.makeBody(p,'car'),mesh=makeCar([0x8d9a91,0xb59b72,0x687c88,0xa59c8d,0x836b68][i%5]);scene.add(mesh);const angle=Math.atan2(p.tx*direction,p.tz*direction);
-    this.traffic.push({id:district.id+'-traffic-'+i,district:district.id,mesh,body,track,s,direction:direction as 1|-1,speed:0,desired:district.id==='dalle'?6:9,wait:0,angle,blocked:0,destination:activities[district.id][i%4]});
+    const track=trafficPaths[district.id==='forges'&&i<4?0:i%trafficPaths.length];if(!track)continue;const direction=i%2?1:-1,s=district.id==='forges'&&i<4?12+i*19:(.1+(i*.17)% .8)*track.points.at(-1)!.s,p=atDistance(track,s,direction*2.3);const model=(['compact','van','utility','sport','courier']as VehicleId[])[i%5],body=physics.makeBody(p,'car',VEHICLES[model]),mesh=makeCar([0x8d9a91,0xb59b72,0x687c88,0xa59c8d,0x836b68][i%5],model);scene.add(mesh);let angle=Math.atan2(p.tx*direction,p.tz*direction);
+    const candidates=this.roads.network.nodes.filter(n=>n.path.width>8&&n.s>7&&n.s<n.path.points.at(-1)!.s-7&&!this.roads.network.junction(n.point,4)).sort((a,b)=>distance(a.point,p)-distance(b.point,p));
+    let lane=atDistance(track,s,direction*1.9),actualTrack=track,actualS=s;
+    for(const n of candidates){const q=atDistance(n.path,n.s,direction*1.9);if(this.traffic.some(c=>Math.abs(c.body.feet-q.y)<2&&distance(c.body.position,q)<8)||!physics.clearAt(q,1.15))continue;lane=q;actualTrack=n.path;actualS=n.s;angle=Math.atan2(q.tx*direction,q.tz*direction);break;}
+    physics.teleport(body,lane);const q={x:0,y:Math.sin(angle/2),z:0,w:Math.cos(angle/2)};body.body.setRotation(q,true);body.body.setNextKinematicRotation(q);mesh.position.set(lane.x,lane.y,lane.z);mesh.rotation.y=angle;
+    this.traffic.push({model,id:district.id+'-traffic-'+i,district:district.id,mesh,body,track:actualTrack,s:actualS,direction:direction as 1|-1,speed:0,desired:district.id==='dalle'?6:9,wait:0,angle,blocked:0,destination:activities[district.id][i%4]});
    }
   }
  }
- update(dt:number,time:number,hour:number,player:Vec3,incident:{point:Vec3;until:number}|null,playerCar?:Body){
+ update(dt:number,time:number,hour:number,player:Vec3,incident:{point:Vec3;until:number}|null,playerCar?:Body|Body[],driver?:DriverContext){
   const period=periodAt(hour),changed=period!==this.period;this.period=period;this.tickCounter++;
   for(const c of this.citizens){
    const near=distance(c.position,player)<82;c.mesh.visible=near;
@@ -67,32 +73,13 @@ export class Population {
    if(near&&this.tickCounter%3===0)for(const other of this.citizens){if(other===c||other.hp<=0||Math.abs(other.position.y-next.y)>1)continue;const d=distance(next,other.position);if(d>.05&&d<.65){const q={x:next.x+(next.x-other.position.x)/d*.05,y:next.y,z:next.z+(next.z-other.position.z)/d*.05};if(isClear(q,.30,this.physics.open)){next.x=q.x;next.z=q.z;}break;}}
    c.mesh.rotation.y=Math.atan2(next.x-c.position.x,next.z-c.position.z);c.position=next;c.mesh.position.set(next.x,next.y,next.z);animateHuman(c.mesh,true,time,c.state==='refuge'?1.6:1);
   }
-  const bodies=this.traffic.map(c=>c.body);if(playerCar)bodies.push(playerCar);
-  for(const car of this.traffic){
-   const p=car.body.position,near=distance(p,player)<95;car.mesh.visible=near;
-   if(!near&&this.tickCounter%30!==0)continue;const delta=near?dt:dt*30;
-   if(car.wait>0){car.wait-=delta;car.speed=Math.max(0,car.speed-delta*7);}else{
-    const target=atDistance(car.track,car.s+car.direction*3,car.direction*2.3),heading=Math.atan2((target.x-p.x),(target.z-p.z));
-    const inFront=(q:Vec3)=>{const dx=q.x-p.x,dz=q.z-p.z;return Math.abs(q.y-p.y)<1.5&&dx*Math.sin(car.angle)+dz*Math.cos(car.angle)>0&&Math.abs(dx*Math.cos(car.angle)-dz*Math.sin(car.angle))<2.1;};
-    let desired=car.desired*(period==='matin'?1:period==='soirée'?.85:.9);
-    for(const b of bodies)if(b!==car.body&&inFront(b.position)&&distance(p,b.position)<10)desired=distance(p,b.position)<5?0:Math.min(desired,2);
-    if(distance(p,player)<5&&inFront(player))desired=0;
-    if(near&&this.citizens.some(c=>c.hp>0&&Math.abs(c.position.y-p.y)<1.5&&distance(c.position,p)<7&&inFront(c.position)))desired=0;
-    if(incident&&time<incident.until&&distance(p,incident.point)<20)desired=Math.min(desired,2);
-    car.speed+=(desired-car.speed)*Math.min(1,delta*(desired<car.speed?5:1.3));car.angle+=Math.atan2(Math.sin(heading-car.angle),Math.cos(heading-car.angle))*Math.min(1,delta*3);
-    const advance=car.speed*delta;const nextS=car.s+car.direction*advance;const q=atDistance(car.track,nextS,car.direction*2.3);
-    if(near){const dx=q.x-p.x,dz=q.z-p.z,length=Math.hypot(dx,dz)||1,travel=Math.min(length,advance);const result=this.physics.move(car.body,dx/length*travel,dz/length*travel,car.angle,car.speed,time,bodies.filter(b=>b!==car.body));result.impacts.forEach(i=>applyCarDamage(car.mesh,i));if(result.blocked){car.speed*=.3;car.blocked+=delta;}else{if(distance(car.body.position,q)<.8)car.s=nextS;car.blocked=0;}}
-    else{this.physics.teleport(car.body,q);car.s=nextS;}
-    if(car.s<2||car.s>car.track.points.at(-1)!.s-2){car.wait=10;car.direction=car.direction===1?-1:1;car.s=clamp(car.s,2,car.track.points.at(-1)!.s-2);}
-    if(car.blocked>12&&distance(p,player)>65){car.direction=car.direction===1?-1:1;car.blocked=0;car.wait=3;}
-   }
-   car.mesh.position.set(car.body.position.x,car.body.position.y,car.body.position.z);const q=car.body.body.rotation();car.mesh.quaternion.set(q.x,q.y,q.z,q.w);car.mesh.userData.brakes.visible=car.speed<2||car.wait>0;
-  }
+  const bodies=this.traffic.map(c=>c.body);if(playerCar)bodies.push(...(Array.isArray(playerCar)?playerCar:[playerCar]));
+  this.roads.pedestrians=this.citizens.filter(c=>c.hp>0&&distance(c.position,player)<110).map(c=>c.position);this.roads.update(this.traffic,dt,time,driver||{position:player,angle:0,speed:0},bodies);
  }
  hitCitizen(c:Citizen,damage:number,direction:Vec3){if(c.hp<=0)return;const dx=c.position.x-direction.x,dz=c.position.z-direction.z,len=Math.hypot(dx,dz)||1,strength=Math.min(8,damage*.10);c.mesh.userData.knock={x:dx/len*strength,z:dz/len*strength,life:1};c.hp-=damage;if(c.hp<=0){c.hp=0;c.state='dead';c.mesh.rotation.z=Math.PI/2;c.mesh.position.y=c.position.y+.2;}else{c.state='refuge';c.wait=0;c.index=c.path.length;}}
  reset(){
   for(const[i,c]of this.citizens.entries()){const places=this.places.get(c.district)!,from=places[i%places.length],to=places[(i*7+3)%places.length];c.hp=45;c.state='wait';c.origin=from.id;c.destination=to.id;c.position={...from.position};c.path=this.pedestrians.route(from.position,to.position);c.index=0;c.wait=i%9;c.age=i*7;c.activity=from.activity;c.mesh.rotation.z=0;c.mesh.userData.knock=undefined;c.mesh.position.set(c.position.x,c.position.y,c.position.z);}
-  for(const[i,c]of this.traffic.entries()){c.s=10+(i*19)%(c.track.points.at(-1)!.s-20);c.direction=i%2?1:-1;c.angle=Math.atan2(atDistance(c.track,c.s).tx*c.direction,atDistance(c.track,c.s).tz*c.direction);c.speed=0;c.wait=0;c.blocked=0;this.physics.teleport(c.body,atDistance(c.track,c.s,c.direction*2.3));repairCar(c.mesh);}
+  for(const[i,c]of this.traffic.entries()){c.controlled=false;c.parked=false;c.route=[];c.requestedUntil=0;c.stolen=false;c.s=10+(i*19)%(c.track.points.at(-1)!.s-20);c.direction=i%2?1:-1;c.angle=Math.atan2(atDistance(c.track,c.s).tx*c.direction,atDistance(c.track,c.s).tz*c.direction);c.speed=0;c.wait=0;c.blocked=0;this.physics.teleport(c.body,atDistance(c.track,c.s,c.direction*1.9));const q={x:0,y:Math.sin(c.angle/2),z:0,w:Math.cos(c.angle/2)};c.body.body.setRotation(q,true);c.body.body.setNextKinematicRotation(q);repairCar(c.mesh);}
  }
  countVisible(camera:T.Camera){const frustum=new T.Frustum().setFromProjectionMatrix(new T.Matrix4().multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse));const citizens=this.citizens.filter(c=>c.mesh.visible&&c.hp>0&&frustum.containsPoint(new T.Vector3(c.position.x,c.position.y+1,c.position.z)));const cars=this.traffic.filter(c=>c.mesh.visible&&frustum.containsPoint(new T.Vector3(c.body.position.x,c.body.position.y+1,c.body.position.z)));return{pedestrians:citizens.length,vehicles:cars.length,period:this.period,groups:[...new Set(citizens.map(c=>c.activity))]};}
 }

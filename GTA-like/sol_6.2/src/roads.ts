@@ -1,4 +1,4 @@
-import type { Point } from './level';
+import type { Point, Rect } from './level';
 
 type Knot = readonly [x: number, z: number, y: number];
 export type Road = { id: string; width: number; axis: Knot[]; pedestrian?: boolean };
@@ -47,7 +47,7 @@ export function poseOnAxis(axis: LaneSample[], length: number) {
 export const roads3D: Road[] = [
   { id:'P01',width:12,axis:[[43,-26,6],[43,-38,6],[43,-47,6],[43,-53,4.3],[45,-59,2.1],[48,-65,.7],[54,-69,0]] },
   { id:'J02',width:11,axis:[[54,-69,0],[62,-74,1.1],[78,-77,2],[108,-77,2],[133,-77,2],[143,-76,2]] },
-  { id:'J03',width:11,axis:[[143,-76,2],[151,-71,2.5],[155,-61,3],[155,-43,4],[154,-29,4],[147,-19,4],[144,-6,4]] },
+  { id:'J03',width:11,axis:[[143,-76,2],[151,-71,2.5],[155,-61,3],[155,-43,4],[154,-29,4],[147,-19,4],[143.3,-10,4]] },
   { id:'J01',width:12,axis:[[43,0,6],[57,0,6],[64,-1.3,5.35],[74,1.5,4.55],[86,0,4],[101,0,4]] },
   { id:'J04',width:11,axis:[[129,0,4],[143,0,5],[151,-.6,7.9],[163,0,12],[176,0,12]] },
   { id:'J05',width:11,axis:[[105,43,3.45],[105,54,4],[110,64,5.1],[122,72,6.4],[140,79,8],[157,89,10],[175,94,11.5],[195,92,12]] },
@@ -57,45 +57,98 @@ export const roads3D: Road[] = [
   { id:'quais-rampe-est',width:4.1,pedestrian:true,axis:[[135,-80,2],[139,-90,1.65],[143,-98,.65],[147,-103,0]] },
   { id:'belvederes-promenade',width:3.8,pedestrian:true,axis:[[113,59,4.5],[121,61,5],[133,64,6],[146,69,7.8],[163,77,9.4],[178,79,10.2],[195,78,11.5],[207,85,12]] },
   { id:'dalle-paliers',width:3.5,pedestrian:true,axis:[[97,14,3.4],[97,8,3.8],[98,0,4],[96,-8,5.2],[95,-17,6.1],[94,-26,7.2],[94,-39,8.4],[98,-50,9.8]] },
-  { id:'S02',width:3.8,pedestrian:true,axis:[[121,-6.5,4.1],[129,-7.8,4.3],[141,-10.5,5],[151,-12.8,8.3],[166,-12.8,11.7],[174,-17.6,12],[177,-28.7,12]] },
+  { id:'S02',width:3.8,pedestrian:true,axis:[
+    [121,-6.5,4],[124,-5.4,4],[126,0,4],[127,7.9,4],[136,8.7,4.35],[146,8.35,6.1],
+    [156,8.65,9.95],[164,8.5,12],[169,6.8,12],[171,0,12],[172,-8.2,12],[174,-17.6,12],[177,-28.7,12],
+  ] },
 ];
 
 export const ribbons = roads3D.map(road=>({ ...road, samples:sampleAxis(road.axis) }));
+export const streets:Rect[] = [
+  [-7,0,100,12],[115,0,30,11],[206.5,0,61,11],[-53,-2.5,8,89],[43,11.5,12,75],[-.5,5,9,84],
+  [-2,43,110,9],[23,-51,47,8],[-13,-53,42,5],[-22,12,49,5],
+  [105,3,7,85],[144,1,8,89],[175,-1,8,90],[149,43,150,7],[198,-46,54,7],[49.6,-9.9,6.9,7],
+];
+
+export function ribbonOutline(samples:LaneSample[],width:number):Point[] {
+  const edge=(side:number)=>samples.map(({x,z,yaw}):Point=>[x+Math.cos(yaw)*side,z-Math.sin(yaw)*side]);
+  return [...edge(width/2),...edge(-width/2).reverse()];
+}
+export const paving = ribbons.map(r=>{
+  const outline=ribbonOutline(r.samples,r.width);
+  return {...r,outline,shoulder:r.pedestrian?outline:ribbonOutline(r.samples,r.width+2.8)};
+});
+
+export function fillPaving(ctx:CanvasRenderingContext2D,x:(n:number)=>number,z:(n:number)=>number,street:string,walk:string) {
+  const polygon=(points:Point[])=>{
+    ctx.beginPath();
+    for(const [i,p] of points.entries()){
+      if(i) ctx.lineTo(x(p[0]),z(p[1]));
+      else ctx.moveTo(x(p[0]),z(p[1]));
+    }
+    ctx.closePath();
+    ctx.fill();
+  };
+  ctx.fillStyle=walk;
+  for(const r of paving) polygon(r.shoulder);
+  ctx.fillStyle=street;
+  for(const [cx,cz,w,d] of streets) ctx.fillRect(x(cx-w/2),z(cz-d/2),x(cx+w/2)-x(cx-w/2),z(cz+d/2)-z(cz-d/2));
+  for(const r of paving) if(!r.pedestrian) polygon(r.outline);
+}
 const gridSize=12;
-type Segment = { a:LaneSample; b:LaneSample; width:number; path:Road; };
-const grid=new Map<string,Segment[]>();
+type Segment = { a:LaneSample; b:LaneSample };
+type RoadCell = {road:Road; segments:Segment[]};
+const grid=new Map<string,RoadCell[]>();
 for(const road of ribbons){
   const {samples,width}=road, reach=width/2+2.75;
   for(let i=0;i<samples.length-1;i++){
-    const a=samples[i],b=samples[i+1], segment={a,b,width,path:road};
+    const a=samples[i],b=samples[i+1], segment={a,b};
     for(let x=Math.floor((Math.min(a.x,b.x)-reach)/gridSize);x<=Math.floor((Math.max(a.x,b.x)+reach)/gridSize);x++){
       for(let z=Math.floor((Math.min(a.z,b.z)-reach)/gridSize);z<=Math.floor((Math.max(a.z,b.z)+reach)/gridSize);z++){
-        const key=x+':'+z, cell=grid.get(key);
-        if(cell) cell.push(segment);
-        else grid.set(key,[segment]);
+        const key=x+':'+z;
+        let cell=grid.get(key);
+        if(!cell){cell=[];grid.set(key,cell);}
+        const entry=cell.at(-1);
+        if(entry?.road===road) entry.segments.push(segment);
+        else cell.push({road,segments:[segment]});
       }
     }
   }
 }
 
+function nearest(x:number,z:number,segments:Segment[]) {
+  let squared=Infinity,height=0;
+  for(const {a,b} of segments){
+    const dx=b.x-a.x,dz=b.z-a.z;
+    const t=Math.max(0,Math.min(1,((x-a.x)*dx+(z-a.z)*dz)/(dx*dx+dz*dz)));
+    const ax=x-a.x-t*dx,az=z-a.z-t*dz,d2=ax*ax+az*az;
+    if(d2<squared){squared=d2;height=mix(a.y,b.y,t);}
+  }
+  return {squared,height};
+}
+
 export function roadHeight(x:number,z:number) {
   const cell = grid.get(Math.floor(x/gridSize)+':'+Math.floor(z/gridSize));
   if(!cell) return;
-  let street={rank:Infinity,height:0,weight:0}, walk={rank:Infinity,height:0,weight:0};
-  for(const {a,b,width,path} of cell){
-    const dx=b.x-a.x,dz=b.z-a.z;
-    const t=Math.max(0,Math.min(1,((x-a.x)*dx+(z-a.z)*dz)/(dx*dx+dz*dz)));
-    const offset=Math.hypot(x-(a.x+t*dx),z-(a.z+t*dz));
-    const rank=offset/(width/2);
-    if(offset > width/2+2.65) continue;
-    const current=path.pedestrian?walk:street;
-    if(rank>=current.rank) continue;
-    const value={rank,height:mix(a.y,b.y,t),weight:Math.max(0,Math.min(1,(width/2+2.65-offset)/2.65))};
-    if(path.pedestrian) walk=value;
-    else street=value;
+  const street={sum:0,height:0,weight:0},walk={sum:0,height:0,weight:0};
+  for(const {road,segments} of cell){
+    const {squared,height}=nearest(x,z,segments),half=road.width/2;
+    if(squared>=(half+2.65)**2) continue;
+    const weight=Math.min(1,(half+2.65-Math.sqrt(squared))/2.65);
+    const amount=weight*weight/(.1+squared/(half*half))**2;
+    const surface=road.pedestrian?walk:street;
+    surface.sum+=amount;
+    surface.height+=height*amount;
+    surface.weight=Math.max(surface.weight,weight);
   }
   // Sidewalks follow their own profile, then meet the grade of the carriageway on its shoulder.
   const slope=walk.weight*(1-street.weight);
   const weight=street.weight+slope;
-  if(weight>0) return {height:(street.height*street.weight+walk.height*slope)/weight,weight};
+  if(weight>0) return {height:(street.height*street.weight/(street.sum||1)+walk.height*slope/(walk.sum||1))/weight,weight};
+}
+
+export function onStreet(x:number,z:number,omit?:string){
+  if(omit!=='local'&&streets.some(([cx,cz,w,d])=>Math.abs(x-cx)<w/2&&Math.abs(z-cz)<d/2)) return true;
+  const cell=grid.get(Math.floor(x/gridSize)+':'+Math.floor(z/gridSize));
+  return cell?.some(({road,segments})=>!road.pedestrian&&road.id!==omit&&nearest(x,z,segments).squared<(road.width/2)**2) ?? false;
 }

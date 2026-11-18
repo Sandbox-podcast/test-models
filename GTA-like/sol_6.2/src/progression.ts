@@ -1,5 +1,9 @@
 import { chip, exchange, garage, northDock, type Point } from './level';
 import { places as p } from './places';
+import { starterArsenal, weaponIds, weapons, type Arsenal } from './arsenal';
+import { vehicleIds, type VehicleId } from './fleet';
+import { homes, type HomeId } from './venues';
+import { activityIds, type ActivityHistory } from './activities';
 
 export type Implant = 'intrusion' | 'decoy' | 'overload';
 export type Chapter = 1 | 2 | 3 | 4 | 5 | 6;
@@ -35,11 +39,18 @@ export type Save = {
   route:Route|null;
   ending:Ending|null;
   tracking:Track;
+  arsenal:Arsenal;
+  vehicles:VehicleId[];
+  properties:HomeId[];
+  residence:HomeId|null;
+  activities:ActivityHistory;
 };
 export const saveKey = 'deadline.save.v2';
 export const newGame=():Save=>({
   version:2,credits:0,chapter:1,checkpoint:null,loadout:['intrusion','decoy'],
   side:null,completed:[],offers:{C01:0,C02:0,C03:0,C04:0},records:null,route:null,ending:null,tracking:'main',
+  arsenal:starterArsenal(),vehicles:[],properties:[],residence:null,
+  activities:{},
 });
 function validLoadout(value:unknown):value is Save['loadout']{
   return Array.isArray(value) && value.length===2 && value[0]!==value[1] && value.every(i=>typeof i==='string'&&Object.hasOwn(implants,i));
@@ -72,8 +83,30 @@ export function readSave():Save|null {
       ![null,...sideIds].includes(s.side)||!['main',...sideIds].includes(s.tracking)||![null,'destroy','give'].includes(s.records)||
       !s.offers||commonIds.some(id=>!Number.isSafeInteger(s.offers[id])||s.offers[id]<0)) return null;
     if(s.side && (s.checkpoint||!sideAvailable(s,s.side))) return null;
-    return s;
+    return {...s,...readAssets(s),activities:readActivities(s.activities)};
   } catch { return null; }
+}
+function readActivities(saved:ActivityHistory|undefined):ActivityHistory {
+  const history:ActivityHistory={};
+  for(const id of activityIds){
+    const item=saved?.[id];
+    if(item&&Number.isSafeInteger(item.count)&&item.count>0&&Number.isFinite(item.best)&&item.best>0)
+      history[id]={count:item.count,best:item.best};
+  }
+  return history;
+}
+function readAssets(s:Partial<Save>):Pick<Save,'arsenal'|'vehicles'|'properties'|'residence'> {
+  const arsenal=starterArsenal();
+  for(const id of weaponIds){
+    const ammo=s.arsenal?.ammo?.[id], spec=weapons[id];
+    if(ammo && Number.isSafeInteger(ammo.loaded) && ammo.loaded>=0 && ammo.loaded<=spec.magazine &&
+       Number.isSafeInteger(ammo.spare) && ammo.spare>=0 && ammo.spare<=spec.reserve) arsenal.ammo[id]={...ammo};
+  }
+  const equipped=s.arsenal?.equipped;
+  if(equipped && weaponIds.includes(equipped) && arsenal.ammo[equipped]) arsenal.equipped=equipped;
+  const vehicles=vehicleIds.filter(id=>Array.isArray(s.vehicles)&&s.vehicles.includes(id));
+  const properties=homes.map(home=>home.id).filter(id=>Array.isArray(s.properties)&&s.properties.includes(id));
+  return {arsenal,vehicles,properties,residence:s.residence && properties.includes(s.residence)?s.residence:null};
 }
 export function writeSave(save:Save) {
   try {localStorage.setItem(saveKey,JSON.stringify(save));return true;} catch {return false;}

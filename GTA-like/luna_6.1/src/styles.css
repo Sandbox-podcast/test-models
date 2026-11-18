@@ -63,6 +63,9 @@ button { font: inherit; }
 .alert-pill.observed .alert-light { background: var(--amber); }
 .alert-pill.confirmed { color: #ff8794; border-color: rgba(255,102,115,.55); animation: alertPulse .8s infinite alternate; }
 .alert-pill.confirmed .alert-light { background: #ff5d72; }
+.alert-pill[data-level="2"] { box-shadow: 0 0 14px rgba(241,182,108,.1); }
+.alert-pill[data-level="2"] .alert-light { animation: alertPulse 1.2s infinite alternate; }
+.alert-pill[data-level="4"] { border-color: rgba(255,82,105,.8); animation: alertPulse .42s infinite alternate; }
 
 .hud-left { position: absolute; left: 30px; bottom: 82px; width: 214px; display: grid; gap: 18px; }
 .vitals-head { display: flex; justify-content: space-between; margin-bottom: 7px; }
@@ -80,6 +83,12 @@ button { font: inherit; }
 .cash-readout { display: flex; align-items: baseline; justify-content: space-between; padding-top: 9px; border-top: 1px solid rgba(154,190,189,.15); }
 .cash-readout > span { color: #788f91; font-size: 8px; }
 .cash-readout strong { color: #e8c986; font: 600 15px var(--display); }
+.weapon-readout { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 9px; border: 1px solid rgba(112,228,229,.24); background: rgba(7,19,23,.78); }
+.weapon-readout small, .home-readout span { display: block; color: #799394; font-size: 7px; letter-spacing: .1em; }
+.weapon-readout #weapon-name { display: block; max-width: 138px; margin-top: 3px; color: #d7e9e4; font-size: 10px; font-weight: 500; }
+.weapon-readout #ammo-value { flex: 0 0 auto; color: var(--cyan); font: 600 12px var(--display); }
+.home-readout { display: flex; align-items: baseline; justify-content: space-between; }
+.home-readout strong { color: #d2c79e; font: 500 10px var(--display); }
 
 .hud-right { position: absolute; right: 30px; bottom: 78px; width: 190px; }
 .map-frame { position: relative; width: 190px; height: 190px; background: rgba(8,18,22,.74); border: 1px solid rgba(151,192,190,.3); clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%); }
@@ -107,7 +116,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 
 .dialog-layer { position: absolute; z-index: 8; inset: 0; display: grid; place-items: center; padding: 22px; }
 .dialog-backdrop { position: absolute; inset: 0; background: rgba(4,12,15,.53); backdrop-filter: blur(3px); }
-.dialog-panel, .pause-panel, .journal-panel { position: relative; width: min(530px, 100%); border: 1px solid rgba(112,228,229,.34); border-top: 2px solid var(--cyan); background: linear-gradient(145deg, rgba(13,31,35,.98), rgba(7,17,21,.98)); box-shadow: 0 24px 90px rgba(0,0,0,.44); padding: 31px 36px 33px; animation: reveal .2s ease-out both; }
+.dialog-panel, .pause-panel, .journal-panel { position: relative; width: min(530px, 100%); max-height: calc(100vh - 44px); overflow-y: auto; border: 1px solid rgba(112,228,229,.34); border-top: 2px solid var(--cyan); background: linear-gradient(145deg, rgba(13,31,35,.98), rgba(7,17,21,.98)); box-shadow: 0 24px 90px rgba(0,0,0,.44); padding: 31px 36px 33px; animation: reveal .2s ease-out both; }
 .close-button { border: 0; background: transparent; color: #9ab1af; font: 300 27px/1 var(--display); cursor: pointer; padding: 3px 7px; }
 .close-button:hover { color: #fff; }
 .dialog-panel > .close-button { position: absolute; right: 13px; top: 11px; }
@@ -125,6 +134,12 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .implant-choice { border: 1px solid rgba(140,177,175,.24); padding: 10px; background: rgba(4,17,20,.55); }
 .implant-choice label { display: block; color: #83a09f; font-size: 8px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .12em; }
 .implant-choice select { width: 100%; color: #edf6f1; background: #11272b; border: 1px solid rgba(145,189,187,.3); padding: 7px; font: inherit; font-size: 11px; }
+.catalog-columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin: 16px 0 10px; }
+.catalog-columns section { padding: 10px 11px; border: 1px solid rgba(140,177,175,.2); background: rgba(4,17,20,.48); }
+.catalog-columns section > strong { color: var(--cyan); font-size: 8px; letter-spacing: .13em; }
+.catalog-columns ul { list-style: none; padding: 0; margin: 8px 0 0; }
+.catalog-columns li { color: #a8bfba; padding: 5px 0; border-top: 1px solid rgba(154,190,189,.1); font-size: 9px; line-height: 1.4; }
+.catalog-note { color: #809795; font-size: 10px; }
 
 .journal-layer { z-index: 7; display: grid; place-items: center; background: rgba(4,12,15,.75); backdrop-filter: blur(5px); padding: 22px; }
 .journal-panel { width: min(690px, 100%); padding: 29px 34px; }
@@ -168,6 +183,10 @@ button:focus-visible, select:focus-visible { outline: 2px solid #afffff; outline
   .map-frame { width: 128px; height: 128px; }
   .map-legend { font-size: 7px; gap: 7px; }
   .cash-readout { display: none; }
+  .home-readout { display: none; }
+  .weapon-readout { padding: 6px 7px; }
+  .weapon-readout #weapon-name { max-width: 95px; font-size: 9px; }
+  .catalog-columns { grid-template-columns: 1fr; }
   .hud-bottom { left: 13px; right: 13px; bottom: 13px; gap: 5px; min-height: 38px; }
   .interaction-readout { min-width: 0; flex: 1; }
   .message-line { display: none; }

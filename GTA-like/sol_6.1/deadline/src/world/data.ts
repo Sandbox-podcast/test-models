@@ -1,3 +1,4 @@
+import{HOMES}from'../economy.ts';
 import { clamp, mix, svgPath, closestOnPath,atDistance, rectangleContains, type Path, type Rect, type Vec3 } from './geometry.ts';
 export type DistrictId='forges'|'dalle'|'node'|'quais'|'belvederes';
 export interface District {id:DistrictId;name:string;description:string;origin:{x:number;z:number};w:number;d:number;color:number;stone:number;accent:number;population:[number,number];traffic:number}
@@ -30,10 +31,11 @@ function add(id:string,district:DistrictId|string,d:string,height:number|((x:num
 }
 // Forges: these axes are the original SVG path, in metres (one SVG unit = .25 m).
 add('F-avenue','forges','M32 120 H128 C205 120 224 72 310 77 S385 120 448 120 H540 C615 120 660 166 660 238 V350',6,'road',12);
-add('F-ramp','forges','M660 350 C660 383 623 400 564 400',(x,z,t)=>mix(6,0,t),'road',12);
+add('F-ramp','forges','M660 350 C660 383 623 400 564 400',(x,z,t)=>mix(6,0,clamp((t-.12)/.80,0,1)),'road',12);
 add('F-low','forges','M564 400 H496 C408 400 371 450 278 442 S161 400 64 400',0,'road',12);
 add('F-west','forges','M64 400 C-20 400 -32 360 -32 306 V220 C-32 168 -4 120 32 120',(x,z,t)=>mix(0,6,t),'road',12);
 add('F-garage','forges','M128 120 V192',6,'road',6);
+add('F-motors','forges','M560 120 V172',6,'road',6);
 add('F-parking','forges','M448 120 V192',6,'road',6);
 add('F-alley','forges','M128 238 V263.2 H176 L192 244 H224 L240 263.2 H468 V248',6,'walk',2.4);
 add('F-courtyard','forges','M468 176 V252 H500',6,'walk',4);
@@ -69,8 +71,8 @@ add('B-terrace','belvederes','M221 440 L238 367 Q274 330 355 328 Q465 328 527 28
 add('B-cafe','belvederes','M414 192 Q475 196 501 218 L527 281',belFoot,'walk',4);
 add('B-stairs','belvederes','M133 329 Q181 339 238 367',belFoot,'walk',4);
 // Paired six-junction assembly: compatible widths, altitudes and lane directions.
-add('J01','forges','M135 30 C167 25 185 35 220 35',(x,z,t)=>mix(6,4,clamp((t-.23)/.54,0,1)),'road',11,{x:0,z:0},1);
-add('J02','quais','M141 100 C164 100 177 160.75 220 160.75',(x,z,t)=>mix(0,2,clamp((t-.15)/.70,0,1)),'road',11,{x:0,z:0},1);
+add('J01','forges','M135 30 C167 25 185 35 220 35',(x,z,t)=>mix(6,4,clamp((t-.43)/.40,0,1)),'road',11,{x:0,z:0},1);
+add('J02','quais','M128 100 C128 126 177 160.75 220 160.75',(x,z,t)=>mix(0,2,clamp((t-.15)/.70,0,1)),'road',11,{x:0,z:0},1);
 add('J03','dalle','M287.5 135 C287.5 112 341 110 336.25 38.5',(x,z,t)=>mix(2,4,clamp((t-.15)/.65,0,1)),'road',11,{x:0,z:0},1);
 add('J04','node','M336.25 38.5 C410 15 414 -45 350 -64 C325 -73 275 -72 242.5 -90',(x,z,t)=>mix(4,12,clamp((t-.15)/.80,0,1)),'road',11,{x:0,z:0},1);
 add('J05','belvederes','M250 32 C200 8 185 -25 165 -36 C116 -55 36 -57 16.5 -75',4,'road',11,{x:0,z:0},1);
@@ -105,13 +107,13 @@ building('garage','forges',32,50,34,17,5.8,'MINA / MÉCANIQUE',true,[{side:'n',o
 building('depot','forges',89,52,29,24,8,'CIVIS / DÉPÔT 04',true,[{side:'n',offset:0,width:5},{side:'e',offset:2,width:4}], 'metal');
 building('workshop','forges',17.5,15.6,17,9.7,6,'ATELIERS DU NIL');
 building('archives','forges',40,8,14,8,6,'ARCHIVES DE MIGRATION',true,[{side:'s',offset:0,width:3},{side:'e',offset:0,width:2.5}]);
-building('annex','forges',62.1,46,12.2,10,5,'ENTRETIEN');
+building('annex','forges',62.1,46,12.2,10,5,'ARMURERIE / TRAVERSE',true,[{side:'w',offset:0,width:3},{side:'e',offset:0,width:3}]);
 building('annex-low','forges',61.2,55.4,11.5,4,4,'MAGASIN / OUTILS');
-building('store','forges',140,54.3,12,11,6,'ÉPICERIE DE NUIT');
+building('store','forges',140,54.3,12,11,6,'MOTEURS / VÉHICULES',true,[{side:'n',offset:0,width:4},{side:'s',offset:0,width:3}]);
 building('warehouse-low','forges',35,87.5,20,6.5,5,'FRET / RIVE BASSE');
-building('low-houses','forges',63.1,91.6,22.7,8.7,7,'LOGEMENTS DES ATELIERS');
+building('low-houses','forges',63.1,91.6,22.7,8.7,7,'STUDIO DES ATELIERS',true,[{side:'s',offset:0,width:3}]);
 building('low-sheds','forges',94.6,87.5,22.7,7.7,4,'REMISES');
-building('home-a','dalle',32,17.5,21.4,7.5,10,'RÉSIDENCE DES PALIERS');
+building('home-a','dalle',32,17.5,21.4,7.5,10,'APPARTEMENT DES PALIERS',true,[{side:'s',offset:0,width:3}]);
 building('nadia-office','dalle',80.6,16,19.8,7.5,5,'PERMANENCE / NADIA',true,[{side:'s',offset:0,width:3}]);
 building('home-b','dalle',134,18.7,21.4,7.5,12,'LES TERRASSES');
 building('night-office','dalle',16,41.5,18.2,7.5,6,'PERMANENCE DE NUIT',true,[{side:'n',offset:0,width:3},{side:'e',offset:0,width:3}]);
@@ -132,11 +134,11 @@ building('market-hall','quais',88.2,12,17,7.5,7,'HALLE DES QUAIS');
 building('quai-store','quais',140.7,23.2,17,7.5,8,'TRANSPORTS / CHARENTE');
 building('paper-mill','quais',15.1,42,18.2,7.5,8,'PAPETERIE DU NIL',true,[{side:'e',offset:0,width:3},{side:'n',offset:0,width:3}],'metal');
 building('market','quais',73.2,48,17,7.5,4,'MARCHÉ');
-building('buvette','quais',99.5,58.7,17,7.5,4,'BUVETTE DE LA RIVE');
+building('buvette','quais',99.5,58.7,17,7.5,4,'BUVETTE DE LA RIVE',true,[{side:'n',offset:0,width:3},{side:'e',offset:0,width:2.5}]);
 building('quai-hangar','quais',141.2,58.7,17,7.5,6,'MANUTENTION');
-building('bel-home','belvederes',77.8,15,18.2,7.5,9,'MAISONS DES REMPARTS');
+building('bel-home','belvederes',77.8,15,18.2,7.5,9,'MAISON DES REMPARTS',true,[{side:'s',offset:0,width:3}]);
 building('kiosk','belvederes',129.5,8.7,17,7.5,4,'KIOSQUE');
-building('cafes','belvederes',137.7,36.7,17,7.5,5,'CAFÉ DU PLATEAU');
+building('cafes','belvederes',137.7,36.7,17,7.5,5,'CAFÉ DU PLATEAU',true,[{side:'s',offset:0,width:3},{side:'w',offset:0,width:2.5}]);
 building('bel-hotel','belvederes',74.8,45.2,28,7.5,10,'HÔTEL DES REMPARTS');
 building('bel-gallery','belvederes',16,68,18,8,7,'ATELIER / GALERIE');
 
@@ -171,8 +173,9 @@ export const GATES:Record<string,Rect>={
  gallery:{id:'gallery',x:302,z:-85,y:12,w:4,d:.35,h:2.5},badge:{id:'badge',x:242.5,z:-97,y:12,w:6,d:.35,h:2.5},
  residence:{id:'residence',x:325,z:1,y:10,w:.35,d:4,h:2.5},exit:{id:'exit',x:352,z:-102,y:12,w:4,d:.35,h:2.5}
 };
+for(const home of Object.values(HOMES)){const b=BUILDINGS.find(b=>b.id===home.building)!;GATES[home.id]={id:home.id,x:b.x,z:b.z+b.d/2,y:b.y,w:3,d:.28,h:2.5};}
 export const LOC:Record<string,Vec3>={
- spawn:{x:25,y:6,z:50},garage:{x:26,y:6,z:52},car:{x:32,y:6,z:45},parking:{x:112,y:6,z:36},chip:{x:88,y:6,z:57},drop:{x:135,y:0,z:90},
+ armory:{x:62,y:6,z:46},motors:{x:140,y:6,z:54},spawn:{x:25,y:6,z:50},garage:{x:26,y:6,z:52},car:{x:32,y:6,z:45},parking:{x:112,y:6,z:36},chip:{x:88,y:6,z:57},drop:{x:135,y:0,z:90},
  sorel:{x:55,y:6,z:32},calendar:{x:40,y:6,z:8},archiveAgent:{x:40,y:6,z:17},archiveStop:{x:69,y:6,z:34},nadia:{x:300.5,y:12,z:-7},portLog:{x:257,y:9,z:7},registry:{x:350,y:8,z:10},
  power:{x:342,y:12,z:-120},post:{x:319,y:12,z:-143},server:{x:344,y:12,z:-155},sorelNode:{x:290,y:12,z:-184.5},
  module:{x:24,y:6,z:54},panel:{x:54,y:0,z:82.5},residentLogs:{x:299,y:1.6,z:56},resident:{x:284,y:1.4,z:58},

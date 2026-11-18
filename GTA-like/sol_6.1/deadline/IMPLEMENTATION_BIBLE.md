@@ -10,7 +10,7 @@ La version actuelle remplace la première campagne condensée et la carte à tro
 | Réserves routières et piétonnes libres | Audit 3D, passages de porte, mobilier partagé entre rendu, physique et navigation | Vérifié par tests |
 | Impacts localisés, contacts et persistance de session | Rayures, bosses, feux, mobilier fragile, blessures et sang ; réserves bornées | Implémenté et testé |
 | Population, activités et trois horaires | Destinations par quartier, horaires, travail/attente/discussion, refuge, retour et décisions éloignées espacées | Implémenté et testé |
-| Trafic et réactions | Circulation locale, freinage devant les personnes et véhicules, réaction aux incidents | Testé et observé |
+| Trafic et réactions | Circulation entre les cinq quartiers, freinage devant les personnes et véhicules, priorité au joueur et contrôle des sorties de carrefour | Testé et observé |
 | M01–M06 et personnages | Six missions jouées jusqu’à la fin publique, filières indépendantes des fins | Vérifié |
 | U01–U05 et conséquences | Cinq quêtes jouées, éclairage, porte, dossiers, carte et portillon persistants | Vérifié en jeu |
 | C01–C04 et huit variantes fixes | Quatre familles jouées, huit variantes accessibles et testées physiquement, une offre active et IDs distincts | Vérifié |
@@ -27,3 +27,9 @@ La version actuelle remplace la première campagne condensée et la carte à tro
 - Les effets nécessitant des armes ou dangers de gel, brûlure et démembrement sont reportés conformément au plan web.
 
 Les détails des parcours, soldes, réglages et preuves sont dans VALIDATION.md. Le dossier `artifacts/` contient uniquement des preuves locales de recette et ne constitue pas des ressources nécessaires au jeu.
+
+## Extension de la ville
+
+La demande complémentaire ajoute quatre armes avec munitions finies, cinq modèles conduisibles, trois logements achetables et deux vendeurs situés dans le monde. Les commerces, logements, café et buvette sont meublés et visitables. Les biens sont compatibles avec les sauvegardes de campagne existantes. Les routes ont un audit de surfaces et une union des chaussées ; les rotations et sorties des véhicules tiennent compte de leur volume. L’éclairage local, les phares, flashes et shaders sont réglables. Les preuves et les limites de cette extension sont détaillées dans UPGRADE_PLAN.md et dans la section complémentaire de VALIDATION.md.
+
+Les poursuites automobiles utilisent le même réseau routier : quatre niveaux d’alerte, jusqu’à quatre unités de vigiles, suivi inter-quartiers, détours face aux grilles fermées, dernière position connue et évasion par coupure de visibilité dans le trafic. Les preuves de simulation et de navigateur figurent en tête de VALIDATION.md.

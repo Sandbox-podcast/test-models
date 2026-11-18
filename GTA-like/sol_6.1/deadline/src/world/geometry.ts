@@ -10,6 +10,10 @@ export function rectangleContains(p:{x:number;z:number},r:Rect,margin=0) {
  const dx=p.x-r.x,dz=p.z-r.z,c=Math.cos(r.angle||0),s=Math.sin(r.angle||0);
  return Math.abs(dx*c-dz*s)<r.w/2+margin&&Math.abs(dx*s+dz*c)<r.d/2+margin;
 }
+export function rectanglesOverlap(a:Rect,b:Rect,margin=0){
+ const axes=(r:Rect)=>[{x:Math.cos(r.angle||0),z:-Math.sin(r.angle||0)},{x:Math.sin(r.angle||0),z:Math.cos(r.angle||0)}],aa=axes(a),bb=axes(b),dx=b.x-a.x,dz=b.z-a.z;
+ for(const axis of [...aa,...bb]){const radius=(r:Rect,basis:{x:number;z:number}[])=>r.w/2*Math.abs(axis.x*basis[0].x+axis.z*basis[0].z)+r.d/2*Math.abs(axis.x*basis[1].x+axis.z*basis[1].z);if(Math.abs(dx*axis.x+dz*axis.z)>radius(a,aa)+radius(b,bb)+margin)return false;}return true;
+}
 export function segmentHit(a:Vec3,b:Vec3,r:Rect,margin=0):number|null {
  const c=Math.cos(r.angle||0),s=Math.sin(r.angle||0),ax=(a.x-r.x)*c-(a.z-r.z)*s,az=(a.x-r.x)*s+(a.z-r.z)*c;
  const dx=(b.x-a.x)*c-(b.z-a.z)*s,dz=(b.x-a.x)*s+(b.z-a.z)*c,dy=b.y-a.y;
