@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-18T00:00:00Z",
+  "title": "Design System: COSMOS by SANDBOX",
+  "extensions": {
+    "motion": [
+      {
+        "name": "expressive-ease",
+        "value": "cubic-bezier(.16,1,.3,1)",
+        "purpose": "Action fill and arrow transitions; copy reveals."
+      },
+      {
+        "name": "primary-fill",
+        "value": "450ms",
+        "purpose": "White hover sweep from the left."
+      },
+      {
+        "name": "copy-reveal",
+        "value": "opacity 1s, transform 1.3s, filter 1.1s",
+        "purpose": "Reveal copy from 24px below with a 5px blur."
+      },
+      {
+        "name": "nebula-drift",
+        "value": "blue 28s; violet 24s; ease-in-out infinite alternate",
+        "purpose": "Slow atmospheric movement."
+      },
+      {
+        "name": "pose-damping",
+        "value": "1 - exp(-delta * 8)",
+        "purpose": "Frame-independent smoothing toward the scroll pose."
+      },
+      {
+        "name": "luminous-wipe",
+        "value": "x = t * 150 - 25 percent; opacity = sin(t * PI)^6 * .75",
+        "purpose": "Radial mask traverses the atmosphere during chapter interpolation; removed in reduced motion."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "system preference plus persisted manual override",
+        "purpose": "Suppress continuous animation, transitions and pointer movement; keep scroll poses and readable content."
+      },
+      {
+        "name": "bottle-orbit",
+        "value": "drag: 1.5 PI per initial projected width; arrow: PI/12; activation: PI/4",
+        "purpose": "Explicit 360-degree bottle rotation, with native vertical touch scrolling and keyboard reset."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "max-width: 1000px"
+      },
+      {
+        "name": "mobile",
+        "value": "max-width: 650px"
+      },
+      {
+        "name": "wide",
+        "value": "min-width: 1800px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Opening anchor with a left-to-right white hover sweep.",
+      "html": "<a class=\"ds-primary\" href=\"#le-flacon\">Decouvrir le parfum<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 4v16m-6-6 6 6 6-6\"/></svg></a>",
+      "css": ".ds-primary{display:inline-flex;position:relative;isolation:isolate;align-items:center;justify-content:space-between;gap:40px;min-height:50px;padding:0 25px;background:#e9e5ee;border:1px solid #e9e5ee;color:#17141d;font:10px Inter,sans-serif;letter-spacing:.07em;text-decoration:none}.ds-primary:before{content:'';position:absolute;inset:0;z-index:-1;background:#fff;transform:scaleX(0);transform-origin:left;transition:transform .45s cubic-bezier(.16,1,.3,1)}.ds-primary:hover:before{transform:scaleX(1)}.ds-primary svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.2;transition:transform .4s cubic-bezier(.16,1,.3,1)}.ds-primary:hover svg{transform:translateY(3px)}.ds-primary:focus-visible{outline:1px solid #dfd2ff;outline-offset:7px}@media(prefers-reduced-motion:reduce){.ds-primary:before,.ds-primary svg{transition:none}}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Replay anchor with translucent fill and upward arrow.",
+      "html": "<a class=\"ds-secondary\" href=\"#accueil\">Revivre l'experience<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 20V4m-6 6 6-6 6 6\"/></svg></a>",
+      "css": ".ds-secondary{display:inline-flex;align-items:center;justify-content:space-between;gap:40px;min-height:45px;padding:0 25px;border:1px solid #c6b9da55;background:#0c0b1566;color:#d2c8df;font:10px Inter,sans-serif;letter-spacing:.07em;text-decoration:none;transition:color .3s,border-color .3s,background .3s}.ds-secondary:hover{background:#cbb7eb12;border-color:#d0bce988}.ds-secondary svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.2;transition:transform .4s cubic-bezier(.16,1,.3,1)}.ds-secondary:hover svg{transform:translateY(-3px)}.ds-secondary:focus-visible{outline:1px solid #dfd2ff;outline-offset:7px}@media(prefers-reduced-motion:reduce){.ds-secondary,.ds-secondary svg{transition:none}}"
+    },
+    {
+      "name": "Header navigation",
+      "kind": "nav",
+      "refersTo": "navigation-link",
+      "description": "Tracked text with a fine hover underline.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Navigation principale\"><a href=\"#le-flacon\">Le flacon</a><a href=\"#univers\">L'univers</a><a href=\"#signature\">La signature</a></nav>",
+      "css": ".ds-nav{display:flex;gap:39px}.ds-nav a{position:relative;padding:12px 0;font:11px Inter,sans-serif;letter-spacing:.08em;color:#bbb8cb;text-decoration:none;transition:color .25s}.ds-nav a:after{content:'';position:absolute;bottom:6px;left:0;right:0;height:1px;background:#eee6ff;transform:scaleX(0);transform-origin:left;transition:transform .3s}.ds-nav a:hover{color:#fff}.ds-nav a:hover:after{transform:scaleX(1)}.ds-nav a:focus-visible{outline:1px solid #dfd2ff;outline-offset:7px}@media(max-width:650px){.ds-nav{gap:20px}.ds-nav a{font-size:9px}.ds-nav a:first-child{display:none}}@media(prefers-reduced-motion:reduce){.ds-nav a,.ds-nav a:after{transition:none}}"
+    },
+    {
+      "name": "Motion control",
+      "kind": "button",
+      "refersTo": "motion-toggle",
+      "description": "Orbit icon and pressed-state slash; application code manages the preference.",
+      "html": "<button class=\"ds-motion\" type=\"button\" aria-pressed=\"false\" aria-label=\"Reduire les animations\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><ellipse cx=\"12\" cy=\"12\" rx=\"10\" ry=\"4\" transform=\"rotate(-35 12 12)\"/><circle cx=\"12\" cy=\"12\" r=\"2\"/><path class=\"ds-slash\" d=\"m4 4 16 16\"/></svg><span>Animations</span></button>",
+      "css": ".ds-motion{display:flex;align-items:center;gap:10px;border:0;background:none;padding:12px 0;color:#bbb8cb;font:10px Inter,sans-serif;letter-spacing:.1em;cursor:pointer}.ds-motion svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round}.ds-slash{opacity:0}.ds-motion[aria-pressed=true] .ds-slash{opacity:1}.ds-motion:focus-visible{outline:1px solid #dfd2ff;outline-offset:7px}@media(max-width:650px){.ds-motion{padding:10px}.ds-motion span{display:none}.ds-motion svg{width:19px;height:19px}}"
+    },
+    {
+      "name": "Chapter rail",
+      "kind": "nav",
+      "description": "Six anchored locations with an active halo; source code updates aria-current.",
+      "html": "<nav class=\"ds-chapters\" aria-label=\"Etapes de l'experience\"><a href=\"#accueil\" aria-label=\"Ouverture\" aria-current=\"location\"><span></span></a><a href=\"#le-flacon\" aria-label=\"Le flacon\"><span></span></a><a href=\"#univers\" aria-label=\"Bleu profond\"><span></span></a><a href=\"#nebuleuse\" aria-label=\"Nebuleuse\"><span></span></a><a href=\"#lumiere\" aria-label=\"Eclat argente\"><span></span></a><a href=\"#signature\" aria-label=\"La signature\"><span></span></a></nav>",
+      "css": ".ds-chapters{display:flex;flex-direction:column;align-items:center;gap:1px}.ds-chapters a{display:flex;align-items:center;justify-content:center;width:26px;height:24px}.ds-chapters span{display:block;width:3px;height:3px;border-radius:50%;background:#8e84a880;transition:background .3s,box-shadow .3s}.ds-chapters [aria-current=location] span{background:#f0e4ff;box-shadow:0 0 0 4px #a998c01a,0 0 12px #c3afff66}.ds-chapters a:focus-visible{outline:1px solid #dfd2ff;outline-offset:7px}@media(max-width:650px){.ds-chapters{gap:0}.ds-chapters a{height:26px}}@media(prefers-reduced-motion:reduce){.ds-chapters span{transition:none}}"
+    },
+    {
+      "name": "Universe light marks",
+      "kind": "custom",
+      "description": "Static thin circles introduce the three atmospheric chapters.",
+      "html": "<div class=\"ds-marks\" aria-hidden=\"true\"><span></span><span></span><span></span></div>",
+      "css": ".ds-marks{display:flex;gap:30px}.ds-marks span{display:block;width:27px;height:27px;border:1px solid #94a7da88;border-radius:50%;box-shadow:inset 0 0 12px #6276b422}.ds-marks span:nth-child(2){border-color:#b095cf99;box-shadow:inset 0 0 14px #9271b655}.ds-marks span:nth-child(3){border-color:#d1d4df99;box-shadow:inset 0 0 14px #e1e5f644}@media(max-width:650px){.ds-marks span{width:20px;height:20px}}"
+    },
+    {
+      "name": "3D bottle interaction",
+      "description": "Transparent focusable control projected onto the bottle; application code supplies position and rotation.",
+      "css": ".ds-bottle-control{width:180px;height:300px;background:transparent;border:0;border-radius:24px;padding:0;cursor:grab;touch-action:pan-y;user-select:none}.ds-bottle-control:active{cursor:grabbing}.ds-bottle-control:focus-visible{outline:1px solid #dfd2ff88;outline-offset:8px}",
+      "kind": "custom",
+      "html": "<button class=\"ds-bottle-control\" aria-label=\"Faire tourner le flacon en 3D\" title=\"Glisser horizontalement ou utiliser les flèches du clavier\"></button>"
+    }
+  ],
+  "narrative": {
+    "northStar": "A celestial studio",
+    "overview": "The pinned visual world joins luxury perfume photography with cosmic space: black, blue, violet and cold silver; smoked glass, restrained text and thin luminous orbits. The product remains the visual anchor while oversized serif lettering and quiet interface marks establish scale.",
+    "keyCharacteristics": [
+      "Smoked glass and studio reflections.",
+      "Large, light serif type with compact sans-serif controls.",
+      "Sparse copy, generous space and continuous atmospheric depth."
+    ],
+    "rules": [],
+    "dos": [
+      "Do keep the black, blue, violet and cold-silver world.",
+      "Do reserve the largest serif type for product identity and short headlines.",
+      "Do preserve native scrolling, anchor navigation and the reduced-motion control.",
+      "Do keep the conceptual bottle and all product wording honest about available evidence."
+    ],
+    "donts": [
+      "Don't add unsupported scent notes, concentration, pricing or purchase destinations.",
+      "Don't turn atmospheric light colors into large opaque interface panels.",
+      "Don't introduce dense cards or heavy rounded controls into this sparse composition."
+    ]
+  }
+}

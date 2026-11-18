@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#070710">
+    <meta name="description" content="COSMOS, un parfum signé Sandbox. L’infini, à même la peau.">
+    <title>COSMOS — Un parfum signé Sandbox</title>
+    <link rel="icon" href="./assets/cosmos-icon.svg" type="image/svg+xml">
+    <link rel="preload" href="./assets/flacon.webp" as="image">
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./bottle-3d.js" defer></script>
+    <script src="./cosmos.js" defer></script>
+  </head>
+  <body>
+    <a href="#contenu" class="skip-link">Aller au contenu</a>
+
+    <header class="site-header" data-header>
+      <a href="#ouverture" class="brand" aria-label="Sandbox, revenir à l’ouverture">
+        <span class="brand-mark" aria-hidden="true"><i></i></span>
+        <span>Sandbox</span>
+      </a>
+      <nav aria-label="Explorer COSMOS">
+        <a href="#flacon">Le flacon</a>
+        <a href="#univers">L’univers</a>
+      </nav>
+      <span class="reading-progress" aria-hidden="true"></span>
+    </header>
+
+    <main id="contenu" tabindex="-1">
+      <section id="ouverture" class="hero" aria-labelledby="cosmos-title" data-hero>
+        <div class="hero-sky" aria-hidden="true"></div>
+        <div class="hero-dust" aria-hidden="true"></div>
+        <canvas class="particles" data-particles="hero" aria-hidden="true"></canvas>
+        <div class="hero-copy">
+          <p class="eyebrow">Un parfum signé Sandbox</p>
+          <h1 id="cosmos-title">COSMOS</h1>
+        </div>
+        <div class="hero-product" data-bottle-scene="hero">
+          <div class="bottle-finish">
+            <img src="./assets/flacon.webp" class="bottle" width="850" height="991" alt="Flacon COSMOS en verre fumé bleu nuit, signé Sandbox" fetchpriority="high">
+          </div>
+        </div>
+        <div class="hero-beam" aria-hidden="true"></div>
+        <div class="hero-action">
+          <a href="#flacon" class="action">
+            Découvrir le parfum <span class="arrow arrow-down" aria-hidden="true"></span>
+          </a>
+          <span class="scroll-trail" aria-hidden="true"></span>
+        </div>
+      </section>
+
+      <section id="flacon" class="reveal" aria-labelledby="flacon-title" data-reveal tabindex="-1">
+        <div class="reveal-sticky">
+          <div class="reveal-ambient" aria-hidden="true"></div>
+          <div class="reveal-layout">
+            <div class="reveal-copy">
+              <h2 id="flacon-title">Sculpté dans<br>l’ombre.</h2>
+              <p>Verre fumé, reflets d’argent.</p>
+            </div>
+            <div class="reveal-stage" data-stage aria-hidden="true">
+              <div class="reveal-orbit orbit-back"><i></i><i></i></div>
+              <div class="reveal-product" data-bottle-scene="reveal">
+                <div class="bottle-finish">
+                  <img src="./assets/flacon.webp" class="bottle" width="850" height="991" alt="" decoding="async">
+                </div>
+              </div>
+              <div class="reveal-orbit orbit-front"><i></i><i></i></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="univers" class="universe" aria-labelledby="univers-title" tabindex="-1">
+        <figure class="tableau tableau-blue" data-tableau>
+          <div class="tableau-media">
+            <img src="./assets/bleu.webp" width="504" height="1024" alt="Gros plan sur les arêtes du verre fumé, traversées par des reflets bleu nuit" loading="lazy" decoding="async">
+          </div>
+          <figcaption class="tableau-caption">
+            <h2 id="univers-title" class="eyebrow">L’univers de COSMOS</h2>
+            <p>Bleu nuit.</p>
+          </figcaption>
+        </figure>
+        <figure class="tableau tableau-violet" data-tableau>
+          <div class="tableau-media">
+            <img src="./assets/violet.webp" width="504" height="1024" alt="Nuages de poussière violette au milieu d’un champ d’étoiles" loading="lazy" decoding="async">
+          </div>
+          <figcaption class="tableau-caption"><p>Nébuleuse.</p></figcaption>
+        </figure>
+        <figure class="tableau tableau-silver" data-tableau>
+          <div class="tableau-media">
+            <img src="./assets/argent.webp" width="504" height="1024" alt="Reflets argentés dans l’épaisseur du verre, vus en macro" loading="lazy" decoding="async">
+          </div>
+          <figcaption class="tableau-caption"><p>Lumière<br>argentée.</p></figcaption>
+        </figure>
+      </section>
+
+      <section id="signature" class="finale" aria-labelledby="signature-title" data-finale>
+        <div class="finale-sky" aria-hidden="true"></div>
+        <div class="finale-halo" aria-hidden="true"><i></i></div>
+        <canvas class="particles" data-particles="finale" aria-hidden="true"></canvas>
+        <div class="finale-composition">
+          <div class="finale-product" data-bottle-scene="finale" data-finale-bottle>
+            <img src="./assets/flacon.webp" class="bottle" width="850" height="991" alt="" loading="lazy" decoding="async">
+          </div>
+          <div class="finale-copy">
+            <p class="eyebrow">Cosmos par Sandbox</p>
+            <h2 id="signature-title">L’infini, à même la peau.</h2>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <a href="#ouverture" class="brand" aria-label="Sandbox, revenir à l’ouverture">
+        <span class="brand-mark" aria-hidden="true"><i></i></span>
+        <span>Sandbox</span>
+      </a>
+      <a class="back-link" href="#ouverture">Revenir à l’ouverture <span class="arrow arrow-up" aria-hidden="true"></span></a>
+    </footer>
+  </body>
+</html>

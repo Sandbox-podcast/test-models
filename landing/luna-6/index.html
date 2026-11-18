@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#07080d" />
+    <meta name="description" content="COSMOS, le parfum Sandbox. Une signature en apesanteur, à même la peau." />
+    <title>COSMOS — Sandbox Parfums</title>
+    <link rel="preload" as="image" href="assets/cosmos-bottle.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="script.js"></script>
+  </head>
+  <body>
+    <canvas class="starfield" aria-hidden="true"></canvas>
+    <div class="grain" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="wordmark" href="#top" aria-label="Sandbox Parfums, accueil">
+        <span class="wordmark-main">SANDBOX</span>
+        <span class="wordmark-sub">PARFUMS · PARIS</span>
+      </a>
+      <nav class="main-nav" aria-label="Navigation principale">
+        <a href="#flacon">Le flacon</a>
+        <a href="#univers">L’univers</a>
+        <a href="#signature">La signature</a>
+      </nav>
+      <a class="header-index" href="#signature"><span class="status-dot"></span> COLLECTION Nº 01</a>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-backdrop" aria-hidden="true">
+          <div class="hero-beam"></div>
+          <div class="hero-aura"></div>
+          <div class="hero-orbit hero-orbit-one"></div>
+          <div class="hero-orbit hero-orbit-two"></div>
+        </div>
+        <div class="hero-copy">
+          <p class="eyebrow hero-eyebrow"><span class="eyebrow-line"></span> Eau de parfum · Nº 01</p>
+          <h1 id="hero-title">COSMOS</h1>
+          <p class="hero-subtitle">Un parfum signé <span>Sandbox</span></p>
+          <a class="button button-primary" href="#flacon">
+            <span>Découvrir le parfum</span>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.5v12m0 0 4.5-4.5M10 15.5 5.5 11" /></svg>
+          </a>
+        </div>
+        <div class="hero-product product-float" data-parallax>
+          <div class="product-halo" aria-hidden="true"></div>
+          <div class="product-light-sweep" aria-hidden="true"></div>
+          <div class="bottle-model" data-bottle-model aria-hidden="true"></div>
+          <img class="bottle-fallback" src="assets/cosmos-bottle.png" alt="Flacon de parfum COSMOS, verre fumé bleu nuit signé Sandbox" fetchpriority="high" />
+        </div>
+        <div class="hero-caption"><span>Une signature en apesanteur</span><span class="caption-rule"></span><span>01 / 03</span></div>
+        <a class="scroll-cue" href="#flacon" aria-label="Faire défiler pour découvrir le flacon"><span>Défiler pour ressentir</span><i></i></a>
+      </section>
+
+      <section class="intro section-pad" id="flacon" aria-labelledby="intro-title">
+        <div class="intro-grid">
+          <div class="intro-copy" data-reveal>
+            <p class="eyebrow"><span class="eyebrow-line"></span> L’objet céleste</p>
+            <h2 id="intro-title">Un monde<br />dans <em>le verre.</em></h2>
+            <p class="body-copy">Taillé comme un fragment de nuit, le flacon capte la lumière et la garde en suspens. Approchez. Le voyage commence à la surface du verre.</p>
+            <span class="micro-index">01 — LE FLACON</span>
+          </div>
+          <div class="intro-visual" data-reveal>
+            <div class="macro-frame">
+              <img src="assets/cosmos-bottle.png" alt="Détail des reflets argentés et bleus du flacon COSMOS" loading="lazy" />
+              <span class="macro-crosshair macro-crosshair-a"></span>
+              <span class="macro-crosshair macro-crosshair-b"></span>
+              <span class="macro-label">VERRE FUMÉ<br />REFLET Nº 01</span>
+            </div>
+            <div class="visual-coordinate">48°51′N&nbsp;&nbsp; 2°21′E</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="story" id="univers" aria-label="L’univers visuel de COSMOS">
+        <div class="story-sticky" data-scene="0">
+          <div class="story-backdrop" aria-hidden="true">
+            <div class="story-cloud story-cloud-a"></div>
+            <div class="story-cloud story-cloud-b"></div>
+            <div class="story-light"></div>
+            <div class="story-ring story-ring-back"></div>
+          </div>
+          <div class="story-ring story-ring-front" aria-hidden="true"></div>
+          <div class="story-topline"><span>À LA RENCONTRE DE L’INFINI</span><span>03 TABLEAUX · 01 FRAGRANCE</span></div>
+          <div class="story-product" data-parallax>
+            <div class="story-product-aura"></div>
+            <div class="bottle-model" data-bottle-model aria-hidden="true"></div>
+            <img class="bottle-fallback" src="assets/cosmos-bottle.png" alt="Flacon COSMOS en lévitation dans une lumière cosmique" loading="lazy" />
+          </div>
+          <div class="story-chapters" aria-live="polite">
+            <article class="chapter chapter-one is-active" data-chapter="0">
+              <span class="chapter-number">I</span>
+              <p class="eyebrow">L’apparition</p>
+              <h2>Le bleu<br /><em>du silence.</em></h2>
+              <p>Une lueur traverse l’obscurité. Le monde retient son souffle.</p>
+            </article>
+            <article class="chapter chapter-two" data-chapter="1">
+              <span class="chapter-number">II</span>
+              <p class="eyebrow">La traversée</p>
+              <h2>Au cœur<br /><em>des étoiles.</em></h2>
+              <p>La nuit s’ouvre. Les constellations dessinent une nouvelle présence.</p>
+            </article>
+            <article class="chapter chapter-three" data-chapter="2">
+              <span class="chapter-number">III</span>
+              <p class="eyebrow">La révélation</p>
+              <h2>La lumière<br /><em>demeure.</em></h2>
+              <p>Un éclat froid, intime, qui reste longtemps après le passage.</p>
+            </article>
+          </div>
+          <div class="story-progress" aria-hidden="true"><span></span></div>
+          <div class="story-foot"><span>FAITES DÉFILER POUR EXPLORER</span><span class="story-foot-mark">COSMOS&nbsp; ✳ &nbsp;SANDBOX</span></div>
+        </div>
+      </section>
+
+      <section class="interlude section-pad" aria-label="Détail du flacon">
+        <div class="interlude-inner" data-reveal>
+          <p class="eyebrow"><span class="eyebrow-line"></span> Matière & lumière</p>
+          <p class="interlude-quote">« La nuit n’est jamais<br />tout à fait <em>noire.</em> »</p>
+          <span class="interlude-caption">Une autre façon de laisser sa trace.</span>
+        </div>
+        <div class="interlude-glint" aria-hidden="true"></div>
+      </section>
+
+      <section class="finale" id="signature" aria-labelledby="final-title">
+        <div class="finale-halo" aria-hidden="true"></div>
+        <div class="finale-particles" aria-hidden="true"></div>
+        <div class="finale-orbit finale-orbit-a" aria-hidden="true"></div>
+        <div class="finale-orbit finale-orbit-b" aria-hidden="true"></div>
+        <div class="finale-content">
+          <p class="eyebrow"><span class="eyebrow-line"></span> Sandbox présente</p>
+          <h2 id="final-title">COSMOS</h2>
+          <p class="finale-signature">L’infini, <em>à même la peau.</em></p>
+          <a class="button button-quiet" href="#top"><span>Revenir aux étoiles</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16.5v-12m0 0L5.5 9M10 4.5 14.5 9" /></svg></a>
+        </div>
+        <div class="finale-product product-float" data-parallax>
+          <div class="bottle-model" data-bottle-model aria-hidden="true"></div>
+          <img class="bottle-fallback" src="assets/cosmos-bottle.png" alt="Le flacon COSMOS, signature parfumée de Sandbox" loading="lazy" />
+        </div>
+        <div class="finale-coordinate">UNE FRAGRANCE POUR L’INFINI INTÉRIEUR</div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <a class="footer-mark" href="#top">SANDBOX<span>PARFUMS</span></a>
+      <span>© 2026 SANDBOX · FAIT À PARIS</span>
+      <a href="#top" class="back-top">RETOUR EN HAUT ↑</a>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#050509" />
+    <meta name="description" content="COSMOS, un parfum signé Sandbox. Une traversée du verre, de la lumière et de l’infini." />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <title>COSMOS — Un parfum signé Sandbox</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#le-flacon">Aller au contenu</a>
+    <div class="atmosphere" aria-hidden="true">
+      <div class="nebula nebula-blue"></div>
+      <div class="nebula nebula-violet"></div>
+      <div class="nebula nebula-silver"></div>
+      <div class="ambient-beam"></div>
+      <div class="light-mask"></div>
+      <canvas id="stardust"></canvas>
+      <div class="vignette"></div>
+    </div>
+    <div class="product-stage">
+      <div id="bottle-fallback" class="bottle-fallback" aria-hidden="true">
+        <div class="fallback-cap"></div><div class="fallback-neck"></div>
+        <div class="fallback-glass"><div class="fallback-label"><span>COSMOS</span><small>SANDBOX</small></div></div>
+      </div>
+      <canvas id="cosmos-scene" aria-hidden="true"></canvas>
+      <button id="bottle-control" class="bottle-control" type="button" disabled aria-label="Faire tourner le flacon en 3D" aria-describedby="bottle-help"></button>
+      <span id="bottle-help" class="visually-hidden">Glissez horizontalement pour faire tourner le flacon. Au clavier, utilisez les flèches gauche et droite ; la touche Début rétablit la vue initiale. Appuyez sur Entrée pour tourner de 45 degrés.</span>
+    </div>
+    <header class="site-header">
+      <a class="brand" href="#accueil" aria-label="Sandbox — retour à l’accueil">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 0v10m9-5-9 5-9-5m9 5v10" /></svg>
+        SANDBOX
+      </a>
+      <nav aria-label="Navigation principale">
+        <a href="#le-flacon">Le flacon</a>
+        <a href="#univers">L’univers</a>
+        <a href="#signature">La signature</a>
+      </nav>
+      <button class="motion-toggle" type="button" aria-pressed="false" aria-label="Réduire les animations" title="Réduire les animations">
+        <svg class="motion-icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-35 12 12)"/><circle cx="12" cy="12" r="2"/><path class="motion-slash" d="m4 4 16 16"/></svg>
+        <span>Animations</span>
+      </button>
+    </header>
+    <main>
+      <section class="hero chapter" id="accueil" data-chapter="Ouverture" aria-labelledby="cosmos-title">
+        <h1 id="cosmos-title">COSMOS</h1>
+        <div class="hero-side hero-side-left" aria-hidden="true"><span>LA TERRE S’ÉLOIGNE.</span><span>L’ESSENTIEL RESTE.</span></div>
+        <div class="hero-side hero-side-right" aria-hidden="true"><span>UNE CRÉATION</span><span>SANDBOX</span></div>
+        <div class="hero-caption">
+          <p class="hero-signature">Un parfum signé Sandbox</p>
+          <a class="cta cta-primary" href="#le-flacon"><span>Découvrir le parfum</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16m-6-6 6 6 6-6"/></svg></a>
+          <p class="interaction-hint">Glissez sur le flacon pour le faire tourner en 3D</p>
+        </div>
+        <div class="hero-bottom"><span>LE VISIBLE N’EST QUE LE COMMENCEMENT.</span><a href="#le-flacon" class="scroll-cue" aria-label="Défiler vers le flacon"><span></span>Défiler pour explorer</a><span>PARFUM · CRÉATION CONCEPTUELLE</span></div>
+      </section>
+      <section class="revelation chapter" id="le-flacon" data-chapter="Le flacon" aria-labelledby="flacon-title">
+        <div class="section-inner sticky-copy">
+          <div class="section-copy reveal-copy">
+            <h2 id="flacon-title">L’attraction<br>de <em>l’invisible.</em></h2>
+            <p>Un éclat dans l’obscurité.<br>Une présence que l’on devine,<br>avant même de la voir.</p>
+            <span class="fine-rule"></span>
+            <p class="small-copy">Le verre retient la lumière.<br>COSMOS lui donne une autre dimension.</p>
+          </div>
+        </div>
+        <div class="section-bottom-note">LE VERRE. LA LUMIÈRE. L’INFINI.</div>
+      </section>
+      <section class="universe-blue chapter universe-panel" id="univers" data-chapter="Bleu profond" aria-labelledby="blue-title">
+        <div class="section-inner align-right"><div class="section-copy reveal-copy">
+          <span class="color-mark" aria-hidden="true"></span>
+          <h2 id="blue-title">Au-delà<br>du <em>bleu.</em></h2>
+          <p>Le silence a une profondeur.<br>La lumière, une autre trajectoire.</p>
+          <p class="small-copy">Laissez le regard s’habituer à la nuit.</p>
+        </div></div>
+        <span class="panorama-word" aria-hidden="true">IMMERSION</span>
+      </section>
+      <section class="universe-violet chapter universe-panel" id="nebuleuse" data-chapter="Nébuleuse" aria-labelledby="violet-title">
+        <div class="section-inner"><div class="section-copy reveal-copy">
+          <span class="color-mark" aria-hidden="true"></span>
+          <h2 id="violet-title">La nuit<br>se <em>déploie.</em></h2>
+          <p>Un mouvement lent.<br>Une matière insaisissable.<br>Tout un univers dans un reflet.</p>
+        </div></div>
+        <span class="panorama-word" aria-hidden="true">NÉBULEUSE</span>
+      </section>
+      <section class="universe-silver chapter universe-panel" id="lumiere" data-chapter="Éclat argenté" aria-labelledby="silver-title">
+        <div class="section-inner align-right"><div class="section-copy reveal-copy">
+          <span class="color-mark" aria-hidden="true"></span>
+          <h2 id="silver-title">Ne garder<br>que <em>l’éclat.</em></h2>
+          <p>Au plus près du verre,<br>la frontière s’efface.</p>
+          <p class="small-copy">L’infiniment grand.<br>L’infiniment intime.</p>
+        </div></div>
+        <span class="panorama-word" aria-hidden="true">RÉMANENCE</span>
+      </section>
+      <section class="finale chapter" id="signature" data-chapter="La signature" aria-labelledby="final-title">
+        <div class="final-name" aria-hidden="true">COSMOS</div>
+        <div class="final-copy"><h2 id="final-title">L’infini, à même <em>la peau.</em></h2><p>Un parfum signé Sandbox</p><a class="cta cta-secondary" href="#accueil"><span>Revivre l’expérience</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6"/></svg></a></div>
+      </section>
+    </main>
+    <aside class="chapter-nav" aria-label="Étapes de l’expérience">
+      <span class="chapter-name" aria-hidden="true">Ouverture</span>
+      <a href="#accueil" class="active" aria-label="Ouverture" aria-current="location"><span></span></a>
+      <a href="#le-flacon" aria-label="Le flacon"><span></span></a>
+      <a href="#univers" aria-label="Bleu profond"><span></span></a>
+      <a href="#nebuleuse" aria-label="Nébuleuse"><span></span></a>
+      <a href="#lumiere" aria-label="Éclat argenté"><span></span></a>
+      <a href="#signature" aria-label="La signature"><span></span></a>
+    </aside>
+    <footer class="site-footer"><a class="footer-brand" href="#accueil">SANDBOX</a><span>Une exploration sensorielle.</span><span>© <span id="year">2026</span> Sandbox — Création conceptuelle</span><a href="#accueil" aria-label="Retour en haut">Retour en orbite <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a></footer>
+    <div class="page-progress" aria-hidden="true"></div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
