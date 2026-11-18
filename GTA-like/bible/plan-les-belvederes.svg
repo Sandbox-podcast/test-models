@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="620" viewBox="0 0 960 620" role="img" aria-labelledby="title">
+<title id="title">Les Belvédères — plan de blocage</title>
+<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#8394a8" opacity=".18"/></pattern><clipPath id="map"><rect width="640" height="440" rx="8"/></clipPath></defs>
+<rect width="960" height="620" fill="#111a25"/>
+<g font-family="system-ui,sans-serif" fill="#f4eadc">
+<text x="32" y="47" font-size="29" font-weight="700">Les Belvédères</text>
+<text x="32" y="73" font-size="15" fill="#b2c1cc">Ceinture haute · remparts et rues en lacets</text>
+<g transform="translate(32 100)" clip-path="url(#map)">
+<rect width="640" height="440" fill="#263541"/><rect width="640" height="440" fill="url(#grid)"/>
+
+<path d="M640 88 H510 C433 88 401 141 414 192 C421 232 361 258 290 252 C187 245 133 272 133 329 Q129 390 66 440" fill="none" stroke="#93a0a5" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/><path d="M640 88 H510 C433 88 401 141 414 192 C421 232 361 258 290 252 C187 245 133 272 133 329 Q129 390 66 440" fill="none" stroke="#58636e" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/><path d="M640 88 H510 C433 88 401 141 414 192 C421 232 361 258 290 252 C187 245 133 272 133 329 Q129 390 66 440" fill="none" stroke="#c1c9cb" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 8"/>
+<path d="M221 440 L238 367 Q274 330 355 328 Q465 328 527 281 L640 240" fill="none" stroke="#1a252e" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M221 440 L238 367 Q274 330 355 328 Q465 328 527 281 L640 240" fill="none" stroke="#efad91" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<path d="M414 192 Q475 196 501 218 L527 281" fill="none" stroke="#1a252e" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M414 192 Q475 196 501 218 L527 281" fill="none" stroke="#efad91" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<path d="M133 329 Q181 339 238 367" fill="none" stroke="#1a252e" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M133 329 Q181 339 238 367" fill="none" stroke="#efad91" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<rect x="275" y="45" width="73.15" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="282" y="64" font-size="12">Logements</text>
+<rect x="484" y="28" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="491" y="47" font-size="12">Kiosque</text>
+<rect x="517" y="132" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="524" y="151" font-size="12">Cafés</text>
+<rect x="234" y="166" width="130.3" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="241" y="185" font-size="12">Maison de quartier</text>
+<rect x="48" y="217" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="55" y="236" font-size="12">Ateliers</text>
+<rect x="240" y="278" width="73.15" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="247" y="297" font-size="12">Commerces</text>
+<rect x="540" y="323" width="98.55" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="547" y="342" font-size="12">Logements bas</text>
+<text x="520" y="121" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">Le Nœud →</text>
+<text x="80" y="410" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">Lacet vers La Dalle ↓</text>
+<text x="337" y="353" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">Promenade des remparts</text>
+<text x="527" y="265" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">Belvédère</text>
+</g>
+<g transform="translate(705 127)" font-size="14">
+<text font-size="17" font-weight="700">Légende</text>
+<path d="M0 32H38" fill="none" stroke="#85939c" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/><text x="52" y="37">Voie carrossable</text>
+<path d="M0 63H38" fill="none" stroke="#efad91" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/><text x="52" y="68">Liaison piétonne</text>
+<rect y="84" width="38" height="17" rx="3" fill="#394854" stroke="#80919b"/><text x="52" y="98">Volume bâti</text>
+<text y="149" font-size="17" font-weight="700">Échelle</text>
+<text y="177">160 × 110 m</text>
+<text y="200" fill="#b2c1cc">1 carreau = 10 m</text>
+<text y="239" fill="#b2c1cc">X → est · Z ↓ sud</text>
+<text y="262" fill="#b2c1cc">Y ↑ hauteur</text>
+</g>
+<text x="32" y="583" font-size="14" fill="#b2c1cc">Origine X/Z au coin supérieur gauche de la grille. Un mètre = quatre unités SVG.</text>
+</g></svg>

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="620" viewBox="0 0 960 620" role="img" aria-labelledby="title">
+<title id="title">Les Quais — plan de blocage</title>
+<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#8394a8" opacity=".18"/></pattern><clipPath id="map"><rect width="640" height="440" rx="8"/></clipPath></defs>
+<rect width="960" height="620" fill="#111a25"/>
+<g font-family="system-ui,sans-serif" fill="#f4eadc">
+<text x="32" y="47" font-size="29" font-weight="700">Les Quais</text>
+<text x="32" y="73" font-size="15" fill="#b2c1cc">Berges industrielles · ancienne papeterie et marché</text>
+<g transform="translate(32 100)" clip-path="url(#map)">
+<rect width="640" height="440" fill="#263541"/><rect width="640" height="440" fill="url(#grid)"/>
+<path d="M0 346 Q126 337 222 366 T439 338 Q550 324 640 358V440H0Z" fill="#20465a"/>
+<path d="M0 103 H259 C341 103 340 168 421 168 H640" fill="none" stroke="#93a0a5" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/><path d="M0 103 H259 C341 103 340 168 421 168 H640" fill="none" stroke="#58636e" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/><path d="M0 103 H259 C341 103 340 168 421 168 H640" fill="none" stroke="#c1c9cb" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 8"/>
+<path d="M270 0 V47 Q270 88 259 103" fill="none" stroke="#93a0a5" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/><path d="M270 0 V47 Q270 88 259 103" fill="none" stroke="#58636e" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/><path d="M270 0 V47 Q270 88 259 103" fill="none" stroke="#c1c9cb" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 8"/>
+<path d="M0 301 C95 292 129 320 224 325 S391 268 502 286 L640 315" fill="none" stroke="#1a252e" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M0 301 C95 292 129 320 224 325 S391 268 502 286 L640 315" fill="none" stroke="#82e4ce" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<path d="M110 103 V174 Q110 222 168 226 L224 225 L224 325" fill="none" stroke="#1a252e" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M110 103 V174 Q110 222 168 226 L224 225 L224 325" fill="none" stroke="#82e4ce" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<path d="M475 168 L488 237 L502 286" fill="none" stroke="#1a252e" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M475 168 L488 237 L502 286" fill="none" stroke="#82e4ce" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<rect x="41" y="29" width="111.25" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="48" y="48" font-size="12">Atelier de rive</text>
+<rect x="319" y="33" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="326" y="52" font-size="12">Halle</text>
+<rect x="529" y="78" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="536" y="97" font-size="12">Entrepôt</text>
+<rect x="24" y="153" width="73.15" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="31" y="172" font-size="12">Papeterie</text>
+<rect x="259" y="177" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="266" y="196" font-size="12">Marché</text>
+<rect x="364" y="220" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="371" y="239" font-size="12">Buvette</text>
+<rect x="531" y="220" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="538" y="239" font-size="12">Hangar</text>
+<text x="10" y="132" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">← Les Forges</text>
+<text x="285" y="23" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">Vers La Dalle ↑</text>
+<text x="492" y="140" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">Continuité urbaine</text>
+<text x="260" y="373" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">Berges de la Charente</text>
+</g>
+<g transform="translate(705 127)" font-size="14">
+<text font-size="17" font-weight="700">Légende</text>
+<path d="M0 32H38" fill="none" stroke="#85939c" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/><text x="52" y="37">Voie carrossable</text>
+<path d="M0 63H38" fill="none" stroke="#82e4ce" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/><text x="52" y="68">Liaison piétonne</text>
+<rect y="84" width="38" height="17" rx="3" fill="#394854" stroke="#80919b"/><text x="52" y="98">Volume bâti</text>
+<text y="149" font-size="17" font-weight="700">Échelle</text>
+<text y="177">160 × 110 m</text>
+<text y="200" fill="#b2c1cc">1 carreau = 10 m</text>
+<text y="239" fill="#b2c1cc">X → est · Z ↓ sud</text>
+<text y="262" fill="#b2c1cc">Y ↑ hauteur</text>
+</g>
+<text x="32" y="583" font-size="14" fill="#b2c1cc">Origine X/Z au coin supérieur gauche de la grille. Un mètre = quatre unités SVG.</text>
+</g></svg>

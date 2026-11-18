@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="620" viewBox="0 0 960 620" role="img" aria-labelledby="title">
+<title id="title">Le Nœud — plan de blocage</title>
+<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#8394a8" opacity=".18"/></pattern><clipPath id="map"><rect width="640" height="440" rx="8"/></clipPath></defs>
+<rect width="960" height="620" fill="#111a25"/>
+<g font-family="system-ui,sans-serif" fill="#f4eadc">
+<text x="32" y="47" font-size="29" font-weight="700">Le Nœud</text>
+<text x="32" y="73" font-size="15" fill="#b2c1cc">Plateau administratif · boucle de service</text>
+<g transform="translate(32 100)" clip-path="url(#map)">
+<rect width="640" height="440" fill="#263541"/><rect width="640" height="440" fill="url(#grid)"/>
+
+<path d="M0 88 H405 C520 88 583 110 583 186 V261 C583 327 510 361 408 359 H230 C139 359 99 388 90 440" fill="none" stroke="#93a0a5" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/><path d="M0 88 H405 C520 88 583 110 583 186 V261 C583 327 510 361 408 359 H230 C139 359 99 388 90 440" fill="none" stroke="#58636e" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/><path d="M0 88 H405 C520 88 583 110 583 186 V261 C583 327 510 361 408 359 H230 C139 359 99 388 90 440" fill="none" stroke="#c1c9cb" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 8"/>
+<path d="M328 440 V314 Q331 253 375 226 L382 155 V88" fill="none" stroke="#1a252e" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M328 440 V314 Q331 253 375 226 L382 155 V88" fill="none" stroke="#c6ceff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<path d="M132 88 L152 155 Q160 190 217 211 L375 226 L534 256" fill="none" stroke="#1a252e" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M132 88 L152 155 Q160 190 217 211 L375 226 L534 256" fill="none" stroke="#c6ceff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<rect x="39" y="25" width="104.89999999999999" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="46" y="44" font-size="12">Contrôle ouest</text>
+<rect x="247" y="25" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="254" y="44" font-size="12">Annexe</text>
+<rect x="465" y="28" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="472" y="47" font-size="12">Archives</text>
+<rect x="42" y="192" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="49" y="211" font-size="12">Services</text>
+<rect x="223" y="133" width="68" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="230" y="152" font-size="12">Civis</text>
+<rect x="430" y="166" width="130.3" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="437" y="185" font-size="12">Centre de commande</text>
+<rect x="455" y="282" width="111.25" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="462" y="301" font-size="12">Dépôt technique</text>
+<rect x="212" y="284" width="111.25" height="30" rx="4" fill="#394854" stroke="#80919b"/><text x="219" y="303" font-size="12">Cour de service</text>
+<text x="8" y="121" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">← Belvédères</text>
+<text x="105" y="420" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">Rampe depuis La Dalle</text>
+<text x="338" y="415" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">Galerie depuis La Dalle</text>
+<text x="267" y="241" font-size="12" font-weight="650" paint-order="stroke" stroke="#18232d" stroke-width="3">Parvis</text>
+</g>
+<g transform="translate(705 127)" font-size="14">
+<text font-size="17" font-weight="700">Légende</text>
+<path d="M0 32H38" fill="none" stroke="#85939c" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/><text x="52" y="37">Voie carrossable</text>
+<path d="M0 63H38" fill="none" stroke="#c6ceff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/><text x="52" y="68">Liaison piétonne</text>
+<rect y="84" width="38" height="17" rx="3" fill="#394854" stroke="#80919b"/><text x="52" y="98">Volume bâti</text>
+<text y="149" font-size="17" font-weight="700">Échelle</text>
+<text y="177">160 × 110 m</text>
+<text y="200" fill="#b2c1cc">1 carreau = 10 m</text>
+<text y="239" fill="#b2c1cc">X → est · Z ↓ sud</text>
+<text y="262" fill="#b2c1cc">Y ↑ hauteur</text>
+</g>
+<text x="32" y="583" font-size="14" fill="#b2c1cc">Origine X/Z au coin supérieur gauche de la grille. Un mètre = quatre unités SVG.</text>
+</g></svg>

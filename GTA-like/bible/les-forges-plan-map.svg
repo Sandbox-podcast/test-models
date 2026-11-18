@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="800" viewBox="0 0 1120 800" role="img" aria-labelledby="title">
+<title id="title">Les Forges — plan du prototype Puce fantôme</title>
+<defs>
+ <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#ffffff" opacity=".08"/></pattern>
+ <marker id="car" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0L7 3 0 6Z" fill="#ffbd72"/></marker>
+ <marker id="foot" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0L7 3 0 6Z" fill="#7ce5bb"/></marker>
+</defs>
+<rect width="1120" height="800" fill="#111a25"/>
+<g font-family="system-ui,sans-serif" fill="#f4eadc">
+ <text x="40" y="48" font-size="29" font-weight="700">Les Forges · plan du prototype</text>
+ <text x="40" y="76" font-size="15" fill="#b2c1cc">Puce fantôme · vue du dessus · emprise de travail 180 × 120 m</text>
+ <g transform="translate(40 110)">
+  <rect width="720" height="480" rx="8" fill="#24323e"/>
+  <rect width="720" height="480" fill="url(#grid)"/>
+  <path d="M32 120H128C205 120 224 72 310 77S385 120 448 120H540C615 120 660 166 660 238V350C660 383 623 400 564 400H496C408 400 371 450 278 442S161 400 64 400" fill="none" stroke="#5d676d" stroke-width="48" stroke-linejoin="round"/>
+  <path d="M128 120V168M448 120V192" fill="none" stroke="#5d676d" stroke-width="32"/>
+    <path d="M32 120H128C205 120 224 72 310 77S385 120 448 120H540C615 120 660 166 660 238V350C660 383 623 400 564 400H496C408 400 371 450 278 442S161 400 64 400" fill="none" stroke="#929ca0" stroke-width="1.5" stroke-dasharray="8 8"/>
+  <path d="M60 250H194Q215 250 215 227V148Q215 132 231 132H275" fill="none" stroke="#849397" stroke-width="10" opacity=".75"/>
+  <g fill="#384452" stroke="#74818b">
+   <path d="M36 43H104V82H36Z"/><path d="M140 33H204V75H140Z"/>
+   <path d="M224 164H273V215H224Z"/><path d="M222 222H268V244H222Z"/>
+   <path d="M533 166H592L608 194V229H533Z"/>
+   <path d="M100 337H180V363H100Z"/><path d="M207 349H298V384H207Z"/>
+   <path d="M333 348H424V379H333Z"/>
+  </g>
+  <g font-size="11" fill="#d1dee4">
+   <text x="41" y="64">Ateliers</text><text x="149" y="58">Hangar</text>
+   <text x="230" y="193">Annexe</text><text x="541" y="203">Magasin</text>
+   <text x="108" y="354">Entrepôt bas</text><text x="214" y="369">Maisons</text><text x="341" y="368">Remises</text>
+  </g>
+  <rect y="280" width="720" height="40" fill="#181f28"/>
+  <path d="M0 289H720M0 295H720M0 305H720M0 311H720" stroke="#98a3aa" stroke-width="2"/>
+  <rect x="636" y="252" width="48" height="96" fill="#77848b" stroke="#adb5b9" stroke-width="2"/>
+  <rect x="60" y="168" width="136" height="68" rx="4" fill="#544637" stroke="#9d805b"/>
+  <rect x="300" y="160" width="116" height="96" rx="4" fill="#4b5861" stroke="#86949c"/>
+  <rect x="416" y="172" width="96" height="76" fill="#364955" stroke="#86949c"/>
+  <path d="M128 236V260H468" stroke="#879599" stroke-width="10" fill="none" opacity=".66"/>
+  <path d="M468 248V260H500V360" fill="none" stroke="#536773" stroke-width="32"/>
+  <path d="M487 266H513M487 271H513M487 276H513" stroke="#aabac2" stroke-width="2"/>
+  <path d="M484 320V362H560V400" fill="none" stroke="#536773" stroke-width="32"/>
+  <path d="M448 120H540C615 120 660 166 660 238V350C660 383 623 400 564 400" fill="none" stroke="#ffbd72" stroke-width="4" marker-end="url(#car)"/>
+  <path d="M448 192V120" fill="none" stroke="#ffbd72" stroke-width="4" stroke-dasharray="4 6"/>
+  <path d="M468 200V260H500V360H540" fill="none" stroke="#7ce5bb" stroke-width="4" stroke-dasharray="9 6" marker-end="url(#foot)"/>
+  <g fill="#f4eadc" font-size="14" font-weight="600">
+   <text x="70" y="201">Garage de Mina</text><text x="320" y="218">Dépôt</text><text x="470" y="191">Cour</text>
+   <text x="465" y="95">Avenue en courbe</text><text x="588" y="266">Pont</text><text x="35" y="305">Voies ferrées</text>
+   <text x="520" y="352">Remise</text><text x="502" y="377" fill="#b9c8cf">Niveau bas</text>
+   <text x="355" y="276" fill="#bdc8cc">Ruelle</text><text x="304" y="428" fill="#bdc8cc">Rue basse</text>
+  </g>
+  <circle cx="352" cy="228" r="5" fill="#f4eadc"/><text x="360" y="234" font-size="12">Puce</text>
+  <rect x="458" y="246" width="20" height="5" fill="#7ce5bb"/>
+  <path d="M29 58V22l-5 10m5-10 5 10" stroke="#f4eadc" stroke-width="2" fill="none"/><text x="23" y="76" font-size="14">N</text>
+  <path d="M32 457v8m0-4h80m0-4v8" stroke="#f4eadc"/><text x="46" y="453" font-size="12">20 m</text>
+ </g>
+ <g transform="translate(795 134)" font-size="15">
+  <text font-weight="700" font-size="19">Fuites après le vol</text>
+  <path d="M0 34h38" stroke="#ffbd72" stroke-width="4"/><text x="52" y="39">Voiture</text>
+  <text y="66" fill="#b2c1cc">Cour → parking au nord</text><text y="87" fill="#b2c1cc">→ avenue → pont → rue basse.</text>
+  <text y="108" fill="#b2c1cc">Descendre pour rejoindre Mina.</text>
+  <path d="M0 151h38" stroke="#7ce5bb" stroke-width="4" stroke-dasharray="8 4"/><text x="52" y="156">À pied</text>
+  <text y="184" fill="#b2c1cc">Cour → ruelle → escalier</text><text y="205" fill="#b2c1cc">→ sous les voies → Mina.</text>
+  <text y="258" font-weight="700" font-size="19">Hauteurs du blocage</text>
+  <text y="286" fill="#b2c1cc">Avenue et tablier routier : +6 m</text>
+  <text y="308" fill="#b2c1cc">Voies ferrées : +3 m</text>
+  <text y="330" fill="#b2c1cc">Passage et rue basse : 0 m</text>
+  <text y="361" fill="#b2c1cc">Rampe courbe vers la rue basse.</text>
+ </g>
+ <text x="40" y="632" font-size="17" font-weight="700">Repères Three.js</text>
+ <text x="40" y="660" font-size="15" fill="#b2c1cc">Origine au coin supérieur gauche du quadrillage. X vers la droite, Z vers le bas, Y vers le haut.</text>
+ <text x="40" y="685" font-size="15" fill="#b2c1cc">Un carreau = 10 m. Le pointillé ambre indique la liaison à pied entre la cour et la voiture.</text>
+ <text x="40" y="725" font-size="15" fill="#b2c1cc">Volumes bâtis en gris · passages à maintenir libres · tracé fictif inspiré de gare–L’Houmeau.</text>
+</g>
+</svg>
+
