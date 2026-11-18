@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#111b23" />
+  <meta name="description" content="DeadLine, un jeu d’action et d’infiltration cyberpunk. Volez la puce du dépôt F-07 et disparaissez dans Les Forges." />
+  <link rel="icon" type="image/png" href="./favicon.png" />
+  <title>DeadLine — Puce fantôme</title>
+</head>
+<body>
+  <main id="app">
+    <canvas id="viewport" aria-label="Vue de jeu"></canvas>
+    <div id="hud" hidden>
+      <div class="vignette"></div>
+      <div class="hud-head">
+        <section class="objective plate" aria-label="Objectif suivi">
+          <div class="location"><span class="diamond"></span><span id="district">Les Forges</span></div>
+          <h1 id="mission-name">Puce fantôme</h1>
+          <p id="objective-text">Parler à Mina au garage</p>
+          <div class="objective-meta"><span id="distance"></span><button id="journal" class="text-btn"><kbd>Tab</kbd> Journal</button></div>
+        </section>
+        <div id="danger" class="danger plate" data-state="clear" role="status">
+          <i></i><span id="alert-text">Hors détection</span><span id="alert-meter"></span>
+        </div>
+        <div class="top-actions"><span id="money" class="plate account">0 ₡</span><button id="pause" class="plate icon-btn" aria-label="Mettre en pause" title="Pause (Échap)">Ⅱ</button></div>
+      </div>
+      <div id="waypoints"></div>
+      <div id="crosshair" data-valid="false"></div>
+      <div id="prompt" class="prompt plate" hidden><kbd>E</kbd><span id="prompt-text"></span></div>
+      <div id="notice" class="notice plate" role="status" hidden></div>
+      <div class="hud-foot">
+        <section class="equipment plate" aria-label="Santé et implants">
+          <div class="health-row"><span>Intégrité</span><span id="health-number">100</span></div>
+          <div class="health-track" id="health-track" role="meter" aria-label="Intégrité" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><i id="health-fill"></i></div>
+          <div class="slots">
+            <div class="slot" id="slot-1"><kbd>1</kbd><b></b><span></span><small></small></div>
+            <div class="slot" id="slot-2"><kbd>2</kbd><b></b><span></span><small></small></div>
+          </div>
+        </section>
+        <div id="speed" class="speed plate" hidden><strong>0</strong><span>km/h</span></div>
+        <section class="map plate" aria-label="Minicarte">
+          <div class="map-top"><span id="map-name">Les Forges</span><span>▲ N</span></div>
+          <canvas id="minimap" width="215" height="151"></canvas>
+          <div class="map-bottom"><span class="you-dot"></span> Vous <span class="goal-dot"></span> Objectif</div>
+        </section>
+      </div>
+    </div>
+
+    <section id="title" class="title-screen" aria-labelledby="logo">
+      <div class="title-art"></div>
+      <div class="title-top"><span class="brand-mark">D<span>∕</span></span><span>Les Forges · La Dalle · Le Nœud</span></div>
+      <div class="title-copy">
+        <div class="chapter-label"><span></span> Chapitre I</div>
+        <h1 id="logo">DeadLine</h1>
+        <h2>Puce fantôme</h2>
+        <p>Une puce volée contient la liste des prochaines identités à effacer. La vôtre y figure.</p>
+        <div class="title-buttons">
+          <button id="play" class="primary" disabled>Chargement…</button>
+          <button id="new-game" class="secondary" hidden>Nouvelle partie</button>
+          <button id="title-help" class="secondary">Commandes</button>
+        </div>
+        <p id="boot-error" role="alert" hidden></p>
+      </div>
+      <footer class="title-footer"><span>PC · Clavier et souris</span><span>Public adulte · Violence graphique</span></footer>
+    </section>
+
+    <div id="overlay" class="overlay" hidden>
+      <section role="dialog" aria-modal="true" id="dialog" aria-labelledby="dialog-title" class="dialog plate">
+        <div class="dialog-top"><span id="dialog-kicker"></span><button id="close" class="icon-btn" aria-label="Fermer">×</button></div>
+        <h2 id="dialog-title"></h2>
+        <div id="dialog-body"></div>
+        <div id="dialog-actions"></div>
+      </section>
+    </div>
+    <noscript>Activez JavaScript pour jouer à DeadLine.</noscript>
+  </main>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

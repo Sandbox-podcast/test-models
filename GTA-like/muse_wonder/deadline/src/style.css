@@ -1,0 +1,80 @@
+:root {
+  --bg: #070a12;
+  --panel: rgba(10, 16, 28, 0.92);
+  --line: rgba(0, 229, 255, 0.35);
+  --cyan: #00e5ff;
+  --magenta: #ff2d78;
+  --amber: #ffb020;
+  --text: #e8f4ff;
+  --muted: #9db4c8;
+  --danger: #ff3b3b;
+  --ok: #2ee6a8;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: "Segoe UI", system-ui, sans-serif; }
+#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: none; }
+.hidden { display: none !important; }
+
+.overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(2, 4, 10, 0.62); backdrop-filter: blur(3px); z-index: 20; padding: 16px; overflow: auto; }
+.panel { width: min(680px, 96vw); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; box-shadow: 0 0 42px rgba(0, 229, 255, 0.14); }
+.panel.small { width: min(420px, 94vw); text-align: center; }
+.menu-panel { text-align: center; }
+.kicker { letter-spacing: 0.22em; font-size: 11px; color: var(--cyan); margin: 0 0 6px; }
+.kicker.danger { color: var(--danger); }
+h1 { margin: 0; font-size: 52px; letter-spacing: 0.08em; }
+h1 span { color: var(--magenta); }
+h2 { margin: 4px 0 10px; }
+.tagline { color: var(--muted); line-height: 1.5; }
+.btn { background: #12233a; color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 10px 16px; cursor: pointer; font-size: 15px; }
+.btn:hover:not(:disabled) { border-color: var(--cyan); }
+.btn:disabled { opacity: 0.45; cursor: wait; }
+.btn.primary { background: linear-gradient(135deg, #003b4d, #5c1030); border-color: var(--cyan); font-weight: 700; }
+.btn.ghost { background: transparent; }
+.btn.tiny { padding: 4px 10px; font-size: 12px; }
+.btn.small-btn { position: fixed; right: 14px; bottom: 14px; z-index: 12; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; text-align: left; margin: 16px 0 6px; font-size: 13px; color: var(--muted); }
+.controls-grid div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px dashed rgba(255,255,255,0.08); padding-bottom: 5px; }
+kbd { background: #1b2f4a; border: 1px solid #35557d; border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; color: var(--text); font-size: 12px; white-space: nowrap; }
+.hint { color: var(--amber); font-size: 13px; }
+.brief-list { line-height: 1.55; color: var(--muted); padding-left: 18px; }
+.brief-list strong, .panel p strong { color: var(--text); }
+.choice-label { margin-bottom: 8px; }
+.implant-choices { display: flex; gap: 10px; flex-wrap: wrap; }
+.implant-choice { flex: 1 1 180px; text-align: left; border: 1px solid #2a4a6b; background: #0d1a2c; border-radius: 10px; padding: 10px; cursor: pointer; color: var(--text); }
+.implant-choice.selected { border-color: var(--cyan); box-shadow: inset 0 0 0 1px var(--cyan); }
+.implant-choice small { display: block; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+.error { color: var(--danger); min-height: 18px; }
+
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+.hud-top { display: flex; justify-content: space-between; gap: 12px; padding: 12px; align-items: flex-start; }
+.hud-card { background: rgba(6, 12, 22, 0.82); border: 1px solid rgba(0,229,255,0.25); border-radius: 10px; padding: 10px 12px; }
+.objective-card { max-width: 430px; }
+.status-card { width: 300px; }
+.obj-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; font-weight: 700; }
+#obj-text { margin: 6px 0 2px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.obj-sub { margin: 2px 0 0; color: var(--amber); font-size: 12px; min-height: 15px; }
+.badge { font-size: 11px; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.badge.ok { background: rgba(46,230,168,0.18); color: var(--ok); border: 1px solid rgba(46,230,168,0.5); }
+.badge.seen { background: rgba(255,176,32,0.18); color: var(--amber); border: 1px solid rgba(255,176,32,0.6); }
+.badge.alert { background: rgba(255,59,59,0.2); color: #ff8080; border: 1px solid rgba(255,59,59,0.7); }
+.bar-row { display: flex; align-items: center; gap: 8px; font-size: 12px; margin: 4px 0; }
+.bar { flex: 1; height: 10px; background: #16263d; border-radius: 999px; overflow: hidden; }
+.bar > div { height: 100%; width: 100%; background: linear-gradient(90deg, #ff2d78, #ffb020); transition: width 0.12s; }
+.bar.detect > div { width: 0%; background: linear-gradient(90deg, #ffb020, #ff3b3b); }
+.meta-row { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 6px; }
+.implants { display: flex; gap: 8px; margin-top: 8px; }
+.implant-chip { flex: 1; font-size: 11px; border: 1px solid #2a4a6b; border-radius: 8px; padding: 6px; background: rgba(255,255,255,0.03); }
+.implant-chip.ready { border-color: rgba(0,229,255,0.55); }
+.implant-chip.cd { opacity: 0.55; }
+.interact { position: fixed; left: 50%; bottom: 86px; transform: translateX(-50%); background: rgba(6,12,22,0.9); border: 1px solid var(--cyan); padding: 8px 14px; border-radius: 999px; font-size: 14px; pointer-events: none; }
+#crosshair { position: fixed; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid rgba(0,229,255,0.9); border-radius: 50%; pointer-events: none; z-index: 11; }
+#crosshair::after { content: ""; position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1.5px; background: var(--magenta); border-radius: 50%; }
+.journal { position: fixed; top: 0; right: 0; width: min(390px, 92vw); height: 100%; background: rgba(5, 10, 20, 0.96); border-left: 1px solid var(--line); z-index: 15; padding: 16px; overflow: auto; }
+.journal-head { display: flex; justify-content: space-between; align-items: center; }
+.journal h4 { color: var(--cyan); margin: 16px 0 6px; }
+.journal p, .journal li { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.journal ul { padding-left: 18px; }
+.toast { position: fixed; left: 50%; top: 84px; transform: translateX(-50%); z-index: 18; background: rgba(6, 18, 16, 0.94); border: 1px solid var(--ok); color: var(--text); padding: 12px 18px; border-radius: 10px; max-width: min(620px, 92vw); text-align: center; line-height: 1.45; }
+#vignette { position: fixed; inset: 0; pointer-events: none; z-index: 9; box-shadow: inset 0 0 120px rgba(0,0,0,0.55); }
+@media (max-width: 760px) { .hud-top { flex-direction: column; } .status-card { width: auto; } h1 { font-size: 38px; } }

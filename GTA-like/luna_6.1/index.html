@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#091317" />
+    <meta name="description" content="DeadLine — Puce fantôme. Un jeu d’action et d’infiltration cyberpunk." />
+    <title>DeadLine — Puce fantôme</title>
+  </head>
+  <body>
+    <main id="game" aria-label="DeadLine, jeu d’action et d’infiltration">
+      <div id="world" aria-hidden="true"></div>
+      <div class="scanlines" aria-hidden="true"></div>
+
+      <section id="boot-screen" class="screen-layer" aria-labelledby="game-title">
+        <div class="boot-noise" aria-hidden="true"></div>
+        <div class="boot-content">
+          <div class="eyeline"><span class="status-dot"></span> Les Forges · secteur 04</div>
+          <p class="wordmark">DEAD<span>LINE</span></p>
+          <h1 id="game-title">Puce fantôme</h1>
+          <p class="boot-copy">Une ville peut effacer un nom.<br />Les rues, elles, se souviennent.</p>
+          <button id="play-button" class="primary-button" type="button" disabled>
+            <span class="button-label">Chargement de la ville</span><span class="button-mark">↗</span>
+          </button>
+          <p class="boot-foot">DÉMO SOLO · CLAVIER + SOURIS</p>
+        </div>
+        <div class="boot-side-note">ANGOULÊME<br />22:48 / PLUIE ARRÊTÉE</div>
+        <div class="boot-controls"><span>ZQSD / WASD <i>déplacer</i></span><span>SOURIS <i>viser</i></span><span>E <i>agir</i></span></div>
+      </section>
+
+      <section id="hud" class="hud hidden" aria-live="polite">
+        <header class="hud-top">
+          <div class="district-mark"><span class="mark-glyph">D</span><div><strong>Les Forges</strong><small>VILLE BASSE · NUIT</small></div></div>
+          <div id="objective-card" class="objective-card">
+            <small id="objective-kicker">CONTRAT · MINA</small><strong id="objective-text">Parler à Mina au garage</strong>
+          </div>
+          <div id="alert-pill" class="alert-pill"><span class="alert-light"></span><span id="alert-text">Hors surveillance</span></div>
+        </header>
+
+        <div class="hud-left">
+          <div class="vitals">
+            <div class="vitals-head"><span>SANTÉ</span><strong id="health-value">100</strong></div>
+            <div class="health-track"><span id="health-bar"></span></div>
+          </div>
+          <div class="implant-panel">
+            <span class="panel-caption">IMPLANTS ÉQUIPÉS</span>
+            <div class="implant-slot" id="implant-one"><span class="implant-key">R</span><span><b>Intrusion</b><small>—</small></span><em id="cooldown-one"></em></div>
+            <div class="implant-slot" id="implant-two"><span class="implant-key">F</span><span><b>Leurre</b><small>—</small></span><em id="cooldown-two"></em></div>
+          </div>
+          <div class="cash-readout"><span>CRÉDITS</span><strong id="cash-value">240 ¢</strong></div>
+        </div>
+
+        <div class="hud-right">
+          <div class="map-frame"><canvas id="minimap" width="192" height="192" aria-label="Plan du quartier"></canvas><span class="map-north">N</span><span class="map-caption">LES FORGES / PLAN</span></div>
+          <div id="map-legend" class="map-legend"><span><i class="legend-player"></i>vous</span><span><i class="legend-objective"></i>objectif</span></div>
+        </div>
+
+        <div class="hud-bottom">
+          <div class="interaction-readout"><span id="interaction-key" class="interaction-key">E</span><span><small id="interaction-label">ACTION</small><strong id="interaction-text">Journal de mission</strong></span></div>
+          <div id="message-line" class="message-line" aria-live="assertive"></div>
+          <div class="bottom-shortcuts"><span><kbd>J</kbd> Journal</span><span><kbd>M</kbd> Son</span><span><kbd>ESC</kbd> Pause</span></div>
+        </div>
+        <div id="aim-reticle" class="aim-reticle" aria-hidden="true"><i></i><b></b><i></i><em></em></div>
+      </section>
+
+      <section id="dialog-layer" class="dialog-layer hidden" aria-modal="true" role="dialog" aria-labelledby="dialog-title">
+        <div class="dialog-backdrop"></div>
+        <article class="dialog-panel">
+          <button id="dialog-close" class="close-button" type="button" aria-label="Fermer">×</button>
+          <p id="dialog-label" class="dialog-label">LES FORGES / GARAGE DE MINA</p>
+          <h2 id="dialog-title">La ville vous attend</h2>
+          <div id="dialog-copy" class="dialog-copy"></div>
+          <div id="dialog-actions" class="dialog-actions"></div>
+        </article>
+      </section>
+
+      <section id="journal-layer" class="screen-layer journal-layer hidden" aria-modal="true" role="dialog" aria-labelledby="journal-title">
+        <div class="journal-panel">
+          <div class="journal-heading"><div><small>CARNET DE TERRAIN</small><h2 id="journal-title">Les pistes</h2></div><button id="journal-close" class="close-button" type="button" aria-label="Fermer">×</button></div>
+          <div id="journal-content" class="journal-content"></div>
+          <p class="journal-foot">J / ÉCHAP POUR REVENIR AU QUARTIER</p>
+        </div>
+      </section>
+
+      <section id="pause-layer" class="screen-layer pause-layer hidden" aria-modal="true" role="dialog" aria-labelledby="pause-title">
+        <div class="pause-panel"><p class="dialog-label">TRANSMISSION INTERROMPUE</p><h2 id="pause-title">Reprendre son souffle</h2><p>Les rues des Forges sont toujours là.</p><div id="pause-actions" class="dialog-actions"></div></div>
+      </section>
+      <div id="vignette" class="vignette" aria-hidden="true"></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,5 @@
+.git-local-backup/
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo

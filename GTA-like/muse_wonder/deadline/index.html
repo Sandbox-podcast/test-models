@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DeadLine — Puce fantôme (Les Forges)</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Menu principal -->
+    <div id="menu" class="overlay">
+      <div class="panel menu-panel">
+        <p class="kicker">LES FORGES — VILLE BASSE · NUIT</p>
+        <h1>DEAD<span>LINE</span></h1>
+        <p class="tagline">Coursier clandestin. Une puce volée peut effacer ton identité — et celle de milliers d'habitants.</p>
+        <button id="btn-play" class="btn primary" disabled>Chargement…</button>
+        <button id="btn-reset" class="btn ghost">Réinitialiser la sauvegarde</button>
+        <div class="controls-grid">
+          <div><kbd>Z Q S D</kbd> / <kbd>W A S D</kbd><span>Se déplacer / conduire</span></div>
+          <div><kbd>Souris</kbd><span>Viser</span></div>
+          <div><kbd>Clic gauche</kbd><span>Tirer (à pied)</span></div>
+          <div><kbd>E</kbd><span>Parler · prendre · monter / descendre</span></div>
+          <div><kbd>F</kbd><span>Implant Intrusion (grille / caméra)</span></div>
+          <div><kbd>R</kbd><span>Implant Leurre (viser un point)</span></div>
+          <div><kbd>J</kbd><span>Journal</span></div>
+          <div><kbd>Échap</kbd><span>Pause</span></div>
+        </div>
+        <p class="hint">Astuce : garez la voiture avant d'entrer au dépôt — sa position décide de votre fuite.</p>
+      </div>
+    </div>
+
+    <!-- Briefing Mina -->
+    <div id="briefing" class="overlay hidden">
+      <div class="panel">
+        <p class="kicker">GARAGE DE MINA — BRIEFING</p>
+        <h2>Puce fantôme</h2>
+        <p><strong>Mina :</strong> « Le dépôt des Voies garde une puce de révocation. Ton nom est dans la prochaine mise à jour. Vole-la, et reviens me voir <strong>à pied</strong> — seulement quand personne ne te suit des yeux depuis <strong>5 secondes</strong>. »</p>
+        <ul class="brief-list">
+          <li><strong>Entrée principale</strong> (sud, sur l'avenue) : vigiles en face, aucun implant requis.</li>
+          <li><strong>Cour latérale</strong> (ruelle à l'ouest) : grille compatible <strong>Intrusion (F)</strong>, ou leurre <strong>(R)</strong> pour écarter le vigile du quai.</li>
+          <li><strong>Fuite voiture :</strong> avenue → pont routier. <strong>Fuite à pied :</strong> escalier → passage sous les voies.</li>
+          <li>Une caméra couvre l'entrée principale : <strong>Intrusion</strong> la coupe brièvement.</li>
+        </ul>
+        <p class="choice-label">Choisis <strong>2 implants</strong> (garage) :</p>
+        <div id="implant-choices" class="implant-choices"></div>
+        <p id="briefing-error" class="error"></p>
+        <div class="row">
+          <button id="btn-accept" class="btn primary">Accepter le contrat</button>
+          <button id="btn-brief-close" class="btn">Plus tard</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Échec -->
+    <div id="fail" class="overlay hidden">
+      <div class="panel">
+        <p class="kicker danger">SIGNAL PERDU</p>
+        <h2>Tu es tombé.</h2>
+        <p>Les vigiles récupèrent la puce… ou ce qu'il en reste. Mina peut te remettre en selle au garage.</p>
+        <div class="row">
+          <button id="btn-respawn" class="btn primary">Reprendre au briefing (garage)</button>
+          <button id="btn-abandon" class="btn">Abandonner le contrat</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pause -->
+    <div id="pause" class="overlay hidden">
+      <div class="panel small">
+        <h2>Pause</h2>
+        <p>Focus perdu ou Échap. La simulation est figée, les touches sont relâchées.</p>
+        <button id="btn-resume" class="btn primary">Reprendre</button>
+      </div>
+    </div>
+
+    <!-- Fin / conséquence -->
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <div class="hud-top">
+        <div class="hud-card objective-card">
+          <div class="obj-head"><span id="obj-title">Exploration libre</span><span id="alert-badge" class="badge ok">Non repéré</span></div>
+          <p id="obj-text">Parle à Mina au garage (icône ◆ cyan) ou explore Les Forges.</p>
+          <p id="obj-sub" class="obj-sub"></p>
+        </div>
+        <div class="hud-card status-card">
+          <div class="bar-row"><span>Santé</span><div class="bar"><div id="hp-fill"></div></div><span id="hp-text">100</span></div>
+          <div class="bar-row"><span id="detect-label">Détection</span><div class="bar detect"><div id="detect-fill"></div></div></div>
+          <div class="meta-row"><span id="credits">0 ¤</span><span id="mode-label">À pied</span></div>
+          <div id="implants" class="implants"></div>
+        </div>
+      </div>
+      <div id="interact" class="interact hidden"></div>
+      <div id="crosshair"></div>
+      <button id="btn-journal" class="btn small-btn">Journal (J)</button>
+    </div>
+
+    <!-- Journal -->
+    <aside id="journal" class="journal hidden">
+      <div class="journal-head"><h3>Journal</h3><button id="btn-journal-close" class="btn tiny">Fermer</button></div>
+      <div id="journal-body"></div>
+    </aside>
+
+    <div id="vignette"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

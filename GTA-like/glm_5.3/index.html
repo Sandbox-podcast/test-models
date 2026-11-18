@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DEADLINE — Puce fantôme</title>
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <!-- Écran de chargement / menu principal -->
+  <div id="menu" class="overlay">
+    <div class="menu-card">
+      <div class="title-block">
+        <h1 class="game-title">DEADLINE</h1>
+        <div class="game-sub">« Puce fantôme » — Les Forges</div>
+      </div>
+      <div class="menu-warn">Violence graphique et thèmes adultes — public averti</div>
+      <div class="menu-buttons">
+        <button id="btn-new" class="btn primary" disabled>Nouvelle partie</button>
+        <button id="btn-continue" class="btn" disabled>Continuer</button>
+      </div>
+      <div id="menu-status" class="menu-status">Chargement du moteur…</div>
+      <div class="menu-help">
+        <div class="help-title">Commandes</div>
+        <div class="help-grid">
+          <span>ZQSD / WASD</span><span>se déplacer · conduire</span>
+          <span>Souris</span><span>viser · clic gauche : tirer</span>
+          <span>E</span><span>interagir · monter / descendre</span>
+          <span>Maj</span><span>sprinter</span>
+          <span>1 / clic droit</span><span>implant Intrusion</span>
+          <span>2</span><span>implant Leurre</span>
+          <span>R</span><span>recharger</span>
+          <span>J</span><span>journal</span>
+          <span>Échap</span><span>pause</span>
+          <span>M</span><span>son · B : néons</span>
+        </div>
+      </div>
+      <div class="menu-foot">Démo web — Three.js · TypeScript · Rapier</div>
+    </div>
+  </div>
+
+  <!-- Pause (perte de focus ou Échap) -->
+  <div id="pause" class="overlay hidden">
+    <div class="menu-card small">
+      <h2>PAUSE</h2>
+      <div class="menu-buttons">
+        <button id="btn-resume" class="btn primary">Reprendre</button>
+        <button id="btn-abandon" class="btn hidden">Abandonner le contrat</button>
+      </div>
+      <div class="menu-help">
+        <div class="help-grid">
+          <span>ZQSD / WASD</span><span>déplacement</span>
+          <span>E</span><span>interagir</span>
+          <span>1 · clic droit</span><span>Intrusion</span>
+          <span>2</span><span>Leurre</span>
+        </div>
+      </div>
+      <div id="pause-hint" class="menu-status">La partie est en pause. Recliquez pour reprendre.</div>
+    </div>
+  </div>
+
+  <!-- Fenêtre de dialogue -->
+  <div id="dialogue" class="hidden">
+    <div class="dlg-box">
+      <div class="dlg-head"><span id="dlg-name">Mina</span></div>
+      <div id="dlg-text" class="dlg-text"></div>
+      <div class="dlg-actions">
+        <button id="dlg-more" class="btn small">E — Continuer</button>
+        <button id="dlg-accept" class="btn small primary hidden">Prendre le contrat</button>
+        <button id="dlg-decline" class="btn small hidden">Plus tard</button>
+        <button id="dlg-close" class="btn small hidden">Terminer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-tl">
+      <div class="hud-row">
+        <span class="hud-label">SANTÉ</span>
+        <div class="bar"><div id="hud-hp" class="bar-fill hp"></div></div>
+      </div>
+      <div class="hud-row"><span id="hud-money" class="hud-money">¤ 120</span></div>
+    </div>
+    <div class="hud-tc">
+      <div id="hud-objective" class="hud-objective">Parler à Mina au garage</div>
+      <div id="hud-subobjective" class="hud-subobjective"></div>
+    </div>
+    <div class="hud-tr">
+      <div id="hud-alert" class="alert-chip calm">RAS</div>
+      <div id="hud-zone" class="zone-chip"></div>
+    </div>
+    <div class="hud-br">
+      <div class="implant-row">
+        <div class="implant" id="imp-1">
+          <div class="implant-key">1</div>
+          <div class="implant-name">INTRUSION</div>
+          <div class="implant-cd"><div id="imp-1-cd" class="implant-cd-fill"></div></div>
+        </div>
+        <div class="implant" id="imp-2">
+          <div class="implant-key">2</div>
+          <div class="implant-name">LEURRE</div>
+          <div class="implant-cd"><div id="imp-2-cd" class="implant-cd-fill"></div></div>
+        </div>
+      </div>
+      <div class="ammo-row"><span id="hud-ammo">12 / 48</span></div>
+    </div>
+    <div id="hud-prompt" class="hud-prompt hidden"></div>
+    <div id="hud-target" class="hud-target hidden"></div>
+    <div id="hud-delivery" class="hud-delivery hidden">
+      <div id="hud-delivery-label">REMISE</div>
+      <div class="bar wide"><div id="hud-delivery-fill" class="bar-fill deliv"></div></div>
+      <div id="hud-delivery-state"></div>
+    </div>
+    <div id="hud-damage" class="hud-damage"></div>
+    <div id="hud-marker" class="hud-marker hidden"><div class="marker-arrow"></div><div class="marker-dist"></div></div>
+    <div id="hud-toasts" class="hud-toasts"></div>
+    <div id="hud-crosshair"></div>
+  </div>
+
+  <!-- Journal -->
+  <div id="journal" class="overlay dim hidden">
+    <div class="journal-card">
+      <div class="journal-head">
+        <h2>JOURNAL</h2>
+        <button id="journal-close" class="btn small">J — Fermer</button>
+      </div>
+      <div id="journal-body" class="journal-body"></div>
+    </div>
+  </div>
+
+  <!-- Modale d'échec / de fin de mission -->
+  <div id="modal" class="overlay hidden">
+    <div class="menu-card small">
+      <h2 id="modal-title">CONTRAT ÉCHOUÉ</h2>
+      <div id="modal-text" class="modal-text"></div>
+      <div class="menu-buttons" id="modal-buttons"></div>
+    </div>
+  </div>
+
+  <div id="boot" class="boot-hidden"></div>
+  <canvas id="game"></canvas>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
