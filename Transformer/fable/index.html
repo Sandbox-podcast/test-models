@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Muscle car ⇄ Robot — démonstration mécanique</title>
+<style>
+  :root { --y: #FFC400; --ink: #e9eaec; --mute: #8d9199; --panel: rgba(18,19,22,.78); --line: rgba(255,255,255,.09); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #17181b; overflow: hidden;
+    font-family: ui-sans-serif, "Inter", "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+  canvas#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+  canvas#view:active { cursor: grabbing; }
+
+  #tag { position: fixed; top: 18px; left: 22px; pointer-events: none; user-select: none; }
+  #tag .k { font-size: 10.5px; letter-spacing: .22em; text-transform: uppercase; color: var(--mute); }
+  #tag .p { margin-top: 5px; font-size: 15px; font-weight: 600; letter-spacing: .02em; display: flex; align-items: center; gap: 9px; }
+  #tag .p i { width: 8px; height: 8px; border-radius: 2px; background: var(--y); display: inline-block; }
+
+  #bar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+    width: min(1040px, calc(100vw - 24px)); padding: 9px 12px 10px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    display: grid; grid-template-columns: auto 1fr auto; gap: 10px 12px; align-items: center; }
+  .grp { display: flex; gap: 6px; align-items: center; }
+  button { font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--ink);
+    background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 7px;
+    height: 30px; padding: 0 11px; cursor: pointer; white-space: nowrap; transition: background .12s, border-color .12s; }
+  button:hover { background: rgba(255,255,255,.12); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--y); outline-offset: 2px; }
+  button.on { background: var(--y); border-color: var(--y); color: #17181b; }
+  #play { width: 88px; }
+  .seg { display: flex; }
+  .seg button { border-radius: 0; margin-left: -1px; }
+  .seg button:first-child { border-radius: 7px 0 0 7px; margin-left: 0; }
+  .seg button:last-child { border-radius: 0 7px 7px 0; }
+
+  #scrub { position: relative; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; min-width: 0; }
+  #trackwrap { position: relative; height: 30px; display: flex; align-items: center; }
+  #phases { position: absolute; left: 7px; right: 7px; top: 50%; height: 6px; transform: translateY(-50%);
+    border-radius: 3px; overflow: hidden; display: flex; gap: 2px; pointer-events: none; }
+  #phases span { height: 100%; background: rgba(255,255,255,.14); }
+  #phases span.tf { background: rgba(255,196,0,.62); }
+  #phases span.rb { background: rgba(143,220,255,.42); }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 30px; margin: 0; background: transparent; position: relative; cursor: pointer; }
+  input[type=range]::-webkit-slider-runnable-track { height: 6px; background: transparent; }
+  input[type=range]::-moz-range-track { height: 6px; background: transparent; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 22px; margin-top: -8px;
+    border-radius: 4px; background: #fff; border: 0; box-shadow: 0 1px 6px rgba(0,0,0,.6); }
+  input[type=range]::-moz-range-thumb { width: 14px; height: 22px; border-radius: 4px; background: #fff; border: 0; box-shadow: 0 1px 6px rgba(0,0,0,.6); }
+  #clock { font: 600 13px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; color: var(--ink); min-width: 96px; text-align: right; }
+  #clock small { color: var(--mute); font-weight: 500; font-size: 11px; }
+  @media (max-width: 860px) {
+    #bar { grid-template-columns: 1fr; }
+    .grp { flex-wrap: wrap; justify-content: center; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="tag">
+  <div class="k">Démonstration · boucle de 12 s</div>
+  <div class="p"><i></i><span id="phase">Voiture</span></div>
+</div>
+
+<div id="bar">
+  <div class="grp">
+    <button id="play" title="Lecture / pause (Espace)">❚❚ Pause</button>
+    <button id="restart" title="Recommencer (R)">↺ Recommencer</button>
+    <div class="seg" role="group" aria-label="Vitesse">
+      <button id="sp1" class="on" title="Vitesse normale">1×</button>
+      <button id="sp025" title="Ralenti 0,25×">0,25×</button>
+    </div>
+  </div>
+  <div id="scrub">
+    <div id="trackwrap">
+      <div id="phases">
+        <span style="flex:1.5"></span><span class="tf" style="flex:2"></span><span class="rb" style="flex:.5"></span>
+        <span class="rb" style="flex:3"></span><span class="tf" style="flex:2"></span><span style="flex:2"></span><span style="flex:1"></span>
+      </div>
+      <input id="time" type="range" min="0" max="12" step="0.01" value="0" aria-label="Temps (0 à 12 s)">
+    </div>
+    <div id="clock">0.00 <small>/ 12 s</small></div>
+  </div>
+  <div class="grp">
+    <button id="toCar" title="Figer la forme voiture">Voiture</button>
+    <button id="toBot" title="Figer la forme robot">Robot</button>
+    <button id="home" title="Retrouver le cadrage initial">⌂ Vue initiale</button>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+/* ───────────────────────────── Rendu, studio, lumières ───────────────────────────── */
+const canvas = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const BG = 0x17181b;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(BG);
+scene.fog = new THREE.Fog(BG, 26, 75);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.42;
+
+const camera = new THREE.PerspectiveCamera(30, 16 / 9, 0.1, 200);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.minDistance = 4; controls.maxDistance = 45;
+controls.maxPolarAngle = Math.PI * 0.495;
+
+const HOME_TARGET = new THREE.Vector3(-0.75, 2.4, 1.95);
+function homeCamera() {
+  const aspect = window.innerWidth / window.innerHeight;
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const dist = Math.max(8.9 / (2 * t), 12.6 / (2 * t * aspect));
+  const az = THREE.MathUtils.degToRad(42), el = THREE.MathUtils.degToRad(9);
+  controls.enableDamping = false; controls.update();     // purge l'inertie d'orbite en cours
+  camera.position.set(
+    HOME_TARGET.x + dist * Math.sin(az) * Math.cos(el),
+    HOME_TARGET.y + dist * Math.sin(el),
+    HOME_TARGET.z + dist * Math.cos(az) * Math.cos(el));
+  controls.target.copy(HOME_TARGET);
+  controls.update(); controls.enableDamping = true;
+}
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3c40, 0.45));
+const key = new THREE.DirectionalLight(0xffffff, 2.1);
+key.position.set(7, 13, 9); key.target.position.set(0, 1.5, 1.5);
+key.castShadow = true;
+key.shadow.mapSize.set(4096, 4096);
+Object.assign(key.shadow.camera, { left: -8, right: 8, top: 9, bottom: -6, near: 1, far: 40 });
+key.shadow.bias = -0.0002; key.shadow.normalBias = 0.025; key.shadow.radius = 3;
+scene.add(key, key.target);
+const fill = new THREE.DirectionalLight(0xffffff, 0.7); fill.position.set(-9, 6, 5); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 1.1); rim.position.set(-4, 8, -10); scene.add(rim);
+
+const floor = new THREE.Mesh(new THREE.CircleGeometry(90, 96),
+  new THREE.MeshStandardMaterial({ color: 0x24262a, roughness: 0.86, metalness: 0.0 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+const grid = new THREE.GridHelper(80, 80, 0x4a4d53, 0x3d4046);
+grid.position.y = 0.003; grid.material.transparent = true; grid.material.opacity = 0.28; grid.material.depthWrite = false;
+scene.add(grid);
+
+/* ───────────────────────────── Matériaux ───────────────────────────── */
+const MAT = {
+  yellow: new THREE.MeshPhysicalMaterial({ color: 0xFFC400, roughness: 0.42, metalness: 0.0, clearcoat: 0.8, clearcoatRoughness: 0.18, envMapIntensity: 0.55 }),
+  black:  new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.45, metalness: 0.1 }),
+  tire:   new THREE.MeshStandardMaterial({ color: 0x0d0d0e, roughness: 0.92, metalness: 0.0, side: THREE.DoubleSide }),
+  rim:    new THREE.MeshStandardMaterial({ color: 0xc9ced6, roughness: 0.22, metalness: 1.0 }),
+  metal:  new THREE.MeshStandardMaterial({ color: 0x2e3238, roughness: 0.48, metalness: 0.85 }),
+  metal2: new THREE.MeshStandardMaterial({ color: 0x3d424a, roughness: 0.4, metalness: 0.9 }),
+  steel:  new THREE.MeshStandardMaterial({ color: 0x8b9099, roughness: 0.25, metalness: 1.0 }),
+  glass:  new THREE.MeshPhysicalMaterial({ color: 0x06090d, roughness: 0.16, metalness: 0.0, transparent: true, opacity: 0.92, envMapIntensity: 0.22, specularIntensity: 0.3, side: THREE.DoubleSide }),
+  eye:    new THREE.MeshBasicMaterial({ color: 0x8fdcff, toneMapped: false }),
+  lamp:   new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xf4f8ff, emissiveIntensity: 1.3, roughness: 0.2 }),
+  tail:   new THREE.MeshStandardMaterial({ color: 0x8a0a0a, emissive: 0xd01010, emissiveIntensity: 0.9, roughness: 0.3 }),
+};
+const yellowDS = MAT.yellow.clone(); yellowDS.side = THREE.DoubleSide;
+
+/* ───────────────────────────── Aides de construction ───────────────────────────── */
+function mesh(parent, geo, mat) { const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; }
+function box(parent, mat, x0, x1, y0, y1, z0, z1, r = 0.012) {
+  const w = Math.abs(x1 - x0), h = Math.abs(y1 - y0), d = Math.abs(z1 - z0);
+  const rr = Math.min(r, w * 0.45, h * 0.45, d * 0.45);
+  const geo = rr > 0.002 ? new RoundedBoxGeometry(w, h, d, 2, rr) : new THREE.BoxGeometry(w, h, d);
+  const m = mesh(parent, geo, mat); m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); return m;
+}
+// Profil (z, y) extrudé le long de x entre x0 et x1.
+function prof(parent, mat, pts, x0, x1, bevel = 0.012) {
+  const sh = new THREE.Shape();
+  pts.forEach(([z, y], i) => (i ? sh.lineTo(-z, y) : sh.moveTo(-z, y)));
+  const depth = Math.abs(x1 - x0), b = Math.min(bevel, depth * 0.3);
+  const geo = new THREE.ExtrudeGeometry(sh, { depth: depth - 2 * b, steps: 1, curveSegments: 8,
+    bevelEnabled: b > 0, bevelThickness: b, bevelSize: b, bevelOffset: -b, bevelSegments: 2 });
+  geo.translate(0, 0, b); geo.rotateY(Math.PI / 2); geo.translate(Math.min(x0, x1), 0, 0);
+  return mesh(parent, geo, mat);
+}
+function cylX(parent, mat, r, x0, x1, y, z, seg = 28) {
+  const g = new THREE.CylinderGeometry(r, r, Math.abs(x1 - x0), seg); g.rotateZ(Math.PI / 2);
+  const m = mesh(parent, g, mat); m.position.set((x0 + x1) / 2, y, z); return m;
+}
+function cylZ(parent, mat, r, x, y, z0, z1, seg = 20) {
+  const g = new THREE.CylinderGeometry(r, r, Math.abs(z1 - z0), seg); g.rotateX(Math.PI / 2);
+  const m = mesh(parent, g, mat); m.position.set(x, y, (z0 + z1) / 2); return m;
+}
+function beam(parent, mat, p1, p2, w, h) {
+  const a = new THREE.Vector3(...p1), b = new THREE.Vector3(...p2), dir = b.clone().sub(a);
+  const m = mesh(parent, new THREE.BoxGeometry(w, h, dir.length()), mat);
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.normalize());
+  return m;
+}
+function quad(parent, mat, a, b, c, d) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute([...a, ...b, ...c, ...a, ...c, ...d], 3));
+  g.computeVertexNormals(); return mesh(parent, g, mat);
+}
+// Articulation : groupe g placé au pivot (coordonnées voiture), conteneur c ramené en coordonnées voiture.
+function J(parent, p) {
+  const g = new THREE.Group(); g.position.set(p[0], p[1], p[2]);
+  const c = new THREE.Group(); c.position.set(-p[0], -p[1], -p[2]);
+  g.add(c); parent.add(g); return { g, c, p };
+}
+function arc(cz, cy, r, a0, a1, n = 18) {
+  const out = []; for (let i = 0; i <= n; i++) { const a = THREE.MathUtils.degToRad(a0 + (a1 - a0) * i / n); out.push([cz + r * Math.cos(a), cy + r * Math.sin(a)]); } return out;
+}
+
+/* ───────────────────────────── Constantes mécaniques ───────────────────────────── */
+const TAU = Math.PI * 2;
+const WR = 0.36;                    // rayon de roue
+const STEP = TAU * WR / 2;          // longueur de pas : 2 pas = exactement un tour de roue
+const WALK = 2 * STEP;              // distance parcourue à pied, puis en marche arrière
+const HIPX = 0.46, HIPY = 0.5, PELZ = -0.65, KNEEZ = 0.6, ANKZ = 1.75;
+const L1 = KNEEZ - PELZ, L2C = ANKZ - KNEEZ, GEXT = 0.32, SPLIT = 0.06, AH = 0.32;
+const ZS_CAR = PELZ, ZS_BOT = 0.55; // position du bassin le long du torse (glissière)
+const HEAD_OUT = 0.62, HAND_OUT = 0.34, HEEL_OUT = 0.34, ARM_OUT = 0.22;
+const SH = [0.77, 0.62, -0.72], EL = [0.77, 0.90, -0.10], TAILP = [0, 0.2, -1.4];
+
+const wheels = [];
+function makeWheel(parent, x, y, z, s) {
+  const spin = new THREE.Group(); spin.position.set(x, y, z); parent.add(spin);
+  const v = new THREE.Group(); if (s < 0) v.rotation.y = Math.PI; spin.add(v);
+  const P = [[0.235, -0.13], [0.33, -0.13], [0.352, -0.105], [0.36, -0.06], [0.36, 0.06], [0.352, 0.105], [0.33, 0.13], [0.235, 0.13]]
+    .map(([r, a]) => new THREE.Vector2(r, a));
+  const tg = new THREE.LatheGeometry(P, 48); tg.rotateZ(-Math.PI / 2); mesh(v, tg, MAT.tire);
+  for (const gx of [-0.045, 0.045]) { const t = new THREE.TorusGeometry(0.3585, 0.006, 6, 48); t.rotateY(Math.PI / 2); const m = mesh(v, t, MAT.black); m.position.x = gx; }
+  cylX(v, MAT.rim, 0.24, -0.12, 0.085, 0, 0, 40);
+  cylX(v, MAT.metal, 0.205, 0.08, 0.092, 0, 0, 40);
+  const lip = new THREE.TorusGeometry(0.228, 0.014, 10, 48); lip.rotateY(Math.PI / 2); mesh(v, lip, MAT.rim).position.x = 0.098;
+  for (let i = 0; i < 5; i++) {
+    const sp = new THREE.Group(); sp.rotation.x = i * TAU / 5; v.add(sp);
+    box(sp, MAT.rim, 0.088, 0.118, 0.03, 0.225, -0.03, 0.03, 0.008);
+  }
+  cylX(v, MAT.rim, 0.062, 0.085, 0.128, 0, 0, 24);
+  cylX(v, MAT.metal, 0.028, 0.125, 0.134, 0, 0, 16);
+  wheels.push(spin); return spin;
+}
+
+/* ───────────────────────────── Construction du modèle unique ───────────────────────────── */
+const PP = [0, HIPY, PELZ];
+const pelvis = J(scene, PP);                      // racine : bassin (translation monde uniquement)
+const wYaw = J(pelvis.c, PP), wRoll = J(wYaw.c, PP), wPitch = J(wRoll.c, PP);
+const torso = new THREE.Group(); wPitch.c.add(torso);   // glisse le long de l'axe du torse
+
+// — Bassin : tambour de hanches —
+cylX(pelvis.c, MAT.metal, 0.21, -0.31, 0.31, HIPY, PELZ, 36);
+cylX(pelvis.c, MAT.steel, 0.085, -0.68, 0.68, HIPY, PELZ, 24);
+cylX(pelvis.c, MAT.metal2, 0.225, -0.05, 0.05, HIPY, PELZ, 36);
+box(pelvis.c, MAT.yellow, -0.25, 0.25, 0.33, 0.69, PELZ + 0.17, PELZ + 0.245, 0.02);
+box(pelvis.c, MAT.black, -0.06, 0.06, 0.36, 0.66, PELZ + 0.243, PELZ + 0.25, 0);
+box(pelvis.c, MAT.metal2, -0.22, 0.22, 0.36, 0.64, PELZ - 0.23, PELZ - 0.17, 0.02);
+
+// — Torse : habitacle —
+{
+  const T = torso;
+  box(T, MAT.metal, -0.69, 0.69, 0.22, 0.30, -1.38, 0.58, 0.015);            // plancher = dos du robot
+  for (const z of [-1.0, -0.55, -0.1, 0.35]) box(T, MAT.metal2, -0.5, 0.5, 0.195, 0.225, z - 0.07, z + 0.07, 0.01);
+  box(T, MAT.metal2, -0.09, 0.09, 0.19, 0.225, -1.3, 0.5, 0.01);
+  cylX(T, MAT.steel, 0.045, -0.6, 0.6, TAILP[1], TAILP[2], 16);              // axe de charnière du coffre
+  for (const s of [1, -1]) {
+    box(T, MAT.metal, s * 0.665, s * 0.69, 0.30, 0.90, -1.38, 0.58, 0.008);  // flancs internes
+    for (const z of [-0.45, -0.3, -0.15, 0.0, 0.15]) box(T, MAT.metal2, s * 0.688, s * 0.70, 0.36, 0.78, z - 0.035, z + 0.035, 0.004);
+    prof(T, MAT.yellow, [[0.58, 0.855], [0.58, 0.889], [-1.40, 0.969], [-1.40, 0.895]], s * 0.655, s * 0.862, 0.01); // ceinture de caisse
+    // vitrage et montants
+    const BF = [s * 0.85, 0.89, 0.60], BR = [s * 0.85, 0.97, -1.40], RF = [s * 0.60, 1.25, 0.02], RR = [s * 0.60, 1.25, -0.95];
+    quad(T, MAT.glass, BF, BR, RR, RF);
+    beam(T, MAT.yellow, BF, RF, 0.075, 0.05);
+    beam(T, MAT.yellow, RF, RR, 0.075, 0.05);
+    beam(T, MAT.yellow, BR, RR, 0.09, 0.05);
+    const o = s * 0.012;
+    quad(T, yellowDS, [BR[0] + o, BR[1], BR[2]], [RR[0] + o, RR[1], RR[2]], [s * 0.60 + o, 1.25, -0.66], [s * 0.85 + o, 0.948, -0.86]); // custode
+    beam(T, MAT.black, [s * 0.852, 0.918, -0.10], [s * 0.607, 1.245, -0.10], 0.02, 0.035);                                   // montant central
+    // coin supérieur du torse
+    box(T, MAT.metal, s * 0.34, s * 0.69, 0.30, 0.97, -1.40, -1.36, 0.006);
+  }
+  box(T, MAT.metal, -0.34, 0.34, 0.955, 0.97, -1.40, -1.36, 0.004);
+  quad(T, MAT.glass, [-0.85, 0.89, 0.60], [0.85, 0.89, 0.60], [0.60, 1.25, 0.02], [-0.60, 1.25, 0.02]);       // pare-brise
+  quad(T, MAT.glass, [0.85, 0.97, -1.40], [-0.85, 0.97, -1.40], [-0.60, 1.25, -0.95], [0.60, 1.25, -0.95]);   // lunette
+  beam(T, MAT.yellow, [-0.60, 1.25, 0.02], [0.60, 1.25, 0.02], 0.05, 0.075);
+  beam(T, MAT.yellow, [-0.60, 1.25, -0.95], [0.60, 1.25, -0.95], 0.05, 0.075);
+  box(T, MAT.yellow, -0.625, 0.625, 1.232, 1.268, -0.975, 0.045, 0.016);                                     // toit
+  for (const s of [1, -1]) box(T, MAT.black, s * 0.14, s * 0.38, 1.266, 1.2725, -0.972, 0.042, 0);           // bandes du toit
+  prof(T, MAT.yellow, [[0.47, 0.80], [0.60, 0.80], [0.60, 0.872], [0.47, 0.895]], -0.86, 0.86, 0.012);       // auvent
+  box(T, MAT.black, -0.5, 0.5, 0.893, 0.899, 0.49, 0.56, 0);                                                 // grille d'auvent
+  box(T, MAT.metal, -0.66, 0.66, 0.30, 0.80, -1.37, -1.33, 0.006).visible = false;
+}
+
+// — Tête (coulisse hors du torse) —
+const headSlide = new THREE.Group(); torso.add(headSlide);
+const headMount = new THREE.Group(); headMount.position.set(0, 0.60, -0.72); headMount.rotation.x = -Math.PI / 2; headSlide.add(headMount);
+const head = new THREE.Group(); head.scale.setScalar(1.2); headMount.add(head);   // échelle fixe de construction
+{
+  const g = new THREE.CylinderGeometry(0.09, 0.105, 0.26, 20); mesh(headMount, g, MAT.metal).position.y = 0.0;
+  mesh(headMount, new THREE.CylinderGeometry(0.125, 0.125, 0.035, 24), MAT.steel).position.y = 0.075;
+  box(head, MAT.yellow, -0.22, 0.22, 0.10, 0.52, -0.24, 0.20, 0.06);
+  box(head, MAT.metal2, -0.15, 0.15, 0.10, 0.40, 0.17, 0.255, 0.02);
+  box(head, MAT.yellow, -0.195, 0.195, 0.395, 0.47, 0.17, 0.295, 0.02);
+  box(head, MAT.metal, -0.055, 0.055, 0.115, 0.275, 0.24, 0.285, 0.015);
+  for (const y of [0.15, 0.19, 0.23]) box(head, MAT.steel, -0.04, 0.04, y - 0.008, y + 0.008, 0.283, 0.29, 0);
+  for (const s of [1, -1]) {
+    const e = box(head, MAT.eye, s * 0.03, s * 0.135, 0.31, 0.365, 0.25, 0.27, 0.008); e.rotation.z = -s * 0.12; e.castShadow = false;
+    box(head, MAT.yellow, s * 0.15, s * 0.215, 0.10, 0.36, 0.08, 0.25, 0.015);
+    cylX(head, MAT.metal, 0.085, s * 0.21, s * 0.262, 0.30, -0.02, 24);
+    cylX(head, MAT.steel, 0.04, s * 0.26, s * 0.272, 0.30, -0.02, 16);
+    const h = box(head, MAT.yellow, s * 0.215, s * 0.25, 0.36, 0.545, -0.09, -0.02, 0.01); h.rotation.x = -0.2;
+    box(head, MAT.black, s * 0.04, s * 0.115, 0.518, 0.524, -0.21, 0.17, 0);
+  }
+}
+
+// — Coffre + ailes arrière : bascule de 180° dans le dos —
+const tail = J(torso, TAILP);
+{
+  const C = tail.c;
+  prof(C, MAT.yellow, [[-1.41, 0.92], [-1.41, 0.975], [-2.18, 0.945], [-2.18, 0.89]], -0.89, 0.89, 0.014);
+  box(C, MAT.yellow, -0.89, 0.89, 0.36, 0.94, -2.2, -2.06, 0.03);
+  box(C, MAT.yellow, -0.87, 0.87, 0.935, 0.99, -2.215, -2.07, 0.015);                                       // becquet
+  box(C, MAT.metal, -0.66, 0.66, 0.27, 0.92, -2.08, -1.435, 0.02);
+  box(C, MAT.black, -0.86, 0.86, 0.66, 0.84, -2.207, -2.195, 0);
+  box(C, MAT.metal, -0.80, 0.80, 0.25, 0.37, -2.19, -2.0, 0.02);
+  for (const s of [1, -1]) {
+    prof(C, MAT.black, [[-1.42, 0.977], [-2.07, 0.9515], [-2.07, 0.9575], [-1.42, 0.983]], s * 0.14, s * 0.38, 0);
+    box(C, MAT.black, s * 0.14, s * 0.38, 0.988, 0.994, -2.212, -2.073, 0);
+    prof(C, MAT.yellow, [[-0.91, 0.24], [-0.91, 0.95], [-1.4, 0.975], [-2.2, 0.945], [-2.2, 0.38], [-2.12, 0.26], [-1.813, 0.24],
+      ...arc(-1.4, 0.36, 0.43, 196, -16)], s * 0.89, s * 0.95, 0.014);
+    box(C, MAT.tail, s * 0.30, s * 0.84, 0.70, 0.80, -2.214, -2.2, 0.004);
+    cylZ(C, MAT.steel, 0.045, s * 0.5, 0.30, -2.23, -2.05, 18);
+    box(C, MAT.metal, s * 0.66, s * 0.90, 0.60, 0.93, -1.84, -0.96, 0.02);                                   // passage de roue
+    box(C, MAT.metal2, s * 0.45, s * 0.52, 0.16, 0.30, -1.62, -1.40, 0.01);                                  // bras de charnière
+    makeWheel(C, s * 0.83, WR, -1.4, s);
+  }
+}
+
+// — Bras : portières —
+const arms = [];
+for (const s of [1, -1]) {
+  const slide = new THREE.Group(); torso.add(slide);
+  const sh = J(slide, [s * SH[0], SH[1], SH[2]]);
+  const el = J(sh.c, [s * EL[0], EL[1], EL[2]]);
+  const hand = new THREE.Group(); el.c.add(hand);
+  const top = z => 0.89 + 0.04 * (0.6 - z);
+  cylX(slide, MAT.steel, 0.06, s * 0.42, s * 0.74, SH[1], SH[2], 18);                                        // glissière d'épaule
+  // bras supérieur
+  prof(sh.c, MAT.yellow, [[-0.90, 0.25], [-0.115, 0.25], [-0.115, top(-0.115)], [-0.90, top(-0.9)]], s * 0.87, s * 0.95, 0.014);
+  box(sh.c, MAT.metal, s * 0.70, s * 0.875, 0.42, 0.82, -0.88, -0.16, 0.03);
+  mesh(sh.c, new THREE.SphereGeometry(0.15, 24, 16), MAT.metal2).position.set(s * 0.76, SH[1], SH[2]);
+  cylX(sh.c, MAT.steel, 0.09, s * 0.66, s * 0.70, SH[1], SH[2], 20);
+  cylZ(sh.c, MAT.steel, 0.028, s * 0.715, 0.50, -0.6, -0.2, 12);
+  box(sh.c, MAT.metal2, s * 0.951, s * 0.962, 0.80, 0.825, -0.34, -0.2, 0.004);                              // poignée
+  // avant-bras
+  prof(el.c, MAT.yellow, [[-0.085, 0.25], [0.59, 0.25], [0.59, top(0.59)], [-0.085, top(-0.085)]], s * 0.87, s * 0.95, 0.014);
+  box(el.c, MAT.metal, s * 0.70, s * 0.875, 0.43, 0.83, -0.05, 0.56, 0.03);
+  cylX(el.c, MAT.steel, 0.05, s * 0.69, s * 0.955, EL[1] - 0.03, EL[2], 16);
+  cylZ(el.c, MAT.steel, 0.026, s * 0.715, 0.52, 0.0, 0.45, 12);
+  box(el.c, MAT.metal, s * 0.94, s * 0.985, 0.875, 0.905, 0.40, 0.44, 0.004);                                // rétroviseur
+  box(el.c, MAT.yellow, s * 0.965, s * 1.06, 0.87, 0.955, 0.36, 0.44, 0.02);
+  // main (télescopique)
+  cylZ(hand, MAT.steel, 0.06, s * 0.785, 0.63, 0.50, 0.62, 16);
+  box(hand, MAT.metal2, s * 0.715, s * 0.86, 0.50, 0.78, 0.60, 0.80, 0.025);
+  for (let i = 0; i < 4; i++) box(hand, MAT.metal, s * 0.72, s * 0.855, 0.505 + i * 0.07, 0.565 + i * 0.07, 0.79, 0.895, 0.015);
+  box(hand, MAT.metal, s * 0.70, s * 0.76, 0.76, 0.86, 0.62, 0.78, 0.015);
+  arms.push({ s, slide, sh, el, hand });
+}
+
+// — Jambes : moitiés de l'avant —
+const legs = [];
+for (const s of [1, -1]) {
+  const hp = [s * HIPX, HIPY, PELZ], kp = [s * HIPX, HIPY, KNEEZ], ap = [s * HIPX, HIPY, ANKZ];
+  const hip = J(pelvis.c, hp), thigh = J(hip.c, hp), shin = J(thigh.c, kp);
+  const strut = new THREE.Group(); shin.c.add(strut);
+  const ank = J(shin.c, ap), ankB = J(ank.c, ap), foot = J(ankB.c, ap);
+  const heel = new THREE.Group(); foot.c.add(heel);
+
+  // cuisse
+  box(thigh.c, MAT.metal, s * 0.325, s * 0.595, 0.315, 0.70, -0.52, 0.42, 0.04);
+  box(thigh.c, MAT.yellow, s * 0.34, s * 0.58, 0.695, 0.74, -0.38, 0.32, 0.014);
+  box(thigh.c, MAT.metal2, s * 0.593, s * 0.607, 0.40, 0.62, -0.30, 0.25, 0.005);
+  cylX(thigh.c, MAT.metal2, 0.2, s * 0.32, s * 0.60, HIPY, PELZ, 28);
+  cylX(thigh.c, MAT.steel, 0.1, s * 0.59, s * 0.61, HIPY, PELZ, 20);
+  cylZ(thigh.c, MAT.steel, 0.03, s * 0.46, 0.305, -0.45, 0.36, 12);
+  cylZ(thigh.c, MAT.metal2, 0.045, s * 0.46, 0.305, -0.45, -0.1, 12);
+  cylX(thigh.c, MAT.metal2, 0.165, s * 0.31, s * 0.61, HIPY, KNEEZ, 28);
+  cylX(thigh.c, MAT.steel, 0.09, s * 0.30, s * 0.62, HIPY, KNEEZ, 20);
+
+  // tibia : demi-capot, aile avant, roue
+  const C = shin.c;
+  prof(C, MAT.yellow, [[0.6, 0.24], [0.987, 0.24], ...arc(1.4, 0.36, 0.43, 196, 35.5), [1.75, 0.81], [0.6, 0.87]], s * 0.89, s * 0.95, 0.014);
+  prof(C, MAT.yellow, [[0.6, 0.82], [1.75, 0.765], [1.75, 0.81], [0.6, 0.87]], s * 0.02, s * 0.89, 0.012);
+  prof(C, MAT.yellow, [[0.63, 0.86], [1.75, 0.80], [1.75, 0.818], [1.0, 0.905], [0.68, 0.905]], s * 0.02, s * 0.45, 0.014);
+  prof(C, MAT.black, [[0.69, 0.9055], [1.0, 0.9055], [1.75, 0.8185], [1.75, 0.8245], [1.0, 0.9115], [0.69, 0.9115]], s * 0.14, s * 0.38, 0);
+  box(C, MAT.metal, s * 0.04, s * 0.66, 0.26, 0.80, 0.62, 1.73, 0.03);
+  box(C, MAT.metal, s * 0.66, s * 0.90, 0.62, 0.80, 0.97, 1.74, 0.02);
+  box(C, MAT.metal, s * 0.66, s * 0.90, 0.26, 0.80, 0.62, 0.99, 0.02);
+  for (const z of [0.85, 1.05, 1.25, 1.45]) box(C, MAT.metal2, s * 0.025, s * 0.045, 0.34, 0.70, z - 0.05, z + 0.05, 0.006);
+  for (const z of [0.9, 1.2, 1.5]) box(C, MAT.metal2, s * 0.14, s * 0.56, 0.235, 0.265, z - 0.06, z + 0.06, 0.008);
+  cylZ(C, MAT.steel, 0.03, s * 0.35, 0.245, 0.75, 1.65, 12);
+  for (const z of [0.70, 0.76, 0.82]) box(C, MAT.black, s * 0.949, s * 0.956, 0.56, 0.70, z - 0.018, z + 0.018, 0);  // ouïes d'aile
+  cylX(C, MAT.steel, 0.05, s * 0.6, s * 0.75, WR, 1.4, 16);
+  makeWheel(C, s * 0.83, WR, 1.4, s);
+  // vérin de cheville (télescopique)
+  cylZ(strut, MAT.steel, 0.075, s * HIPX, HIPY, 1.36, 1.74, 20);
+  cylZ(strut, MAT.metal2, 0.03, s * (HIPX - 0.2), 0.40, 1.36, 1.74, 12);
+  cylZ(strut, MAT.metal2, 0.03, s * (HIPX + 0.14), 0.40, 1.36, 1.74, 12);
+  cylX(ank.c, MAT.metal2, 0.12, s * 0.20, s * 0.72, HIPY, ANKZ, 24);
+
+  // pied : demi-nez de la voiture
+  const F = foot.c;
+  prof(F, MAT.yellow, [[1.76, 0.24], [2.16, 0.24], [2.24, 0.34], [2.25, 0.56], [2.20, 0.72], [2.10, 0.775], [1.76, 0.808]], s * 0.02, s * 0.95, 0.02);
+  prof(F, MAT.black, [[1.77, 0.8095], [2.10, 0.777], [2.20, 0.722], [2.206, 0.727], [2.103, 0.783], [1.77, 0.8155]], s * 0.14, s * 0.38, 0);
+  box(F, MAT.metal, s * 0.03, s * 0.94, 0.18, 0.245, 1.77, 2.19, 0.012);
+  box(F, MAT.black, s * 0.02, s * 0.95, 0.18, 0.225, 2.05, 2.275, 0.01);                                     // lame
+  box(F, MAT.black, s * 0.02, s * 0.56, 0.40, 0.58, 2.235, 2.258, 0.006);                                    // calandre
+  for (const y of [0.445, 0.49, 0.535]) box(F, MAT.metal2, s * 0.03, s * 0.55, y - 0.008, y + 0.008, 2.255, 2.264, 0);
+  box(F, MAT.black, s * 0.10, s * 0.74, 0.265, 0.345, 2.215, 2.245, 0.006);
+  box(F, MAT.black, s * 0.60, s * 0.90, 0.415, 0.565, 2.232, 2.257, 0.01);                                   // phare
+  const halo = mesh(F, new THREE.TorusGeometry(0.052, 0.011, 10, 28), MAT.lamp); halo.position.set(s * 0.75, 0.49, 2.262); halo.castShadow = false;
+  const lens = mesh(F, new THREE.SphereGeometry(0.03, 14, 10), MAT.lamp); lens.position.set(s * 0.75, 0.49, 2.255); lens.castShadow = false;
+  box(heel, MAT.metal2, s * 0.14, s * 0.76, 0.186, 0.30, 1.78, 2.20, 0.02);                                  // talon coulissant
+  legs.push({ s, hip, thigh, shin, strut, ank, ankB, foot, heel });
+}
+
+/* ───────────────────────────── Animation : fonctions du temps ───────────────────────────── */
+const clamp01 = x => Math.min(1, Math.max(0, x));
+const win = (u, a, b) => clamp01((u - a) / (b - a));
+const sm = x => x * x * (3 - 2 * x);
+const eio = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const eout = x => 1 - Math.pow(1 - x, 3);
+const back = (x, k = 1.9) => 1 + (k + 1) * Math.pow(x - 1, 3) + k * Math.pow(x - 1, 2);
+const lerp = (a, b, t) => a + (b - a) * t;
+function keys(t, ks) {
+  if (t <= ks[0][0]) return ks[0][1];
+  for (let i = 1; i < ks.length; i++) if (t <= ks[i][0]) { const a = ks[i - 1], b = ks[i]; return lerp(a[1], b[1], sm((t - a[0]) / (b[0] - a[0]))); }
+  return ks[ks.length - 1][1];
+}
+const trap = (s, a) => s < a ? s * s / (2 * a * (1 - a)) : s > 1 - a ? 1 - (1 - s) * (1 - s) / (2 * a * (1 - a)) : (s - a / 2) / (1 - a);
+
+// État mécanique complet pour un degré de transformation u (0 = voiture, 1 = robot), voiture d'origine Z0.
+function formState(u, Z0) {
+  const split = SPLIT * eio(win(u, 0.0, 0.12));
+  const g = GEXT * eio(win(u, 0.02, 0.16));
+  const az = Z0 + ANKZ + g;
+  const E = eio(win(u, 0.10, 0.60));
+  const k = keys(u, [[0, 1], [0.46, 1], [0.66, 0.905], [0.88, 0.97], [1, 0.97]]);
+  const r = (L1 + L2C + g) * k;
+  const over = keys(u, [[0.5, 0], [0.63, 0.055], [0.82, 0], [1, 0]]);
+  const psi = E * Math.PI / 2 + over;
+  // La caisse bascule d'abord sur ses roues avant, puis le nez (les pieds) se plaque au sol et sert de pivot.
+  const ay = Math.max(AH, HIPY - (ANKZ + g - 1.4 - 0.01) * Math.sin(psi));
+  const A = eio(win(u, 0.40, 0.60)), f = Math.pow(Math.sin(Math.PI * win(u, 0.46, 0.93)), 2);
+  const arm = { slide: ARM_OUT * back(win(u, 0.36, 0.52), 1.4), abd: 0.10 * A + 0.55 * f, swing: -0.22 * f, elbow: -0.22 * A - 1.0 * f, hand: back(win(u, 0.60, 0.74), 1.2) };
+  return {
+    px: 0, py: ay + r * Math.sin(psi), pz: az - r * Math.cos(psi),
+    split, g, zs: lerp(ZS_CAR, ZS_BOT, eio(win(u, 0.10, 0.44))),
+    pitch: E * Math.PI / 2 + keys(u, [[0.5, 0], [0.65, 0.11], [0.86, 0], [1, 0]]), yaw: 0, roll: 0,
+    tail: eio(win(u, 0.24, 0.64)), head: back(win(u, 0.62, 0.78), 1.6), headYaw: 0, headNod: 0,
+    heel: eout(win(u, 0.34, 0.50)),
+    arms: [{ ...arm }, { ...arm }],
+    feet: [1, -1].map(s => ({ x: s * (HIPX + split), y: ay, z: az, pitch: 0 })),
+    wheel: 0,
+  };
+}
+
+// Pose héroïque (3,5 → 4 s), fondue dans le départ de la marche.
+function hero(S, t) {
+  const h = keys(t, [[3.5, 0], [3.74, 1.12], [3.88, 1], [4, 1]]) * (1 - eio(win(t, 3.96, 4.32)));
+  if (h === 0) return;
+  S.py -= 0.07 * Math.sin(Math.PI * win(t, 3.5, 3.82));
+  S.pitch -= 0.07 * h; S.yaw += 0.16 * h; S.headYaw += 0.30 * h; S.headNod -= 0.10 * h;
+  S.arms[0].abd += 0.50 * h; S.arms[0].elbow -= 1.25 * h; S.arms[0].swing += 0.10 * h;
+  S.arms[1].abd += 0.42 * h; S.arms[1].elbow -= 0.75 * h; S.arms[1].swing += 0.22 * h;
+}
+
+// Pied : appui talon ou pointe selon l'inclinaison, sans glissement.
+const HEEL = [-AH, -0.31], TOE = [-AH, 0.50];
+function footPlace(x, zref, lift, pitch) {
+  const P = pitch >= 0 ? TOE : HEEL, c = Math.cos(pitch), s = Math.sin(pitch);
+  return { x, y: lift - (P[0] * c - P[1] * s), z: zref + P[1] - (P[0] * s + P[1] * c), pitch };
+}
+function swingFoot(x, w, segs) {
+  let z = segs[0][2], lift = 0, pitch = 0;
+  for (const [ta, tb, za, zb, h] of segs) {
+    if (w < ta - 0.16) { z = za; break; }
+    if (w < ta) { z = za; pitch = 0.30 * sm((w - (ta - 0.16)) / 0.16); break; }
+    if (w < tb) { const s = (w - ta) / (tb - ta); z = lerp(za, zb, sm(s)); lift = h * Math.sin(Math.PI * s); pitch = lerp(0.30, -0.22, sm(Math.min(1, s / 0.8))); break; }
+    if (w < tb + 0.12) { z = zb; pitch = -0.22 * (1 - sm((w - tb) / 0.12)); break; }
+    z = zb;
+  }
+  return footPlace(x, z, lift, pitch);
+}
+// Marche : trois pas (droit, gauche, droit de rappel), 2 × STEP de déplacement réel.
+function walk(S, w) {
+  const A0 = ANKZ + GEXT, x = HIPX + SPLIT;
+  S.feet[0] = swingFoot(x, w, [[0.18, 0.96, A0, A0 + STEP, 0.30], [1.92, 2.72, A0 + STEP, A0 + WALK, 0.26]]);
+  S.feet[1] = swingFoot(-x, w, [[1.02, 1.85, A0, A0 + WALK, 0.34]]);
+  const env = sm(win(w, 0, 0.35)) * (1 - sm(win(w, 2.55, 2.95)));
+  S.pz = A0 + WALK * trap(win(w, 0.08, 2.80), 0.16);
+  S.py += -0.14 * env + keys(w, [[0, 0], [0.52, 0.05], [1.0, -0.075], [1.44, 0.05], [1.9, -0.075], [2.32, 0.04], [2.76, -0.035], [3, 0]]);
+  S.px = keys(w, [[0, 0], [0.30, -0.13], [0.78, -0.13], [1.2, 0.13], [1.68, 0.13], [2.1, -0.13], [2.52, -0.13], [2.92, 0]]);
+  const Y = keys(w, [[0, 0], [0.9, 1], [1.8, -1], [2.75, 0]]);
+  S.yaw += 0.11 * Y; S.roll += -0.22 * S.px; S.pitch += 0.075 * env;
+  S.headYaw += -0.09 * Y; S.headNod += 0.04 * env;
+  S.arms[0].swing += 0.40 * Y; S.arms[1].swing += -0.40 * Y;
+  S.arms[0].elbow += -0.30 * Math.max(0, -Y) - 0.12 * env; S.arms[1].elbow += -0.30 * Math.max(0, Y) - 0.12 * env;
+}
+
+const DUR = 12;
+function stateAt(t) {
+  t = ((t % DUR) + DUR) % DUR;
+  if (t < 1.5) return formState(0, 0);
+  if (t < 3.5) return formState((t - 1.5) / 2, 0);
+  if (t < 7) { const S = formState(1, 0); if (t >= 4) walk(S, t - 4); hero(S, t); return S; }
+  if (t < 9) return formState(1 - (t - 7) / 2, WALK);
+  if (t < 11) { const e = eio((t - 9) / 2); const S = formState(0, WALK * (1 - e)); S.wheel = -WALK * e / WR; return S; }
+  return formState(0, 0);
+}
+function phaseName(t) {
+  return t < 1.5 ? 'Voiture' : t < 3.5 ? 'Transformation → robot' : t < 4 ? 'Pose héroïque' : t < 7 ? 'Marche'
+    : t < 9 ? 'Transformation → voiture' : t < 11 ? 'Retour au point de départ' : 'Voiture';
+}
+
+let lastClamp = false;
+function apply(S) {
+  lastClamp = false;
+  pelvis.g.position.set(S.px, S.py, S.pz);
+  wYaw.g.rotation.y = S.yaw; wRoll.g.rotation.z = S.roll; wPitch.g.rotation.x = S.pitch;
+  torso.position.z = -(S.zs - ZS_CAR);
+  tail.g.rotation.x = -Math.PI * S.tail;
+  headSlide.position.z = -HEAD_OUT * S.head;
+  head.rotation.set(S.headNod, S.headYaw, 0);
+  arms.forEach((a, i) => {
+    const P = S.arms[i];
+    a.slide.position.x = a.s * P.slide;
+    a.sh.g.rotation.set(P.swing, a.s * P.abd, 0);
+    a.el.g.rotation.x = P.elbow;
+    a.hand.position.z = -HAND_OUT * (1 - P.hand);
+  });
+  legs.forEach((L, i) => {
+    const f = S.feet[i], hx = S.px + L.s * (HIPX + S.split);
+    const dx = f.x - hx, dy = f.y - S.py, dz = f.z - S.pz;
+    const flat = Math.abs(dx) < 1e-9;
+    const rho = flat ? 0 : Math.atan2(dx, Math.max(1e-6, -dy));
+    const Yp = flat ? dy : -Math.hypot(dx, dy);
+    const L2 = L2C + S.g; let d = Math.hypot(Yp, dz);
+    if (d > L1 + L2) { if (d > L1 + L2 + 1e-4) lastClamp = true; d = L1 + L2; }
+    const th = Math.atan2(-Yp, dz);
+    const al = Math.acos(Math.min(1, Math.max(-1, (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d))));
+    const tt = th - al, ky = -L1 * Math.sin(tt), kz = L1 * Math.cos(tt);
+    const ts = Math.atan2(-(Yp - ky), dz - kz);
+    L.hip.g.position.x = L.s * (HIPX + S.split); L.hip.g.rotation.z = rho;
+    L.thigh.g.rotation.x = tt; L.shin.g.rotation.x = ts - tt;
+    L.strut.position.z = S.g; L.ank.g.position.z = ANKZ + S.g; L.ank.g.rotation.x = -ts;
+    L.ankB.g.rotation.z = -rho; L.foot.g.rotation.x = f.pitch;
+    L.heel.position.z = -HEEL_OUT * S.heel;
+  });
+  for (const w of wheels) w.rotation.x = S.wheel;
+}
+
+/* ───────────────────────────── Horloge, interface ───────────────────────────── */
+const ui = Object.fromEntries(['play', 'restart', 'sp1', 'sp025', 'time', 'clock', 'toCar', 'toBot', 'home', 'phase'].map(id => [id, document.getElementById(id)]));
+const st = { t: 0, playing: true, speed: 1, last: null, scrubbing: false, resume: false };
+const params = new URLSearchParams(location.search);
+if (params.has('t')) { st.t = parseFloat(params.get('t')) || 0; st.playing = false; }
+
+function setTime(t) { st.t = Math.min(DUR, Math.max(0, t)); refresh(); }
+function refresh() {
+  apply(stateAt(st.t));
+  if (!st.scrubbing) ui.time.value = st.t.toFixed(2);
+  ui.clock.firstChild.nodeValue = st.t.toFixed(2).padStart(5, '0') + ' ';
+  ui.phase.textContent = phaseName(st.t % DUR);
+  ui.play.textContent = st.playing ? '❚❚ Pause' : '▶ Lecture';
+  ui.sp1.classList.toggle('on', st.speed === 1); ui.sp025.classList.toggle('on', st.speed === 0.25);
+}
+function setPlaying(p) { st.playing = p; st.last = null; refresh(); }
+ui.play.onclick = () => setPlaying(!st.playing);
+ui.restart.onclick = () => { st.t = 0; setPlaying(true); };
+ui.sp1.onclick = () => { st.speed = 1; refresh(); };
+ui.sp025.onclick = () => { st.speed = 0.25; refresh(); };
+ui.toCar.onclick = () => { st.t = 0; setPlaying(false); };
+ui.toBot.onclick = () => { st.t = 3.5; setPlaying(false); };
+ui.home.onclick = homeCamera;
+ui.time.addEventListener('pointerdown', () => { st.scrubbing = true; st.resume = st.playing; st.playing = false; });
+ui.time.addEventListener('input', () => { st.t = parseFloat(ui.time.value); refresh(); });
+const endScrub = () => { if (!st.scrubbing) return; st.scrubbing = false; if (st.resume) setPlaying(true); st.resume = false; };
+ui.time.addEventListener('pointerup', endScrub); ui.time.addEventListener('pointercancel', endScrub); ui.time.addEventListener('change', endScrub);
+window.addEventListener('keydown', e => {
+  if (e.target === ui.time) return;
+  if (e.code === 'Space') { e.preventDefault(); setPlaying(!st.playing); }
+  else if (e.key === 'r' || e.key === 'R') ui.restart.onclick();
+  else if (e.key === 'ArrowRight') { st.playing = false; setTime(st.t + 0.05); }
+  else if (e.key === 'ArrowLeft') { st.playing = false; setTime(st.t - 0.05); }
+});
+document.addEventListener('visibilitychange', () => { st.last = null; });
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h;
+  camera.setViewOffset(w, h, 0, Math.min(40, h * 0.05), w, h);   // remonte légèrement le sujet au-dessus de la barre de commandes
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize(); homeCamera(); refresh();
+
+renderer.setAnimationLoop(now => {
+  if (st.playing) {
+    if (st.last !== null) st.t = (st.t + (now - st.last) / 1000 * st.speed) % DUR;   // temps réel écoulé, indépendant du nombre d'images
+    st.last = now; refresh();
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+// Accès d'inspection (console / tests).
+window.demo = { scene, floor, grid, st, setTime, stateAt, apply, legs, arms, wheels, pelvis, camera, controls, homeCamera, isClamped: () => lastClamp, THREE,
+  render: () => { controls.update(); renderer.render(scene, camera); } };
+</script>
+</body>
+</html>

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Helios — Étude mécanique</title>
+<style>
+:root{color-scheme:dark;--yellow:#ffc400;--muted:#a3a6aa}*{box-sizing:border-box}body{margin:0;overflow:hidden;background:#25272a;color:#f4f4f2;font-family:Arial,Helvetica,sans-serif}canvas{display:block;width:100%;height:100%;touch-action:none}header{position:absolute;top:30px;left:36px;pointer-events:none}h1{margin:0;font-size:32px;font-weight:800;letter-spacing:-1.5px}h1 span{color:var(--yellow)}header p{font-size:12px;color:#b5b7b9;margin:7px 0;letter-spacing:.4px}.status{position:absolute;right:36px;top:37px;text-align:right;font-size:13px}.status small{display:block;color:var(--muted);font-size:11px;margin-top:8px}.dot{display:inline-block;width:6px;height:6px;background:var(--yellow);border-radius:50%;margin-right:9px}.hint{position:absolute;bottom:143px;left:36px;font-size:11px;color:#96999d;pointer-events:none}.controls{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);width:min(880px,calc(100% - 48px));background:rgba(25,27,30,.91);border:1px solid #ffffff19;border-radius:14px;padding:17px 21px 14px;backdrop-filter:blur(16px);box-shadow:0 14px 50px #0003}.row{display:flex;align-items:center;gap:8px}button{font:inherit;font-size:12px;color:#e0e1e2;background:#ffffff08;border:1px solid #ffffff10;border-radius:6px;min-height:33px;padding:0 12px;cursor:pointer;white-space:nowrap}button:hover{background:#ffffff16}button:focus-visible,input:focus-visible{outline:2px solid var(--yellow);outline-offset:4px}button.active{background:#ffc40019;border-color:#ffc40066;color:var(--yellow)}#play{background:var(--yellow);color:#141414;border-color:var(--yellow);min-width:90px;font-weight:700}.spacer{flex:1}.time{font-variant-numeric:tabular-nums;font-size:12px;white-space:nowrap;margin-left:12px;color:#c8cace}.time b{color:white;font-weight:400}.timeline{position:relative;margin-top:12px}input{width:100%;accent-color:var(--yellow);cursor:pointer;margin:0;height:16px}.segments{display:flex;margin:4px 7px 0;color:#999da1;font-size:9px}.segments span{border-left:1px solid #ffffff22;padding-left:5px;white-space:nowrap}.segments span:nth-child(2),.segments span:nth-child(5){color:#d2c387}.error{position:absolute;inset:40% 20%;text-align:center;line-height:1.6;background:#25272a;padding:20px;border-radius:12px}.hide-ui header,.hide-ui .status,.hide-ui .controls,.hide-ui .hint{display:none}#cinema{padding:0 9px} @media(max-width:670px){header{top:20px;left:20px}header p{max-width:180px;line-height:1.5;font-size:10px}h1{font-size:25px}.status{right:20px;top:24px}.controls{bottom:15px;width:calc(100% - 24px);padding:12px}.row{gap:5px;flex-wrap:wrap}button{padding:0 9px;font-size:11px}.time{margin-left:auto}.hint{left:20px;bottom:155px;font-size:10px}.segments{font-size:8px}.segments span:nth-child(3){font-size:0}.hint{display:none}#resetCamera{font-size:0}#resetCamera:after{content:'Caméra';font-size:11px}.spacer{display:none}}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}</script>
+</head>
+<body>
+<canvas id="scene" aria-label="Scène 3D interactive : voiture jaune se transformant en robot"></canvas>
+<header><h1>Helios<span>.</span></h1><p>Étude mécanique / Sport coupé ↔ Automate</p></header>
+<div class="status"><span class="dot"></span><span id="phase">Présentation</span><small>Cycle continu · 12 secondes</small></div>
+<div class="hint">Glisser pour orbiter · Molette pour zoomer · H pour masquer l’interface</div>
+<section class="controls" aria-label="Commandes d’animation">
+<div class="row"><button id="play" aria-label="Mettre en pause">Ⅱ Pause</button><button id="restart" title="Recommencer">↺</button><button class="active" id="normal" aria-pressed="true">1×</button><button id="slow" aria-pressed="false">0,25×</button><div class="spacer"></div><button id="car">Voiture</button><button id="robot">Robot</button><button id="resetCamera">↗ Vue initiale</button><button id="cinema" title="Masquer l’interface (H)" aria-label="Masquer l’interface">⛶</button><span class="time"><b id="time">00.00</b> / 12 s</span></div>
+<div class="timeline"><input id="seek" type="range" min="0" max="12" step="0.001" value="0" aria-label="Temps du cycle en secondes"><div class="segments"><span style="width:12.5%">Voiture</span><span style="width:16.667%">Déploiement</span><span style="width:4.166%" title="Pose héroïque">Pose</span><span style="width:25%">Marche</span><span style="width:16.667%">Repli</span><span style="width:16.667%">Retour</span><span style="width:8.333%">Repos</span></div></div>
+</section>
+<div id="loading" class="error">Assemblage de la mécanique…</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// Every part is built once. Animation only changes rigid transforms; no visibility,
+// material or scale changes, and no state accumulated between sampled poses.
+const $=id=>document.getElementById(id), PI=Math.PI;
+const scene=new THREE.Scene(); scene.background=new THREE.Color('#292b2e');scene.fog=new THREE.Fog('#292b2e',23,55);
+const renderer=new THREE.WebGLRenderer({canvas:$('scene'),antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.92;
+const pmrem=new THREE.PMREMGenerator(renderer), room=new RoomEnvironment();
+scene.environment=pmrem.fromScene(room,.035).texture;room.dispose();pmrem.dispose();scene.environmentIntensity=.65;
+const camera=new THREE.PerspectiveCamera(37,innerWidth/innerHeight,.1,100);
+const orbit=new OrbitControls(camera,renderer.domElement);orbit.enableDamping=true;orbit.dampingFactor=.07;orbit.minDistance=6;orbit.maxDistance=24;orbit.maxPolarAngle=PI*.485;orbit.target.set(0,2,.5);
+function resetCamera(){const damping=orbit.enableDamping;orbit.enableDamping=false;orbit.update();camera.position.set(7.8,5.2,10.2);orbit.target.set(0,2,.65);if(innerWidth/innerHeight<1.2)camera.position.multiplyScalar(1.35);orbit.update();orbit.enableDamping=damping}
+resetCamera();
+scene.add(new THREE.HemisphereLight(0xffffff,0x454545,.65));
+function light(x,y,z,intensity,shadow=false){const l=new THREE.DirectionalLight(0xffffff,intensity);l.position.set(x,y,z);l.castShadow=shadow;if(shadow){l.shadow.mapSize.set(2048,2048);Object.assign(l.shadow.camera,{left:-9,right:9,top:9,bottom:-9,near:1,far:30});l.shadow.bias=-.00025;l.shadow.normalBias=.025;l.shadow.radius=3}scene.add(l)}
+light(4,9,6,2.1,true);light(-6,5,1,.9);light(2,7,-6,1.7);
+const mat={yellow:new THREE.MeshPhysicalMaterial({color:'#FFC400',metalness:.36,roughness:.26,clearcoat:1,clearcoatRoughness:.2}),black:new THREE.MeshStandardMaterial({color:0x08090a,roughness:.34,metalness:.25}),rubber:new THREE.MeshStandardMaterial({color:0x101112,roughness:.88}),metal:new THREE.MeshStandardMaterial({color:0x343b40,roughness:.31,metalness:.85}),silver:new THREE.MeshStandardMaterial({color:0x9ea9af,roughness:.23,metalness:.92}),glass:new THREE.MeshPhysicalMaterial({color:0x101a21,metalness:.45,roughness:.13,clearcoat:1}),eye:new THREE.MeshStandardMaterial({color:0x90dfff,emissive:0x5acfff,emissiveIntensity:3}),white:new THREE.MeshStandardMaterial({color:0xeaf4ff,emissive:0xe1efff,emissiveIntensity:1.5}),red:new THREE.MeshStandardMaterial({color:0x9f1310,emissive:0xb7150a,emissiveIntensity:.7})};
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:0x17191b,metalness:.17,roughness:.68}));floor.rotation.x=-PI/2;floor.receiveShadow=true;scene.add(floor);
+// Restrained circular studio registration marks, made from geometry, not textures.
+const marks=new THREE.Group();scene.add(marks);
+for(let i=0;i<64;i++){const a=i/64*2*PI;const m=new THREE.Mesh(new THREE.BoxGeometry(i%8===0?.13:.06,.002,.015),new THREE.MeshBasicMaterial({color:i%8===0?0x66686a:0x414345}));m.position.set(Math.sin(a)*4.1,.006,Math.cos(a)*4.1+.45);m.rotation.y=a+PI/2;marks.add(m)}
+const root=new THREE.Group();scene.add(root);
+const cache=new Map();
+function box(p,w,h,d,m,x=0,y=0,z=0,r=.045){const key=[w,h,d,r].join(',');if(!cache.has(key))cache.set(key,new RoundedBoxGeometry(w,h,d,2,Math.min(r,w/3,h/3,d/3)));const o=new THREE.Mesh(cache.get(key),m);o.position.set(x,y,z);o.castShadow=true;o.receiveShadow=true;p.add(o);return o}
+function group(p=root){const g=new THREE.Group();p.add(g);return g}
+function cyl(p,r,len,m,x=0,y=0,z=0){const o=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,20),m);o.position.set(x,y,z);o.castShadow=true;p.add(o);return o}
+function joint(p,r=.16){const g=group(p);cyl(g,r,.24,mat.metal).rotation.z=PI/2;cyl(g,r*.56,.255,mat.silver).rotation.z=PI/2;return g}
+function stripe(p,x,y,z,w,d){box(p,w,.012,d,mat.black,x,y,z,.003)}
+const V=(x=0,y=0,z=0)=>new THREE.Vector3(x,y,z), mix=THREE.MathUtils.lerp;
+const clamp=x=>Math.max(0,Math.min(1,x));const smooth=x=>{x=clamp(x);return x*x*(3-2*x)};
+const stage=(p,a,b)=>smooth((p-a)/(b-a));
+function pose(g,a,b,r0,r1,q,arc=0){g.position.copy(a).lerp(b,q);g.position.y+=Math.sin(PI*q)*arc;g.rotation.set(mix(r0[0],r1[0],q),mix(r0[1],r1[1],q),mix(r0[2],r1[2],q))}
+const zero=[0,0,0];
+// Telescopes: fixed-length sleeves slide over fixed-length rods. Never stretch meshes.
+function telescope(radius=.07,length=.72){const g=group();const sleeve=cyl(g,radius,length,mat.metal);const rod=cyl(g,radius*.56,length,mat.silver);sleeve.userData.dynamic=rod.userData.dynamic=true;return {g,sleeve,rod,length}}
+function connect(t,a,b){const d=a.distanceTo(b);t.g.position.copy(a);t.g.quaternion.setFromUnitVectors(V(0,1,0),b.clone().sub(a).normalize());t.sleeve.position.y=t.length/2;t.rod.position.y=d-t.length/2}
+// Main chassis, pelvis and chest machinery.
+const pelvis=group();box(pelvis,1.08,.38,.65,mat.metal);box(pelvis,.56,.3,.17,mat.yellow,0,0,.36);for(const s of [-1,1])box(pelvis,.24,.28,.18,mat.silver,s*.39,-.08,.35);
+const core=group();box(core,.88,.77,.64,mat.metal);for(let i=0;i<4;i++)box(core,.69,.07,.1,mat.silver,0,-.27+i*.17,.35);box(core,.24,.19,.09,mat.black,0,.1,.4);box(core,.12,.065,.04,mat.eye,0,.1,.46);
+const spine=[telescope(.12,.55),telescope(.12,.55)];
+// Compact helmet nested inside the cabin in car mode.
+const head=group();box(head,.56,.57,.48,mat.yellow);box(head,.44,.31,.1,mat.metal,0,-.05,.25);box(head,.48,.13,.12,mat.black,0,.08,.25);for(const s of [-1,1]){const eye=box(head,.155,.065,.055,mat.eye,s*.13,.075,.32);eye.rotation.z=s*.09;box(head,.1,.26,.17,mat.yellow,s*.24,-.12,.22);cyl(head,.12,.09,mat.metal,s*.3,0,0).rotation.z=PI/2;box(head,.09,.18,.12,mat.yellow,s*.22,.32,-.02)}box(head,.11,.35,.51,mat.black,0,.14,0);box(head,.24,.15,.1,mat.silver,0,-.19,.3);
+// Roof and glazing remain a single hinged backpack. The pair of stripes never changes.
+const cabin=group();box(cabin,1.7,.12,1.3,mat.yellow,0,0,0,.065);for(const s of [-1,1])stripe(cabin,s*.32,.067,0,.23,1.29);
+let wind=box(cabin,1.58,.035,.83,mat.glass,0,-.23,.87);wind.rotation.x=.59;
+let rearGlass=box(cabin,1.58,.035,.65,mat.glass,0,-.2,-.84);rearGlass.rotation.x=-.65;
+for(const s of [-1,1]){let post=box(cabin,.065,.07,.9,mat.yellow,s*.82,-.23,.87);post.rotation.x=.59;post=box(cabin,.065,.07,.72,mat.yellow,s*.82,-.2,-.84);post.rotation.x=-.65;box(cabin,.07,.07,1.3,mat.yellow,s*.84,-.02,0)}
+const cabinLink=[telescope(.065,.8),telescope(.065,.8)];
+const sides=[];const wheels=[];
+function makeWheel(parent){const g=group(parent);const spin=group(g);const tire=cyl(spin,.49,.31,mat.rubber);tire.rotation.z=PI/2;
+for(const side of [-1,1]){const rim=cyl(spin,.345,.026,mat.silver,side*.163);rim.rotation.z=PI/2;const inset=cyl(spin,.29,.031,mat.black,side*.18);inset.rotation.z=PI/2;const hub=cyl(spin,.10,.046,mat.silver,side*.205);hub.rotation.z=PI/2;
+for(let j=0;j<10;j++){const a=j/10*2*PI;const spoke=box(spin,.035,.048,.26,mat.silver,side*.206,Math.sin(a)*.18,Math.cos(a)*.18,.012);spoke.rotation.x=-a;}}
+for(let j=0;j<36;j++){const a=j/36*2*PI;const tread=box(spin,.29,.012,.045,mat.black,0,Math.sin(a)*.49,Math.cos(a)*.49,.002);tread.rotation.x=-a+PI/2}wheels.push(spin);return g}
+function arch(p,s){const shape=new THREE.Shape();shape.absarc(0,0,.61,0,PI,false);shape.lineTo(-.51,0);shape.absarc(0,0,.51,PI,0,true);shape.closePath();const mesh=new THREE.Mesh(new THREE.ExtrudeGeometry(shape,{depth:.26,bevelEnabled:true,bevelSegments:2,steps:1,bevelSize:.025,bevelThickness:.025,curveSegments:24}),mat.yellow);mesh.rotation.y=PI/2;mesh.position.x=s>0?-.13:-.13;mesh.castShadow=true;p.add(mesh)}
+for(const s of [-1,1]){
+ const hood=group();box(hood,.91,.17,1.63,mat.yellow,0,0,0,.075);stripe(hood,-s*.15,.091,0,.23,1.61);
+ // Nose moves with its hood half into a chest breastplate.
+ box(hood,.95,.35,.22,mat.yellow,0,-.15,.83,.055);box(hood,.46,.14,.035,mat.black,-s*.2,-.14,.953);for(let j=0;j<3;j++)box(hood,.43,.018,.02,mat.metal,-s*.2,-.19+j*.05,.978);
+ box(hood,.32,.09,.045,mat.white,s*.27,-.09,.97);box(hood,.97,.07,.34,mat.black,0,-.36,.8);box(hood,.19,.045,.4,mat.black,s*.27,.1,-.42);
+ const front=group();makeWheel(front);arch(front,s);box(front,.20,.4,.65,mat.yellow,0,.30,-.79);box(front,.3,.13,.4,mat.yellow,0,.45,.42);
+ const door=group();box(door,.23,.16,1.5,mat.yellow,0,-.29,0);box(door,.13,.47,1.36,mat.yellow,0,0,0,.055);box(door,.035,.33,1.01,mat.glass,-s*.005,.4,-.04,.02);box(door,.055,.045,1.08,mat.yellow,0,.575,-.04);box(door,.04,.06,.19,mat.metal,s*.08,.1,-.39);box(door,.22,.09,.28,mat.yellow,s*.13,.27,.53);box(door,.035,.08,.18,mat.glass,s*.25,.27,.53);
+ const rear=group();makeWheel(rear);arch(rear,s);box(rear,.30,.2,.52,mat.yellow,0,.35,-.51);box(rear,.12,.07,.27,mat.red,s*.17,.31,-.66);
+ const shin=group();box(shin,.87,.16,1.16,mat.yellow,0,0,0,.07);stripe(shin,-s*.15,.087,0,.23,1.14);box(shin,.88,.29,.18,mat.yellow,0,-.13,-.6);box(shin,.6,.07,.03,mat.red,0,-.11,-.7);box(shin,.89,.07,.24,mat.black,0,-.31,-.62);
+ const foot=group();box(foot,.67,.25,.9,mat.metal,0,0,.16);box(foot,.66,.13,.49,mat.yellow,0,.13,.36);box(foot,.7,.07,.93,mat.black,0,-.12,.16);for(let k=0;k<3;k++)box(foot,.12,.06,.2,mat.silver,(k-1)*.18,.09,.64);
+ const thigh=group();box(thigh,.33,1.05,.34,mat.metal,0,-.525,0);box(thigh,.43,.5,.17,mat.yellow,0,-.53,.2);for(const sx of [-1,1])cyl(thigh,.045,.75,mat.silver,sx*.19,-.52,0);
+ const calf=group();box(calf,.32,1.05,.32,mat.metal,0,-.525,0);for(const sx of [-1,1])cyl(calf,.055,.85,mat.silver,sx*.19,-.53,0);
+ const knee=joint(root,.20),hip=joint(root,.19),ankle=joint(root,.14);
+ const upper=group();box(upper,.31,.79,.33,mat.metal,0,-.395,0);box(upper,.38,.45,.39,mat.yellow,0,-.35,0);
+ const fore=group();box(fore,.37,.7,.4,mat.metal,0,-.35,0);box(fore,.39,.43,.2,mat.yellow,0,-.36,.24);for(let k=0;k<3;k++)box(fore,.32,.035,.04,mat.silver,0,-.26-k*.09,.355);
+ const elbow=joint(root,.17),shoulder=joint(root,.2),hand=group();box(hand,.35,.32,.32,mat.metal);for(let k=0;k<4;k++)box(hand,.066,.16,.1,mat.silver,(k-1.5)*.083,-.09,.19);
+ sides.push({s,hood,front,door,rear,shin,foot,thigh,calf,knee,hip,ankle,upper,fore,elbow,shoulder,hand,shoulderLink:telescope(.09,.63)});
+}
+// Place rigid limb segments by their hinge endpoints. Inverse kinematics preserves
+// bone lengths and feet in world space throughout each planted phase.
+function bone(g,a,b){g.position.copy(a);g.quaternion.setFromUnitVectors(V(0,-1,0),b.clone().sub(a).normalize())}
+function kneeAt(a,b,l1,l2,pole){const dvec=b.clone().sub(a);const d=Math.min(dvec.length(),l1+l2-.00001);const n=dvec.normalize();const x=(l1*l1-l2*l2+d*d)/(2*d);const h=Math.sqrt(Math.max(0,l1*l1-x*x));const perp=pole.clone().sub(n.clone().multiplyScalar(pole.dot(n))).normalize();return a.clone().addScaledVector(n,x).addScaledVector(perp,h)}
+const STEP=.72, travel=STEP*2;
+// Three distinct footfalls: left .72 m, right 1.44 m, left closes at 1.44 m.
+function footfall(s,u){let z=0,lift=0;const moves=s<0?[[0,1,0,STEP],[2,3,STEP,travel]]:[[1,2,0,travel]];for(const [a,b,start,end]of moves){if(u>=b)z=end;else if(u>a){const q=(u-a)/(b-a);z=mix(start,end,smooth(q));lift=.27*Math.sin(PI*q)**2;break}}
+ return {z,lift};}
+function stateAt(t){t=Math.max(0,Math.min(12,t));let p=t<1.5?0:t<3.5?(t-1.5)/2:t<7?1:t<9?1-(t-7)/2:0;const u=Math.max(0,Math.min(3,t-4));const walked=travel*smooth(u/3);const z=t<4?0:t<7?walked:t<9?travel:t<11?travel*(1-smooth((t-9)/2)):0;return {t,p,u,z}}
+function animateAt(t){const st=stateAt(t),{p,u,z}=st;root.position.set(0,0,z);root.rotation.set(0,0,0);
+ const rise=stage(p,.10,.87),chest=stage(p,.08,.84),spread=stage(p,0,.52),fold=stage(p,.23,.96);
+ const walking=t>4&&t<7;const weight=walking?Math.sin(PI*u)**2:0;const bob=-.065*weight;const sway=walking?.045*Math.sin(2*PI*u/3)*Math.sin(PI*u/3):0;
+ const py=mix(.64,2.22,rise)+bob;pelvis.position.set(sway,py,mix(-.1,0,rise));pelvis.rotation.z=walking?.025*Math.sin(2*PI*u):0;
+ core.position.set(sway,mix(.59,3.12,chest)+bob,mix(.65,0,chest));core.rotation.y=walking?.055*Math.sin(PI*u):0;
+ for(let i=0;i<2;i++)connect(spine[i],pelvis.position.clone().add(V((i-.5)*.45,.06,0)),core.position.clone().add(V((i-.5)*.45,-.15,0)));
+ pose(head,V(0,1.07,-.35),V(sway,4.5+bob,.05),zero,zero,stage(p,.45,1));head.rotation.y=walking?.06*Math.sin(PI*u):0;
+ pose(cabin,V(0,1.55,-.4),V(sway,3.26+bob,-.72),zero,[-1.42,0,0],stage(p,.0,.68),.35);
+ for(let i=0;i<2;i++)connect(cabinLink[i],core.position.clone().add(V((i-.5)*.55,0,-.18)),cabin.position.clone().add(V((i-.5)*.55,0,0)));
+ for(const o of sides){const s=o.s;const f=footfall(s,u);const ankleCar=V(s*.55,.34,-.25);const ankleRobot=V(s*.59,.27+f.lift,f.z-z);const ank=ankleCar.clone().lerp(ankleRobot,fold);
+ const hip=V(mix(s*.48,s*.53,rise)+sway,py,mix(-.12,0,rise));const k=kneeAt(hip,ank,1.07,1.07,V(0,0,-1));bone(o.thigh,hip,k);bone(o.calf,k,ank);o.knee.position.copy(k);o.hip.position.copy(hip);o.ankle.position.copy(ank);
+ o.foot.position.copy(ank).add(V(0,-.1,0));o.foot.rotation.set(0,0,0);
+ // Rear deck becomes shin armour; rear axle slides toward the outside of each calf.
+ const shinTarget=k.clone().lerp(ank,.57).add(V(0,0,.25));
+ pose(o.shin,V(s*.47,.99,-1.78),shinTarget,zero,[PI/2+Math.atan2(ank.z-k.z,k.y-ank.y),0,0],fold,.13);
+ pose(o.rear,V(s*1.02,.5,-1.6),ank.clone().add(V(s*.38,.3,-.12)),zero,zero,stage(p,.06,.83));
+ const swing=walking?s*.20*Math.sin(PI*u)*Math.sin(PI*u/3):0;
+ const shoulderCar=V(s*.63,.8,.5);const shoulderRobot=V(s*1.17+sway,3.48+bob,0);const sh=shoulderCar.clone().lerp(shoulderRobot,chest);
+ const wrist=V(s*.74,.61,-.84).lerp(V(s*1.55+sway,1.98+bob,.12+swing),stage(p,.03,.92));
+ const el=kneeAt(sh,wrist,.81,.79,V(s*(2*chest-1),.25*(1-chest),-.15));bone(o.upper,sh,el);bone(o.fore,el,wrist);o.shoulder.position.copy(sh);o.elbow.position.copy(el);o.hand.position.copy(wrist).add(V(0,-.13,0));o.hand.rotation.set(0,0,-s*.08*rise);
+ connect(o.shoulderLink,core.position.clone().add(V(s*.25,.2,0)),sh);
+ const doorTarget=sh.clone().lerp(el,.55).add(V(s*.21,0,-.12));
+ pose(o.door,V(s*1.02,.87,-.37),doorTarget,zero,[PI/2,0,-s*.12],stage(p,.0,.7));o.door.position.x+=s*.22*Math.sin(PI*spread);
+ pose(o.front,V(s*1.02,.5,1.51),sh.clone().add(V(s*.3,.06,-.06)),zero,[0,0,s*.12],stage(p,.04,.77),.18);o.front.position.x+=s*.28*Math.sin(PI*spread);
+ pose(o.hood,V(s*.47,1.02,1.38),V(s*.5+sway,3.42+bob,.43),zero,[1.35,s*.16,-s*.12],stage(p,.17,.94),.45);
+ }
+ // Hubs index during deployment, then roll backward by distance / radius.
+ // The exact initial wheel orientation is recovered before the loop seam.
+ const roll=t<3.5?-travel/.49*smooth((t-1.5)/2):t<9?-travel/.49:t<11?-z/.49:0;for(const w of wheels)w.rotation.x=roll;
+ $('seek').value=t;$('time').textContent=t.toFixed(2).padStart(5,'0');$('phase').textContent=t<1.5?'Présentation':t<3.5?'Déploiement':t<4?'Pose héroïque':t<7?'Marche':t<9?'Repli mécanique':t<11?'Retour au repère':'Prêt pour le prochain cycle';
+ root.updateMatrixWorld(true);return st;
+}
+// Batch rigid subassemblies by material; the moving sleeves remain separate.
+function batch(g){for(const child of [...g.children])if(child.isGroup)batch(child);const bins=new Map();for(const m of g.children){if(!m.isMesh||m.userData.dynamic)continue;if(!bins.has(m.material))bins.set(m.material,[]);bins.get(m.material).push(m)}for(const [material,meshes]of bins){if(meshes.length<2)continue;const geometries=meshes.map(m=>{m.updateMatrix();return m.geometry.clone().applyMatrix4(m.matrix).toNonIndexed()});const geometry=mergeGeometries(geometries);if(geometry){const combined=new THREE.Mesh(geometry,material);combined.castShadow=true;combined.receiveShadow=true;for(const m of meshes)g.remove(m);g.add(combined)}for(const geo of geometries)geo.dispose()}}
+batch(root);batch(marks);
+let time=0,playing=true,speed=1,last=performance.now();
+function ui(){ $('play').textContent=playing?'Ⅱ Pause':'▶ Lire';$('play').setAttribute('aria-label',playing?'Mettre en pause':'Lancer la lecture');for(const [id,val]of [['normal',1],['slow',.25]]){$(id).classList.toggle('active',speed===val);$(id).setAttribute('aria-pressed',speed===val)}}
+function seek(t,pause=true){time=t;if(pause)playing=false;last=performance.now();animateAt(time);ui()}
+$('play').onclick=()=>{playing=!playing;last=performance.now();ui()};$('restart').onclick=()=>{playing=true;seek(0,false)};
+$('normal').onclick=()=>{speed=1;last=performance.now();ui()};$('slow').onclick=()=>{speed=.25;last=performance.now();ui()};
+$('car').onclick=()=>seek(.75);$('robot').onclick=()=>seek(3.75);$('seek').oninput=e=>seek(Number(e.target.value));$('resetCamera').onclick=resetCamera;
+$('cinema').onclick=()=>document.body.classList.toggle('hide-ui');addEventListener('keydown',e=>{if(e.key.toLowerCase()==='h')document.body.classList.toggle('hide-ui');if(e.code==='Space'&&!['INPUT','BUTTON'].includes(document.activeElement.tagName)){e.preventDefault();$('play').click()}});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+document.addEventListener('visibilitychange',()=>{last=performance.now()});
+renderer.setAnimationLoop(now=>{const dt=(now-last)/1000;last=now;if(playing&&!document.hidden)time=(time+dt*speed)%12;animateAt(time);orbit.update();renderer.render(scene,camera)});
+$('loading').remove();
+// Deterministic inspection helpers for deterministic QA, also useful in the console.
+window.helios={seek,stateAt,get time(){return time},get playing(){return playing},get speed(){return speed},root,scene,camera,renderer,animateAt,sides,materials:mat};
+</script>
+<script>window.addEventListener('error',()=>{const e=document.getElementById('loading');if(e)e.textContent='Chargement impossible. Vérifiez votre connexion au CDN et ouvrez ce fichier via un serveur HTTP.'})</script>
+</body>
+</html>

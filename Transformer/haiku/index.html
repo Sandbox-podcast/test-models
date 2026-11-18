@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Voiture ⇄ Robot — démo 12 s</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1f2226;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #e9ecf1; }
+  #app { position: fixed; inset: 0; }
+  #app canvas { display: block; width: 100%; height: 100%; }
+  .hud { position: fixed; pointer-events: none; }
+  #title { top: 18px; left: 22px; font-size: 12px; letter-spacing: .2em; text-transform: uppercase; opacity: .7; }
+  #title b { color: #FFC400; font-weight: 700; }
+  #status { top: 16px; right: 22px; text-align: right; }
+  #phase { font-size: 15px; font-weight: 600; letter-spacing: .03em; }
+  #clock { font-size: 12px; opacity: .65; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  #bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); pointer-events: auto; z-index: 2;
+    display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 8px;
+    max-width: calc(100vw - 24px); padding: 10px 14px; border-radius: 14px;
+    background: rgba(16, 18, 22, .72); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, .08); box-shadow: 0 10px 30px rgba(0, 0, 0, .35); }
+  #bar button { font: inherit; font-size: 13px; color: #e9ecf1; background: rgba(255, 255, 255, .06);
+    border: 1px solid rgba(255, 255, 255, .14); border-radius: 9px; padding: 6px 11px; cursor: pointer;
+    min-width: 36px; transition: background .15s, color .15s, border-color .15s; }
+  #bar button:hover { background: rgba(255, 255, 255, .14); }
+  #bar button:focus-visible { outline: 2px solid #FFC400; outline-offset: 2px; }
+  #bar button.on { background: #FFC400; border-color: #FFC400; color: #15171a; font-weight: 700; }
+  #scrub { width: min(300px, 40vw); accent-color: #FFC400; cursor: pointer; }
+  .sep { width: 1px; height: 22px; background: rgba(255, 255, 255, .12); margin: 0 4px; }
+  #bar .hint { font-size: 11px; opacity: .5; width: 100%; text-align: center; margin-top: 2px; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<div class="hud" id="title">Transformation <b>Voiture ⇄ Robot</b></div>
+<div class="hud" id="status">
+  <div id="phase">Voiture — présentation</div>
+  <div id="clock">0.00 s / 12</div>
+</div>
+
+<div id="bar">
+  <button id="btnPlay" title="Lecture / pause (Espace)">❚❚</button>
+  <button id="btnRestart" title="Recommencer (Début)">↺</button>
+  <span class="sep"></span>
+  <button id="spdNormal" class="on" title="Vitesse normale (1)">1×</button>
+  <button id="spdSlow" title="Ralenti 0,25× (2)">0,25×</button>
+  <span class="sep"></span>
+  <input id="scrub" type="range" min="0" max="12" step="0.01" value="0" aria-label="Temps (0 à 12 secondes)" />
+  <span class="sep"></span>
+  <button id="freezeCar" title="Figer la forme voiture (V)">Figer voiture</button>
+  <button id="freezeBot" title="Figer la forme robot (R)">Figer robot</button>
+  <button id="resetCam" title="Retrouver le cadrage initial (C)">Cadrage</button>
+  <div class="hint">Souris : glisser = orbite · molette = zoom · clic droit = déplacer</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+/* =====================================================================
+   1. TIMING ET FONCTIONS UTILITAIRES
+   Toute l'animation est une fonction pure du temps T (en secondes) :
+   elle peut donc être évaluée à n'importe quel instant (pause, retour arrière).
+   ===================================================================== */
+const CYCLE = 12;
+
+const clamp01 = x => Math.min(1, Math.max(0, x));
+const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+const easeIO = t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const EulerQ = (x, y, z) => new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z));
+const ID = new THREE.Quaternion();
+const VX = V(1, 0, 0), VY = V(0, 1, 0);
+const FOOT_Q = new THREE.Quaternion().setFromUnitVectors(VX, VY);   // disque de roue posé à plat
+const HALF_PI = Math.PI / 2;
+const QZ_TO_Y = EulerQ(-HALF_PI, 0, 0);                              // géométrie Z -> axe Y (plaque de porte)
+
+// Dimensions de la mécanique (unités arbitraires, 1 ≈ 1 m stylisé)
+const R_WHEEL = 0.36;
+const HIP_X = 0.42, HIP_Y = 1.85, LEG = 0.8, ANKLE_Y = 0.45, FOOT_DROP = 0.3, FOOT_Z = 0.05;
+const SH_X = 0.95, SH_Y = 2.85, UPPER = 0.75, FORE = 0.65, HAND_OFF = 0.14;
+const STRIDE = 0.9;   // distance parcourue par seconde pendant la marche (m/s)
+
+/* =====================================================================
+   2. CHRONOLOGIE GLOBALE
+   ===================================================================== */
+
+// Déplacement du corps (voiture ou robot) le long de son axe avant (+Z)
+function rootZ(t) {
+  if (t < 4) return 0;
+  if (t < 7) return STRIDE * (t - 4);           // marche : 3 pas, vitesse constante (pieds calés au sol)
+  if (t < 9) return 3 * STRIDE;                  // transformation en voiture, à l'arrêt
+  if (t < 11) return 3 * STRIDE * (1 - easeIO((t - 9) / 2)); // la voiture recule
+  return 0;
+}
+
+// Petite présentation de la voiture en fin de cycle (retour à 0 en 12 s)
+function rootRotY(t) {
+  return (t >= 11 && t < 12) ? 0.35 * Math.sin(Math.PI * (t - 11)) : 0;
+}
+
+/**
+ * Progression d'une pièce entre forme voiture et forme robot.
+ * Transformation vers robot : 1,5 s -> 3,5 s (2 s exactement, chaque pièce dure 1,2 s avec un décalage de 0 à 0,8 s).
+ * Transformation vers voiture : 7 s -> 9 s, dans l'ordre inverse.
+ */
+function morph(t, delay) {
+  const fwd = easeIO(clamp01((t - 1.5 - delay) / 1.2));
+  const back = easeIO(clamp01((t - 7 - (0.8 - delay)) / 1.2));
+  return fwd * (1 - back);
+}
+
+// Pieds : phases de marche (3 pas alternés, 1 s chacun), pied d'appui calé au sol
+function feet(t) {
+  const tw = t - 4;
+  if (tw <= 0) return { L: { z: 0.45, lift: 0 }, R: { z: -0.45, lift: 0 } };
+  if (tw >= 3) return { L: { z: -0.45, lift: 0 }, R: { z: 0.45, lift: 0 } };
+  const k = Math.floor(tw), u = tw - k;
+  const stanceSide = k === 1 ? 'R' : 'L';
+  const swingSide = stanceSide === 'L' ? 'R' : 'L';
+  // Appui : recule exactement à la vitesse du corps -> pied fixe dans le monde
+  const stZ = 0.45 - STRIDE * u;
+  // Oscillation : départ et arrivée en douceur
+  const swU = 0.5 - 0.5 * Math.cos(Math.PI * u);
+  const swZ = -0.45 + STRIDE * swU;
+  const lift = 0.32 * Math.sin(Math.PI * u);
+  const out = {};
+  out[stanceSide] = { z: stZ, lift: 0 };
+  out[swingSide] = { z: swZ, lift };
+  return out;
+}
+
+/* =====================================================================
+   3. CINÉMATIQUE DU ROBOT
+   ===================================================================== */
+
+// Cinématique inverse à deux segments (plan Y/Z, genou orienté vers l'avant)
+function legKnee(hip, ankle) {
+  const dz = ankle.z - hip.z, dy = ankle.y - hip.y;
+  const len = Math.hypot(dz, dy);
+  const d = Math.min(len, 2 * LEG - 0.02);
+  const ux = dz / len, uy = dy / len;
+  const h = Math.sqrt(Math.max(0, LEG * LEG - (d * d) / 4));
+  return V(hip.x, hip.y + (d / 2) * uy + h * ux, hip.z + (d / 2) * ux - h * uy);
+}
+
+function segQ(A, B) {
+  return new THREE.Quaternion().setFromUnitVectors(VY, B.clone().sub(A).normalize());
+}
+function segPose(A, B) {
+  return { p: A.clone().add(B).multiplyScalar(0.5), q: segQ(A, B) };
+}
+
+// État complet du robot / de la voiture pour un instant T
+function state(t) {
+  const tw = t - 4;
+  const f = feet(t);
+  const hw = smooth(2.8, 3.4, t) * (1 - smooth(3.9, 4.4, t));   // bras levés (pose héroïque)
+  const amp = smooth(0, 0.4, tw) * (1 - smooth(2.6, 3.0, tw));  // balancement des bras pendant la marche
+  const st = { rootZ: rootZ(t), legs: {}, arms: {} };
+  st.spin = st.rootZ / R_WHEEL;                                  // rotation des roues
+
+  for (const k of ['L', 'R']) {
+    const sx = k === 'L' ? -1 : 1;
+
+    // Jambe
+    const hip = V(sx * HIP_X, HIP_Y, 0);
+    const ankle = V(sx * HIP_X, ANKLE_Y + f[k].lift, f[k].z);
+    const knee = legKnee(hip, ankle);
+    const foot = V(sx * HIP_X, ankle.y - FOOT_DROP, ankle.z + FOOT_Z);
+    st.legs[k] = { hip, knee, ankle, foot };
+
+    // Bras : balancement opposé à la jambe, pose héroïque (bras levés)
+    const a = sx * 0.45 * Math.sin(Math.PI * tw) * amp;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const pitch = v => V(v.x, v.y * ca - v.z * sa, v.y * sa + v.z * ca);
+    const uW = pitch(V(sx * 0.1, -1, 0)).normalize();
+    const fW = pitch(V(0, -0.3, 1)).normalize();
+    const uH = V(sx * 0.75, 0.75, 0.15).normalize();
+    const fH = V(sx * 0.25, 0.9, 0.35).normalize();
+    const u = uW.lerp(uH, hw).normalize();
+    const fa = fW.lerp(fH, hw).normalize();
+    const S = V(sx * SH_X, SH_Y, 0);
+    const E = S.clone().addScaledVector(u, UPPER);
+    const W = E.clone().addScaledVector(fa, FORE);
+    const hand = W.clone().addScaledVector(fa, HAND_OFF);
+    st.arms[k] = { S, E, W, fa, hand };
+  }
+  return st;
+}
+
+/* =====================================================================
+   4. SCÈNE, MATÉRIAUX, LUMIÈRE
+   ===================================================================== */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1f2226);
+scene.fog = new THREE.Fog(0x1f2226, 16, 46);
+
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.1, 100);
+const HOME_POS = V(6.6, 3.6, 9.4), HOME_TGT = V(0, 2.0, 1.2);
+camera.position.copy(HOME_POS);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.getElementById('app').appendChild(renderer.domElement);
+
+// Éclairage studio blanc neutre
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+const key = new THREE.DirectionalLight(0xffffff, 2.0);
+key.position.set(5, 9, 6);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6, near: 1, far: 30 });
+key.shadow.bias = -0.0004;
+key.shadow.normalBias = 0.02;
+scene.add(key);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x30333a, 0.45));
+
+// Sol gris anthracite
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(40, 64),
+  new THREE.MeshStandardMaterial({ color: 0x2b2e34, roughness: 0.85, metalness: 0 })
+);
+ground.rotation.x = -HALF_PI;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Matériaux partagés : un seul jaune pour toute la carrosserie
+const mat = {
+  yellow: new THREE.MeshPhysicalMaterial({ color: 0xFFC400, roughness: 0.34, metalness: 0.05, clearcoat: 0.8, clearcoatRoughness: 0.18 }),
+  black: new THREE.MeshStandardMaterial({ color: 0x0c0c0e, roughness: 0.4, metalness: 0.2 }),
+  tire: new THREE.MeshStandardMaterial({ color: 0x111214, roughness: 0.9 }),
+  rim: new THREE.MeshStandardMaterial({ color: 0xc9ccd2, metalness: 1, roughness: 0.22 }),
+  gray: new THREE.MeshStandardMaterial({ color: 0x3a3f47, metalness: 0.75, roughness: 0.38 }),
+  glass: new THREE.MeshPhysicalMaterial({ color: 0x0a0e13, roughness: 0.06, metalness: 0.1, clearcoat: 0.5, envMapIntensity: 0.3 }),
+  eye: new THREE.MeshStandardMaterial({ color: 0x9be7ff, emissive: 0x3ec9ff, emissiveIntensity: 1.6 })
+};
+
+const root = new THREE.Group();
+scene.add(root);
+
+/* =====================================================================
+   5. CONSTRUCTION DES PIÈCES
+   Chaque pièce : un objet 3D, un retard de transformation (delay),
+   une pose "voiture" et une pose "robot" (fonctions de l'état st).
+   ===================================================================== */
+const parts = [];
+function addPart(obj, delay, car, rob) {
+  root.add(obj);
+  parts.push({ obj, delay, car, rob });
+}
+const fixed = (p, e) => { const s = { p: V(...p), q: EulerQ(...e) }; return () => s; };
+
+function box(w, h, d, m) { return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); }
+function cyl(r, len, m) { return new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 20), m); }
+function sphere(r, m) { return new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), m); }
+
+// Panneau jaune avec deux bandes noires longitudinales
+function panel(w, h, d) {
+  const g = new THREE.Group();
+  g.add(box(w, h, d, mat.yellow));
+  for (const x of [-0.3, 0.3]) {
+    const s = box(0.2, 0.012, d, mat.black);
+    s.position.set(x, h / 2 + 0.006, 0);
+    g.add(s);
+  }
+  return g;
+}
+
+// Porte : tôle jaune + vitre fumée
+function door() {
+  const g = new THREE.Group();
+  g.add(box(0.08, 0.6, 1.8, mat.yellow));
+  const w = box(0.09, 0.26, 1.1, mat.glass);
+  w.position.set(0, 0.17, -0.05);
+  g.add(w);
+  return g;
+}
+
+// Aile / protection de membre : 0,26 × 0,8 × 0,3
+const armourBlock = () => box(0.26, 0.8, 0.3, mat.yellow);
+
+// Roue complète (pneu, jante, rayons) — axe local X
+function makeWheel() {
+  const g = new THREE.Group();
+  const tire = new THREE.Mesh(new THREE.CylinderGeometry(R_WHEEL, R_WHEEL, 0.3, 40), mat.tire);
+  tire.rotation.z = HALF_PI;
+  g.add(tire);
+  const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.31, 28), mat.rim);
+  rim.rotation.z = HALF_PI;
+  g.add(rim);
+  for (let i = 0; i < 5; i++) {
+    const s = new THREE.Group();
+    s.rotation.x = (i * 2 * Math.PI) / 5;
+    const bar = box(0.32, 0.26, 0.05, mat.rim);
+    bar.position.y = 0.13;
+    s.add(bar);
+    g.add(s);
+  }
+  return g;
+}
+
+// Poses dérivées de la cinématique (fonctions de l'état st)
+function armPlate(st, k) {
+  const a = st.arms[k];
+  return { p: a.S.clone().add(a.E).multiplyScalar(0.5), q: segQ(a.S, a.E).multiply(QZ_TO_Y) };
+}
+function thighPlate(st, k, off) {
+  const l = st.legs[k];
+  const s = segPose(l.hip, l.knee);
+  return { p: s.p.add(V(0, 0, off).applyQuaternion(s.q)), q: s.q };
+}
+function shinPlate(st, k, off) {
+  const l = st.legs[k];
+  const s = segPose(l.knee, l.ankle);
+  return { p: s.p.add(V(0, 0, off).applyQuaternion(s.q)), q: s.q };
+}
+
+/* ---- Carrosserie jaune ------------------------------------------------ */
+// Capot -> plastron du robot
+addPart(panel(1.7, 0.1, 1.4), 0.0,
+  fixed([0, 1.0, 1.5], [0, 0, 0]),
+  fixed([0, 2.5, 0.36], [HALF_PI, 0, 0]));
+// Toit -> plaque dorsale
+addPart(panel(1.6, 0.1, 1.5), 0.05,
+  fixed([0, 1.5, -0.25], [0, 0, 0]),
+  fixed([0, 2.5, -0.5], [-HALF_PI, 0, 0]));
+// Coffre -> plaque de taille
+addPart(panel(1.7, 0.1, 1.2), 0.1,
+  fixed([0, 1.0, -1.45], [0, 0, 0]),
+  fixed([0, 1.75, 0.05], [HALF_PI, 0, 0]));
+
+for (const k of ['L', 'R']) {
+  const sx = k === 'L' ? -1 : 1;
+  // Portes -> protections des bras
+  addPart(door(), 0.15,
+    fixed([sx * 0.96, 0.85, 0.1], [0, 0, 0]),
+    st => armPlate(st, k));
+  // Ailes avant -> protections des cuisses
+  addPart(armourBlock(), 0.2,
+    fixed([sx * 0.98, 0.78, 1.45], [HALF_PI, 0, 0]),
+    st => thighPlate(st, k, 0.13));
+  // Ailes arrière -> protections des tibias
+  addPart(armourBlock(), 0.2,
+    fixed([sx * 0.98, 0.78, -1.45], [HALF_PI, 0, 0]),
+    st => shinPlate(st, k, -0.13));
+}
+
+// Pare-chocs -> ceintures
+addPart(box(1.8, 0.3, 0.18, mat.yellow), 0.25,
+  fixed([0, 0.5, 2.3], [0, 0, 0]),
+  fixed([0, 1.45, 0.22], [0, 0, 0]));
+addPart(box(1.8, 0.3, 0.18, mat.yellow), 0.25,
+  fixed([0, 0.5, -2.3], [0, 0, 0]),
+  fixed([0, 1.2, -0.2], [0, 0, 0]));
+
+// Tête : cachée sous le capot, elle se déploie en dernier
+const head = new THREE.Group();
+head.add(box(0.62, 0.5, 0.6, mat.yellow));
+for (const x of [-0.15, 0.15]) {
+  const eye = box(0.16, 0.09, 0.02, mat.eye);
+  eye.position.set(x, 0.05, 0.305);
+  head.add(eye);
+}
+addPart(head, 0.8,
+  fixed([0, 0.72, 1.0], [0, 0, 0]),
+  fixed([0, 3.5, 0.05], [0, 0, 0]));
+
+/* ---- Vitrages et mécanique interne ------------------------------------ */
+addPart(new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.03, 0.95), mat.glass), 0.0,
+  fixed([0, 1.25, 0.43], [-2.56, 0, 0]),       // pare-brise
+  fixed([0, 2.5, -0.2], [HALF_PI, 0, 0]));
+addPart(new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.03, 0.78), mat.glass), 0.0,
+  fixed([0, 1.28, -1.3], [2.498, 0, 0]),       // lunette arrière
+  fixed([0, 2.5, -0.3], [HALF_PI, 0, 0]));
+addPart(box(1.3, 0.14, 3.4, mat.gray), 0.0,    // plancher -> dorsal mécanique
+  fixed([0, 0.42, 0], [0, 0, 0]),
+  fixed([0, 1.9, -0.85], [-HALF_PI, 0, 0]));
+addPart(box(0.9, 0.8, 0.6, mat.gray), 0.1,     // noyau : moteur / cœur
+  fixed([0, 0.7, 0], [0, 0, 0]),
+  fixed([0, 2.5, -0.05], [0, 0, 0]));
+
+/* ---- Roues -> pieds et poings ----------------------------------------- */
+const WHEELS = [
+  { k: 'L', x: -0.92, z: 1.45, hand: true },
+  { k: 'R', x: 0.92, z: 1.45, hand: true },
+  { k: 'L', x: -0.92, z: -1.45, hand: false },
+  { k: 'R', x: 0.92, z: -1.45, hand: false }
+];
+for (const w of WHEELS) {
+  const obj = makeWheel();
+  const p0 = V(w.x, R_WHEEL, w.z);
+  const car = st => ({ p: p0, q: new THREE.Quaternion().setFromAxisAngle(VX, st.spin) });
+  const rob = w.hand
+    ? st => ({ p: st.arms[w.k].hand, q: new THREE.Quaternion().setFromUnitVectors(VX, st.arms[w.k].fa) })
+    : st => ({ p: st.legs[w.k].foot, q: FOOT_Q });
+  addPart(obj, 0.5, car, rob);
+}
+
+/* ---- Membres et articulations (gris foncé) ---------------------------- */
+for (const k of ['L', 'R']) {
+  const sx = k === 'L' ? -1 : 1;
+
+  addPart(cyl(0.14, 0.8, mat.gray), 0.3,
+    fixed([sx * 0.42, 0.62, -0.2], [HALF_PI, 0, 0]),
+    st => segPose(st.legs[k].hip, st.legs[k].knee));
+  addPart(cyl(0.12, 0.8, mat.gray), 0.35,
+    fixed([sx * 0.42, 0.62, 0.45], [HALF_PI, 0, 0]),
+    st => segPose(st.legs[k].knee, st.legs[k].ankle));
+  addPart(cyl(0.11, 0.75, mat.gray), 0.3,
+    fixed([sx * 0.55, 0.78, -0.2], [HALF_PI, 0, 0]),
+    st => segPose(st.arms[k].S, st.arms[k].E));
+  addPart(cyl(0.09, 0.65, mat.gray), 0.35,
+    fixed([sx * 0.55, 0.78, 0.5], [HALF_PI, 0, 0]),
+    st => segPose(st.arms[k].E, st.arms[k].W));
+
+  addPart(sphere(0.14, mat.gray), 0.4,
+    fixed([sx * 0.42, 0.62, 0.12], [0, 0, 0]),
+    st => ({ p: st.legs[k].knee, q: ID }));
+  addPart(sphere(0.12, mat.gray), 0.4,
+    fixed([sx * 0.55, 0.78, 0.13], [0, 0, 0]),
+    st => ({ p: st.arms[k].E, q: ID }));
+  addPart(sphere(0.14, mat.gray), 0.3,
+    fixed([sx * 0.55, 0.78, -0.6], [0, 0, 0]),
+    st => ({ p: st.arms[k].S, q: ID }));
+}
+
+root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+
+/* =====================================================================
+   6. APPLICATION DE LA POSE À L'INSTANT T
+   ===================================================================== */
+function applyPose(t) {
+  const st = state(t);
+  root.position.set(0, 0, st.rootZ);
+  root.rotation.y = rootRotY(t);
+  for (const p of parts) {
+    const s = morph(t, p.delay);
+    const c = p.car(st), r = p.rob(st);
+    p.obj.position.lerpVectors(c.p, r.p, s);
+    p.obj.quaternion.slerpQuaternions(c.q, r.q, s);
+  }
+}
+
+/* =====================================================================
+   7. INTERFACE ET BOUCLE
+   ===================================================================== */
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 4;
+controls.maxDistance = 18;
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.target.copy(HOME_TGT);
+controls.update();
+
+let camAnim = null;
+function resetCamera() {
+  camAnim = { from: camera.position.clone(), fromT: controls.target.clone(), t0: performance.now() };
+}
+controls.addEventListener('start', () => { camAnim = null; });
+
+const $ = id => document.getElementById(id);
+const btnPlay = $('btnPlay'), scrub = $('scrub'), clockEl = $('clock'), phaseEl = $('phase');
+const spdNormal = $('spdNormal'), spdSlow = $('spdSlow');
+
+let T = 0, playing = true, speed = 1;
+
+function setPlaying(v) { playing = v; btnPlay.textContent = v ? '❚❚' : '▶'; }
+function togglePlay() { setPlaying(!playing); }
+function setSpeed(v) {
+  speed = v;
+  spdNormal.classList.toggle('on', v === 1);
+  spdSlow.classList.toggle('on', v !== 1);
+}
+function freeze(time) { T = time; setPlaying(false); }
+function restart() { T = 0; setPlaying(true); }
+
+function phaseLabel(t) {
+  if (t < 1.5) return 'Voiture — présentation';
+  if (t < 3.5) return 'Transformation en robot';
+  if (t < 4) return 'Pose héroïque';
+  if (t < 7) return 'Marche';
+  if (t < 9) return 'Transformation en voiture';
+  if (t < 11) return 'Retour en position';
+  return 'Présentation';
+}
+
+btnPlay.onclick = togglePlay;
+$('btnRestart').onclick = restart;
+spdNormal.onclick = () => setSpeed(1);
+spdSlow.onclick = () => setSpeed(0.25);
+$('freezeCar').onclick = () => freeze(0.75);
+$('freezeBot').onclick = () => freeze(3.75);
+$('resetCam').onclick = resetCamera;
+scrub.addEventListener('input', () => { T = parseFloat(scrub.value); setPlaying(false); });
+
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+  switch (e.code) {
+    case 'Space': e.preventDefault(); togglePlay(); break;
+    case 'KeyV': freeze(0.75); break;
+    case 'KeyR': freeze(3.75); break;
+    case 'KeyC': resetCamera(); break;
+    case 'Digit1': setSpeed(1); break;
+    case 'Digit2': setSpeed(0.25); break;
+    case 'Home': restart(); break;
+  }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));   // temps réel, indépendant des FPS
+  last = now;
+  if (playing) {
+    T += dt * speed;
+    if (T >= CYCLE) T -= CYCLE;
+  }
+  applyPose(T);
+  scrub.value = T;
+  clockEl.textContent = `${T.toFixed(2)} s / 12`;
+  phaseEl.textContent = phaseLabel(T);
+
+  if (camAnim) {
+    const k = easeIO(clamp01((now - camAnim.t0) / 900));
+    camera.position.lerpVectors(camAnim.from, HOME_POS, k);
+    controls.target.lerpVectors(camAnim.fromT, HOME_TGT, k);
+    if (k >= 1) camAnim = null;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

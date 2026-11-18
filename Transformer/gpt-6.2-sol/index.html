@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#191b1d">
+<link rel="icon" href="data:,">
+<title>RIVET / Étude de transformation</title>
+<style>
+:root{color-scheme:dark;--ink:#f5f3ed;--muted:#b1b2b1;--yellow:#ffc400;--line:#ffffff26}
+*{box-sizing:border-box}
+body{margin:0;background:#191b1d;color:var(--ink);font:14px system-ui,sans-serif}
+main{display:grid;grid-template-rows:minmax(0,1fr) auto;height:100dvh;min-height:430px}
+.viewport{position:relative;overflow:hidden;background:#27292c}
+canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
+header{position:absolute;top:0;left:0;right:0;pointer-events:none;display:flex;justify-content:space-between;align-items:flex-start;padding:clamp(16px,3vw,40px);gap:16px;background:linear-gradient(#15161799,transparent)}
+h1{font-size:clamp(27px,4.2vw,60px);font-weight:850;letter-spacing:-.075em;line-height:.95;margin:0 0 9px}
+.identity{border-left:3px solid var(--yellow);padding-left:12px}
+.subtitle,.hint{color:#d0d1d1;font-size:12px}
+.camera{pointer-events:auto;display:flex;gap:8px;align-items:center}
+button{border:1px solid var(--line);border-radius:4px;background:#242628;color:inherit;padding:7px 12px;font:inherit;white-space:nowrap;cursor:pointer;min-height:34px}
+button:hover{background:#393c3e}
+button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:3px}
+button[aria-pressed="true"]{color:var(--yellow);border-color:#ffc40077}
+footer{padding:12px clamp(12px,3vw,40px) 15px;background:#181a1c;border-top:1px solid var(--line)}
+.status{display:flex;justify-content:space-between;gap:8px;align-items:center}
+#phase{font-weight:650}
+output{color:var(--muted);font:12px ui-monospace,monospace}
+.track{position:relative;margin:4px 0 8px;height:18px;display:grid;align-items:center}
+.track::before{content:"";position:absolute;inset:6px 0;background:#343638;border-radius:2px}
+.track i{position:absolute;width:1px;height:6px;background:#9c9c9a;pointer-events:none}
+input[type=range]{z-index:1;width:100%;appearance:none;margin:0;background:transparent;cursor:ew-resize;height:18px}
+input::-webkit-slider-thumb{appearance:none;background:var(--yellow);height:14px;width:9px;border-radius:2px}
+input::-moz-range-thumb{border:0;background:var(--yellow);height:14px;width:9px;border-radius:2px}
+.tools,.set{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.tools{gap:8px 16px;justify-content:space-between}
+#play{min-width:96px;background:var(--yellow);color:#171819;border-color:transparent;font-weight:750}
+#play:hover{background:#ffda58}
+#startup{position:absolute;inset:45% 10% auto;text-align:center;pointer-events:none}
+@media(max-width:680px){.hint{display:none} button{font-size:12px;padding:5px 8px}.tools{gap:5px}.subtitle{font-size:11px}}
+</style>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.183.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.183.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<main>
+  <section class="viewport" aria-label="Studio 3D">
+    <canvas aria-label="Voiture et robot articulés"></canvas>
+    <header>
+      <div class="identity"><h1>RIVET</h1><div class="subtitle">Étude de transformation mécanique</div></div>
+      <div class="camera"><span class="hint">Glisser pour orbiter · molette pour zoomer</span><button id="camera">Vue initiale</button></div>
+    </header>
+    <div id="startup" role="status">Chargement du studio 3D…</div>
+  </section>
+  <footer aria-label="Commandes de la démonstration">
+    <div class="status"><span id="phase">Présentation voiture</span><output id="time">00,00 / 12,00 s</output></div>
+    <div class="track">
+      <i style="left:12.5%"></i><i style="left:29.167%"></i><i style="left:33.333%"></i>
+      <i style="left:58.333%"></i><i style="left:75%"></i><i style="left:91.667%"></i>
+      <input id="seek" aria-label="Temps de l’animation" type="range" min="0" max="12" step=".001" value="0">
+    </div>
+    <div class="tools">
+      <div class="set"><button id="play">Ⅱ Pause</button><button id="restart">Recommencer</button></div>
+      <div class="set" role="group" aria-label="Vitesse"><button id="normal" aria-pressed="true">1× Normale</button><button id="slow" aria-pressed="false">0,25× Ralenti</button></div>
+      <div class="set" role="group" aria-label="Inspection"><button id="car">Figer voiture</button><button id="robot">Figer robot</button></div>
+    </div>
+  </footer>
+</main>
+<script type="module">
+const ui = Object.fromEntries(Array.from(document.querySelectorAll('[id]'), node => [node.id, node]));
+try {
+  const [T, { OrbitControls }, { RoomEnvironment }] = await Promise.all([
+    import('three'), import('three/addons/controls/OrbitControls.js'),
+    import('three/addons/environments/RoomEnvironment.js')
+  ]);
+  start(T, OrbitControls, RoomEnvironment);
+} catch (error) {
+  ui.startup.textContent = 'Impossible de charger le studio 3D. Vérifiez l’accès au CDN et la disponibilité de WebGL 2.';
+  console.error(error);
+}
+
+function start(T, OrbitControls, RoomEnvironment) {
+  const canvas = document.querySelector('canvas');
+  const renderer = new T.WebGLRenderer({canvas, antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.65));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = T.PCFShadowMap;
+  renderer.toneMapping = T.NeutralToneMapping;
+  renderer.toneMappingExposure = .87;
+
+  const scene = new T.Scene();
+  scene.background = new T.Color(0x292b2d);
+  scene.fog = new T.FogExp2(0x292b2d, .043);
+  const env = new RoomEnvironment();
+  const pmrem = new T.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(env, .06).texture;
+  scene.environmentIntensity = .67;
+  env.dispose();
+  pmrem.dispose();
+
+  const camera = new T.PerspectiveCamera(34, 1, .1, 100);
+  const controls = new OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = .09;
+  controls.minDistance = 4.5;
+  controls.maxDistance = 21;
+  controls.maxPolarAngle = Math.PI * .487;
+  controls.enablePan = false;
+  const viewDirection = new T.Vector3(6.9, 3.2, 9.7).normalize();
+  const shotTarget=new T.Vector3();
+  let shotDistance=0;
+  function vectorsForShot(t) {
+    const upright=range(Math.min((t-1.5)/2,(9-t)/2),0,.87);
+    const movement=range(t,4,7)*(1-range(t,9,11));
+    return {
+      target:new T.Vector3(0,mix(.83,1.91,upright),.12+movement*.64),
+      distance:Math.max(mix(8.35,10.72,upright),8.5/camera.aspect)
+    };
+  }
+  function frameShot(t, reset=false) {
+    const {target,distance}=vectorsForShot(t);
+    if(reset) {
+      controls.enableDamping=false;
+      controls.update();
+      controls.target.copy(target);
+      camera.position.copy(target).addScaledVector(viewDirection,distance);
+      controls.update();
+      controls.enableDamping=true;
+    } else {
+      const offset=camera.position.clone().sub(controls.target);
+      offset.setLength(T.MathUtils.clamp(offset.length()+distance-shotDistance,controls.minDistance,controls.maxDistance));
+      controls.target.add(target.clone().sub(shotTarget));
+      camera.position.copy(controls.target).add(offset);
+    }
+    shotTarget.copy(target);
+    shotDistance=distance;
+  }
+  const observer = new ResizeObserver(() => {
+    const {clientWidth:w, clientHeight:h} = canvas.parentElement;
+    renderer.setSize(w,h,false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  });
+  observer.observe(canvas.parentElement);
+  camera.aspect = canvas.clientWidth / canvas.clientHeight;
+
+  function directional(intensity, position) {
+    const light = new T.DirectionalLight(0xffffff, intensity);
+    light.position.set(...position);
+    scene.add(light);
+    return light;
+  }
+  scene.add(new T.HemisphereLight(0xffffff, 0x666666, .80));
+  const key = directional(2.20, [-3,8,5]);
+  key.castShadow = true;
+  key.shadow.mapSize.set(2048,2048);
+  Object.assign(key.shadow.camera,{left:-6,right:6,top:6,bottom:-6,near:1,far:19});
+  key.shadow.normalBias = .025;
+  key.shadow.bias = -.00012;
+  key.shadow.radius = 3;
+  directional(1.47,[1,5,-6]);
+  directional(.62,[6,3,5]);
+
+  const standard = (color,metalness,roughness) => new T.MeshStandardMaterial({color,metalness,roughness});
+  const yellow = new T.MeshPhysicalMaterial({color:0xffc400, metalness:.29, roughness:.29, clearcoat:.73, clearcoatRoughness:.21});
+  const stripe = standard(0x111316,.28,.34);
+  const iron = standard(0x30353a,.73,.36);
+  const steel = standard(0x747c86,.79,.26);
+  const dark = standard(0x14171b,.37,.45);
+  const tire = standard(0x101112,.02,.76);
+  const tread = standard(0x191a1b,.02,.78);
+  const glass = new T.MeshPhysicalMaterial({color:0x131a20,metalness:.45,roughness:.17,clearcoat:1});
+  const white = new T.MeshStandardMaterial({color:0xe8f4ff,emissive:0xd6ebff,emissiveIntensity:1.4,roughness:.27});
+  const red = new T.MeshStandardMaterial({color:0xd6261f,emissive:0xe21b0c,emissiveIntensity:.75});
+  const blue = new T.MeshStandardMaterial({color:0x55bdff,emissive:0x319bff,emissiveIntensity:1.12});
+  const floor = standard(0x292b2e,.22,.69);
+  const setLine = standard(0x66696b,.26,.75);
+  const setInset = standard(0x3b3e40,.15,.74);
+
+  const v = (x=0,y=0,z=0) => new T.Vector3(x,y,z);
+  const PI = Math.PI;
+  const mix = T.MathUtils.lerp;
+  const clamp = x => T.MathUtils.clamp(x,0,1);
+  const ease = x => {const a=clamp(x);return a*a*(3-2*a);};
+  const range = (x,a,b) => ease((x-a)/(b-a));
+  function group(parent) {const part = new T.Group(); parent.add(part); return part;}
+  function mesh(parent, geo, material, x=0,y=0,z=0) {
+    const item = new T.Mesh(geo,material);
+    item.position.set(x,y,z);
+    item.castShadow = true;
+    item.receiveShadow = true;
+    parent.add(item);
+    return item;
+  }
+  const cube = new T.BoxGeometry(1,1,1);
+  function box(parent,mat,x,y,z,w,h,d) {
+    const part=mesh(parent,cube,mat,x,y,z);
+    part.scale.set(w,h,d);
+    return part;
+  }
+  function cylinder(parent,mat,x,y,z,r,length,axis='y',sides=20) {
+    const part=mesh(parent,new T.CylinderGeometry(r,r,length,sides),mat,x,y,z);
+    if(axis==='x') part.rotation.z=-PI/2;
+    if(axis==='z') part.rotation.x=PI/2;
+    return part;
+  }
+  function poly(parent,mat,points,faces) {
+    const vertices = [];
+    for(const ids of faces) {
+      for(let i=1;i<ids.length-1;i++) {
+        for(const j of [ids[0],ids[i],ids[i+1]]) vertices.push(...points[j]);
+      }
+    }
+    const geometry=new T.BufferGeometry();
+    geometry.setAttribute('position',new T.Float32BufferAttribute(vertices,3));
+    geometry.computeVertexNormals();
+    return mesh(parent,geometry,mat);
+  }
+  // Cross-sections run rear to front: z, half-width, deck height, lower edge.
+  function shell(parent,mat,sections,stripes=false) {
+    const points=sections.flatMap(([z,w,top,bottom])=>[
+      [-w*.88,bottom,z],[-w, bottom+(top-bottom)*.28,z],[-w,top-Math.min(.075,(top-bottom)*.34),z],
+      [-w*.85,top,z],[w*.85,top,z],[w,top-Math.min(.075,(top-bottom)*.34),z],
+      [w,bottom+(top-bottom)*.28,z],[w*.88,bottom,z]
+    ]);
+    const faces=[[0,1,2,3,4,5,6,7]];
+    for(let i=0;i<sections.length-1;i++) {
+      for(let n=0;n<8;n++){
+        const a=i*8+n, b=i*8+(n+1)%8;
+        faces.push([a,a+8,b+8,b]);
+      }
+    }
+    faces.push(Array.from({length:8},(_,i)=>points.length-1-i));
+    const body=poly(parent,mat,points,faces);
+    if(stripes) {
+      for(const side of [-1,1]) {
+        for(let i=0;i<sections.length-1;i++){
+          const [z,,y]=sections[i], [z2,,y2]=sections[i+1];
+          const low=side*.23-.085, high=side*.23+.085;
+          poly(parent,stripe,[[low,y+.006,z],[high,y+.006,z],[high,y2+.006,z2],[low,y2+.006,z2]],[[0,3,2,1]]);
+        }
+      }
+    }
+    return body;
+  }
+  function bevelBox(parent,mat,x,y,z,w,h,d,r=.05) {
+    r=Math.min(r,w*.22,h*.22,d*.22);
+    const carrier=group(parent);
+    carrier.position.set(x,y,z);
+    shell(carrier,mat,[[-d/2,w/2-r,h/2-r,-h/2+r],[-d/2+r,w/2,h/2,-h/2],[d/2-r,w/2,h/2,-h/2],[d/2,w/2-r,h/2-r,-h/2+r]]);
+    return carrier;
+  }
+
+  const stage=mesh(scene,new T.PlaneGeometry(150,150),floor);
+  stage.rotation.x=-PI/2;
+  stage.castShadow=false;
+  // Thin markings are geometry, with the vehicle free to move across them.
+  for(const [radius,width,mat] of [[4.07,.014,setLine],[4.24,.009,setInset]]) {
+    const ring=mesh(scene,new T.RingGeometry(radius-width,radius,128),mat,0,.003,.35);
+    ring.rotation.x=-PI/2;
+    ring.castShadow=false;
+  }
+  for(let i=0;i<48;i++) {
+    const angle=i*PI/24;
+    const tick=box(scene,i%6===0?setLine:setInset,Math.sin(angle)*4.18,.006,.35+Math.cos(angle)*4.18,i%6===0?.045:.016,.005,.072);
+    tick.rotation.y=angle;
+    tick.castShadow=false;
+  }
+
+  const root=group(scene);
+  root.name='RIVET';
+  const hood=group(root);
+  shell(hood,yellow,[[-.76,.91,.11,-.12],[-.64,1.02,.14,-.13],[.48,1.035,.085,-.18],[.69,.97,.008,-.23],[.77,.90,-.055,-.24]],true);
+  for(const s of [-1,1]) {
+    bevelBox(hood,dark,s*.62,.117,-.09,.28,.042,.41,.025);
+    for(let i=0;i<4;i++) box(hood,iron,s*.62,.144,-.22+i*.071,.215,.014,.024);
+  }
+  const nose=group(hood);
+  bevelBox(nose,yellow,0,-.29,.67,2.06,.40,.45,.075);
+  bevelBox(nose,dark,0,-.251,.883,1.84,.195,.10,.029);
+  bevelBox(nose,stripe,0,-.445,.85,1.99,.086,.18,.026);
+  bevelBox(nose,dark,0,-.389,.921,.94,.092,.055,.017);
+  for(let i=-10;i<=10;i++) box(nose,iron,i*.047,-.253,.939,.013,.099,.017);
+  for(const s of [-1,1]) {
+    bevelBox(nose,white,s*.68,-.201,.928,.445,.073,.047,.018);
+    box(nose,steel,s*.7,-.254,.94,.32,.016,.024);
+    bevelBox(nose,stripe,s*.76,-.398,.895,.29,.079,.055,.017);
+    box(nose,white,s*.8,-.399,.925,.08,.022,.017);
+  }
+  box(nose,steel,0,-.207,.956,.113,.039,.019);
+
+  const cabin=group(root);
+  // Smoked glazing follows the roof pillars rather than standing upright.
+  const cabinPoints=[
+    [-.94,0,-1.04],[.94,0,-1.04],[.94,0,.99],[-.94,0,.99],
+    [-.65,.47,-.59],[.65,.47,-.59],[.64,.46,.28],[-.64,.46,.28]
+  ];
+  poly(cabin,glass,cabinPoints,[[0,4,5,1],[1,5,6,2],[2,6,7,3],[3,7,4,0],[0,1,2,3]]);
+  shell(cabin,yellow,[[-.66,.615,.418,.39],[-.57,.675,.482,.439],[.25,.673,.481,.432],[.33,.617,.437,.396]],true);
+  function beam(parent,mat,a,b,r) {
+    const d=b.clone().sub(a);
+    const part=cylinder(parent,mat,0,0,0,r,d.length(),'y',8);
+    part.position.copy(a).lerp(b,.5);
+    part.quaternion.setFromUnitVectors(v(0,1),d.normalize());
+  }
+  for(const s of [-1,1]) {
+    beam(cabin,yellow,v(s*.91,.012,.954),v(s*.637,.454,.272),.047);
+    beam(cabin,yellow,v(s*.91,.012,-.998),v(s*.647,.47,-.56),.062);
+    beam(cabin,iron,v(s*.859,.015,-.48),v(s*.659,.451,-.39),.031);
+  }
+
+  function wheel(parent) {
+    const wheel=group(parent);
+    cylinder(wheel,tire,0,0,0,.423,.357,'x',48);
+    cylinder(wheel,dark,0,0,0,.308,.369,'x',40);
+    for(const x of [-.179,.179]) {
+      const edge=mesh(wheel,new T.TorusGeometry(.376,.036,9,48),tire,x,0,0);
+      edge.rotation.y=PI/2;
+    }
+    for(let n=0;n<44;n++) {
+      const a=n*2*PI/44;
+      const rib=box(wheel,tread,0,.421*Math.cos(a),.421*Math.sin(a),.275,.007,.017);
+      rib.rotation.x=a;
+    }
+    for(const s of [-1,1]) {
+      const lip=mesh(wheel,new T.TorusGeometry(.293,.021,9,40),steel,s*.184,0,0);
+      lip.rotation.y=PI/2;
+      cylinder(wheel,iron,s*.188,0,0,.217,.018,'x',30);
+      for(let n=0;n<10;n++) {
+        const a=n*2*PI/10;
+        const spoke=box(wheel,steel,s*.202,.184*Math.cos(a),.184*Math.sin(a),.033,.194,.028);
+        spoke.rotation.x=a+.16;
+      }
+      cylinder(wheel,steel,s*.218,0,0,.086,.04,'x',20);
+      cylinder(wheel,dark,s*.242,0,0,.044,.012,'x',12);
+    }
+    return wheel;
+  }
+  function fender(parent,front,side) {
+    const shape=new T.Shape();
+    const edge=front?.79:.72;
+    shape.moveTo(-edge,.02);
+    shape.lineTo(-edge,.35);
+    shape.lineTo(-edge+.12,.55);
+    shape.lineTo(-.39,.625);
+    shape.lineTo(.34,.609);
+    shape.lineTo(edge-.1,.469);
+    shape.lineTo(edge,.33);
+    shape.lineTo(edge,.016);
+    shape.lineTo(.468,.016);
+    shape.absarc(0,.016,.468,0,PI,false);
+    shape.lineTo(-edge,.02);
+    const part=mesh(parent,new T.ExtrudeGeometry(shape,{depth:.234,bevelEnabled:true,bevelSize:.043,bevelThickness:.042,bevelSegments:2,curveSegments:14}),yellow,side===1?.233:.001,0,0);
+    part.rotation.y=-PI/2;
+    const inset=box(parent,iron,side*.237,.51,.03,.012,.029,.40);
+    inset.rotation.x=-.06;
+  }
+  function hinge(parent,x,y,z,r) {
+    cylinder(parent,iron,x,y,z,r,.25,'x');
+    cylinder(parent,steel,x,y,z,r*.60,.278,'x',12);
+    cylinder(parent,dark,x,y,z,r*.25,.287,'x',8);
+  }
+  // Rigid stern halves share the center seam in car form.
+  function deck(parent,side) {
+    const half=group(parent);
+    const offset=.485;
+    shell(half,yellow,[[-.45,.437,.155,-.215],[-.36,.486,.244,-.22],[.49,.482,.307,-.115],[.60,.435,.312,-.097]]);
+    for(const [z,y,z2,y2] of [[-.45,.155,-.36,.244],[-.36,.244,.49,.307],[.49,.307,.60,.312]]) {
+      const x=side*(.23-offset);
+      poly(half,stripe,[[x-.085,y+.006,z],[x+.085,y+.006,z],[x+.085,y2+.006,z2],[x-.085,y2+.006,z2]],[[0,3,2,1]]);
+    }
+    bevelBox(half,dark,0,-.092,-.455,.89,.143,.082,.025);
+    for(let n=0;n<3;n++) bevelBox(half,red,(n-1)*.208,-.072,-.503,.172,.053,.021,.012);
+    bevelBox(half,stripe,0,-.211,-.394,.911,.084,.15,.023);
+    for(const s of [-1,1]) cylinder(half,steel,s*.19,-.190,-.483,.038,.098,'z',14);
+    return half;
+  }
+
+  const pelvis=group(root);
+  bevelBox(pelvis,iron,0,0,0,1.24,.42,.64,.073);
+  bevelBox(pelvis,dark,0,-.08,.302,.71,.34,.15,.050);
+  bevelBox(pelvis,yellow,0,-.037,.402,.44,.218,.13,.044);
+  for(const s of [-1,1]) {
+    bevelBox(pelvis,yellow,s*.49,-.057,.28,.25,.295,.31,.05);
+    hinge(pelvis,s*.55,-.16,0,.191);
+  }
+
+  const spine=group(root);
+  bevelBox(spine,iron,0,-.52,0,.85,1.06,.65,.070);
+  bevelBox(spine,dark,0,-.48,.302,.62,.79,.21,.05);
+  for(const s of [-1,1]) {
+    cylinder(spine,steel,s*.35,-.54,.15,.071,.80);
+    cylinder(spine,iron,s*.35,-.69,.15,.104,.48);
+    for(let i=0;i<4;i++) box(spine,steel,s*.25,-.88+i*.093,.435,.14,.033,.036);
+  }
+
+  cylinder(spine,iron,0,.245,.035,.178,.62);
+  cylinder(spine,steel,0,.482,.035,.103,.32);
+  const head=group(root);
+  cylinder(head,steel,0,-.327,0,.146,.25);
+  bevelBox(head,dark,0,0,.026,.63,.49,.49,.105);
+  shell(head,yellow,[[-.294,.27,.176,-.222],[-.182,.344,.28,-.212],[.126,.321,.268,.095],[.251,.252,.174,.071]]);
+  bevelBox(head,iron,0,-.128,.235,.407,.184,.151,.032);
+  bevelBox(head,steel,0,-.213,.235,.271,.076,.092,.025);
+  bevelBox(head,yellow,0,.179,.083,.151,.235,.265,.032);
+  for(const s of [-1,1]) {
+    bevelBox(head,dark,s*.136,.036,.267,.243,.124,.093,.026);
+    const eye=bevelBox(head,blue,s*.123,.037,.317,.161,.062,.036,.014);
+    eye.rotation.z=s*.13;
+    bevelBox(head,yellow,s*.265,-.122,.152,.118,.251,.179,.028);
+    cylinder(head,steel,s*.321,.016,-.029,.098,.058,'x');
+    bevelBox(head,yellow,s*.254,.216,-.148,.124,.30,.19,.027).rotation.z=-s*.19;
+    for(let i=0;i<2;i++) box(head,dark,s*.085,-.116-i*.037,.315,.094,.014,.012);
+  }
+
+  const sides=[-1,1].map(s=>{
+    const shoulder=group(root);
+    const frontWheel=wheel(shoulder);
+    fender(shoulder,true,s);
+    cylinder(shoulder,iron,-s*.22,.001,0,.19,.27,'x');
+    const rear=group(root);
+    const rearWheel=wheel(rear);
+    fender(rear,false,s);
+    cylinder(rear,iron,-s*.19,0,0,.16,.23,'x');
+
+    const upper=group(root);
+    bevelBox(upper,iron,0,-.33,0,.40,.63,.44,.062);
+    bevelBox(upper,yellow,0,-.34,.202,.33,.35,.18,.052);
+    cylinder(upper,steel,s*.17,-.324,-.14,.059,.45);
+    hinge(upper,0,-.60,0,.175);
+    const fore=group(root);
+    bevelBox(fore,iron,0,-.31,0,.36,.57,.39,.058);
+    for(let i=0;i<3;i++) box(fore,steel,s*.17,-.23-i*.072,0,.045,.027,.27);
+    const door=group(root);
+    shell(door,yellow,[[-.78,.059,.155,-.192],[-.66,.114,.254,-.265],[.68,.122,.268,-.22],[.79,.063,.185,-.17]]);
+    bevelBox(door,stripe,0,-.242,-.015,.221,.083,1.48,.022);
+    box(door,iron,s*.113,.154,-.42,.028,.039,.23);
+    const mirror=bevelBox(door,yellow,s*.179,.279,.602,.264,.141,.21,.035);
+    mirror.rotation.y=s*.12;
+    const hand=group(root);
+    bevelBox(hand,iron,0,-.11,0,.33,.24,.33,.043);
+    for(let i=0;i<4;i++) {
+      bevelBox(hand,dark,(i-1.5)*.069,-.217,.067,.058,.146,.132,.020);
+      box(hand,steel,(i-1.5)*.069,-.191,.14,.043,.046,.018);
+    }
+    bevelBox(hand,iron,-s*.166,-.14,.064,.102,.13,.132,.025);
+
+    const thigh=group(root);
+    bevelBox(thigh,iron,0,-.44,0,.55,.83,.57,.076);
+    bevelBox(thigh,yellow,0,-.44,.275,.42,.47,.19,.058);
+    for(const k of [-1,1]) {
+      cylinder(thigh,steel,k*.229,-.36,-.155,.061,.57);
+      cylinder(thigh,iron,k*.229,-.55,-.155,.088,.35);
+    }
+    hinge(thigh,0,-.94,0,.206);
+
+    const shin=group(root);
+    bevelBox(shin,iron,0,-.49,0,.59,.88,.52,.064);
+    bevelBox(shin,yellow,0,-.346,.269,.44,.49,.205,.065);
+    bevelBox(shin,dark,0,-.498,.374,.228,.211,.052,.022);
+    for(let i=0;i<3;i++) box(shin,steel,0,-.443-i*.056,.405,.15,.015,.015);
+    cylinder(shin,steel,s*.23,-.66,-.17,.055,.39);
+    hinge(shin,0,-.86,0,.151);
+    const boot=deck(root,s);
+    return {s,shoulder,frontWheel,rear,rearWheel,upper,fore,door,hand,thigh,shin,boot};
+  });
+
+  function pose(part, amount, from, to, fromAngles=[0,0,0], toAngles=[0,0,0], arc=0) {
+    part.position.copy(from).lerp(to,amount);
+    part.position.y+=arc*Math.sin(PI*amount);
+    part.rotation.set(...fromAngles);
+    part.quaternion.slerp(new T.Quaternion().setFromEuler(new T.Euler(...toAngles)),amount);
+  }
+  function link(part,a,b) {
+    part.position.copy(a);
+    part.quaternion.setFromUnitVectors(v(0,-1),b.clone().sub(a).normalize());
+  }
+  function axialPair(part,amount,carA,carB,robotA,robotB) {
+    const a=carA.clone().lerp(robotA,amount);
+    // Interpolate the link's orientation separately so its metal housing stays rigid.
+    link(part,carA,carB);
+    const folded=part.quaternion.clone();
+    link(part,robotA,robotB);
+    part.quaternion.slerp(folded,1-amount);
+    part.position.copy(a);
+  }
+  const drive=1.49;
+  const strides=[
+    {start:0,end:.98,side:-1,from:0,to:.80,bodyFrom:0,bodyTo:.42},
+    {start:.98,end:2.03,side:1,from:0,to:drive,bodyFrom:.42,bodyTo:1.11},
+    {start:2.03,end:3,side:-1,from:.80,to:drive,bodyFrom:1.11,bodyTo:drive}
+  ];
+  function gait(t) {
+    const walk=T.MathUtils.clamp(t-4,0,3);
+    const step=strides.find(stride => walk<stride.end) || strides[2];
+    const p=ease((walk-step.start)/(step.end-step.start));
+    const lift=Math.sin(PI*p);
+    const feet=new Map([[-1,0],[1,0]]);
+    for(const stride of strides) {
+      if(walk>=stride.start) feet.set(stride.side,mix(stride.from,stride.to,range(walk,stride.start,stride.end)));
+    }
+    return {
+      z:mix(step.bodyFrom,step.bodyTo,p), feet,
+      lift, side:step.side, shift:-step.side*.109*lift,
+      swing:step.side*.34*lift, dip:.066*lift,
+      roll:-step.side*.037*lift
+    };
+  }
+  function animate(t) {
+    // Reverse the same assembly choreography during the second two-second window.
+    const morph=clamp(Math.min((t-1.5)/2,(9-t)/2));
+    const travel=gait(t);
+    const rollback=range(t,9,11);
+    root.position.set(0,0,travel.z-drive*rollback);
+    const wheelRoll=-drive*rollback/.423;
+    // Set the rim phase during reassembly, then integrate reverse rolling distance.
+    const rollAngle=drive/.423*range(t,7.35,8.98)+wheelRoll;
+    const liftBody=range(morph,.03,.87);
+    const armor=range(morph,.10,.88);
+    const unpack=range(morph,.02,.82);
+    const hero=range(t,3.51,3.72)*(1-range(t,3.80,4));
+    const sway=travel.shift*liftBody;
+    const bob=(-travel.dip+.022*hero)*liftBody;
+    pose(hood,armor,v(0,1.006,1.45),v(sway,3.15+bob,.38),[0,0,0],[1.49,-travel.swing*.12,travel.roll],.24);
+    // Front fascia hinges out below the breastplate so the lamps face forward.
+    nose.rotation.x=-1.36*range(morph,.27,.85);
+    nose.position.set(0,-.27+.19*range(morph,.28,.88),.68);
+    pose(cabin,range(morph,.02,.71),v(0,1.008,-.27),v(sway,3.15+bob,-.50),[0,0,0],[-1.43,0,travel.roll],.45);
+    pose(pelvis,liftBody,v(0,.52,-.64),v(sway,2.07+bob,-.05),[PI/2,0,0],[0,0,travel.roll*.6],.12);
+    pose(spine,liftBody,v(0,.65,.51),v(sway,3.20+bob,-.09),[-PI/2,0,0],[0,0,travel.roll],.15);
+    pose(head,range(morph,.39,1),v(0,.86,-.31),v(sway,4.15+bob,.16),[0,PI,0],[-.04-.13*hero,travel.swing*.32,-travel.roll]);
+
+    for(const part of sides) {
+      const {s}=part;
+      const shoulder=v(s*1.13+s*.065*hero+sway,3.43+bob,.015-s*travel.swing*.10);
+      const elbow=v(s*(1.43+.12*hero)+sway,2.86+bob,-s*travel.swing*.63-.05);
+      const wrist=v(s*(1.44+.15*hero)+sway,2.30+bob+.07*hero,-s*travel.swing*1.31+.035+.11*hero);
+      const carShoulder=v(s*.73,.55,1.26);
+      const carElbow=v(s*.73,.55,.66);
+      const carWrist=v(s*.73,.59,.057);
+      axialPair(part.upper,unpack,carShoulder,carElbow,shoulder,elbow);
+      axialPair(part.fore,unpack,carElbow,carWrist,elbow,wrist);
+      pose(part.hand,unpack,carWrist,wrist,[PI/2,0,0],[s*travel.swing*.52,0,-s*.08]);
+      pose(part.shoulder,range(morph,.045,.84),v(s*1.002,.426,1.53),
+        v(s*1.20+sway,3.43+bob,-.005-s*travel.swing*.10),[0,0,0],[s*.22,-s*.15,s*.13],.24);
+      pose(part.door,range(morph,0,.89),v(s*1.02,.727,.045),elbow.clone().lerp(wrist,.51).add(v(s*.196,.006,.09)),
+        [0,0,0],[1.54+s*travel.swing*.65,s*.42,s*.09],.28);
+      // Doors unlatch sideways before the elbow folds down.
+      part.door.position.x+=s*.29*Math.sin(PI*range(morph,.015,.93));
+
+      const swingFoot=travel.side===s ? travel.lift : 0;
+      const ankle=v(s*.565,.374+.24*swingFoot,travel.feet.get(s)-travel.z);
+      const hip=v(s*.49+sway,2.02+bob,-.085);
+      // Equal-length links solve in the plane defined by the hip, ankle and forward direction.
+      const axis=ankle.clone().sub(hip);
+      const distance=axis.length();
+      axis.normalize();
+      const forward=v(0,0,1).addScaledVector(axis,-axis.z).normalize();
+      const knee=hip.clone().lerp(ankle,.5).addScaledVector(forward,Math.sqrt(Math.max(0,.94**2-(distance/2)**2)));
+      const carHip=v(s*.44,.422,-.59);
+      const carKnee=v(s*.45,.444,-1.53);
+      const carAnkle=v(s*.44,.55,-.61);
+      axialPair(part.thigh,liftBody,carHip,carKnee,hip,knee);
+      axialPair(part.shin,liftBody,carKnee,carAnkle,knee,ankle);
+      const rearHub=ankle.clone().add(v(s*.29,.31,-.18));
+      pose(part.rear,range(morph,.05,.82),v(s*1.002,.426,-1.62),rearHub,[0,0,0],[.22,0,s*.06]);
+      part.rear.position.y=mix(.426,rearHub.y,range(morph,.48,.82));
+      pose(part.boot,range(morph,.03,.83),v(s*.487,.747,-1.994),
+        ankle.clone().add(v(0,-.125,.10)),[0,0,0],[0,s*PI,0]);
+      part.boot.position.y=mix(.747,ankle.y-.125,range(morph,.10,.50));
+      part.frontWheel.rotation.x=rollAngle;
+      part.rearWheel.rotation.x=rollAngle;
+    }
+  }
+  // Put the fascia's geometry in hinge-local coordinates.
+  for(const child of nose.children) child.position.sub(v(0,-.27,.68));
+
+  let playing=true, speed=1, anchor=performance.now(), base=0, time=0;
+  const sample = now => playing ? (base+(now-anchor)*.001*speed)%12 : base;
+  const phases=[[1.5,'Présentation voiture'],[3.5,'Déploiement'],[4,'Pose du robot'],[7,'Marche'],[9,'Repli mécanique'],[11,'Retour voiture'],[Infinity,'Présentation voiture']];
+  function display(t) {
+    time=t;
+    animate(t);
+    ui.seek.value=t;
+    ui.phase.textContent=phases.find(([end])=>t<end)[1];
+    ui.time.value=t.toFixed(2).padStart(5,'0').replace('.',',')+' / 12,00 s';
+  }
+  function setPlayback(t,on) {
+    base=t;
+    anchor=performance.now();
+    playing=on;
+    ui.play.textContent=on?'Ⅱ Pause':'▶ Lecture';
+    display(t);
+  }
+  function rate(value) {
+    const now=performance.now();
+    base=sample(now);
+    anchor=now;
+    speed=value;
+    ui.normal.setAttribute('aria-pressed',value===1);
+    ui.slow.setAttribute('aria-pressed',value===.25);
+  }
+  ui.play.onclick=()=>setPlayback(playing?sample(performance.now()):time,!playing);
+  ui.restart.onclick=()=>setPlayback(0,true);
+  ui.normal.onclick=()=>rate(1);
+  ui.slow.onclick=()=>rate(.25);
+  ui.seek.addEventListener('input',()=>setPlayback(Number(ui.seek.value),false));
+  ui.car.onclick=()=>setPlayback(0,false);
+  ui.robot.onclick=()=>setPlayback(3.76,false);
+  ui.camera.onclick=()=>frameShot(time,true);
+
+  frameShot(0,true);
+  display(0);
+  ui.startup.hidden=true;
+  // The animation clock begins with the first rendered frame.
+  let firstFrame=true;
+  renderer.setAnimationLoop(now=>{
+    if(firstFrame) {anchor=now;firstFrame=false;}
+    if(playing) display(sample(now));
+    frameShot(time);
+    controls.update();
+    renderer.render(scene,camera);
+  });
+}
+</script>
+</body>
+</html>

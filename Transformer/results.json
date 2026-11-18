@@ -1,0 +1,381 @@
+{
+  "name": "Transformer Benchmark 3",
+  "createdAt": "2026-11-17T21:18:15.373000+00:00",
+  "repetitions": 1,
+  "maxConcurrentRuns": 10,
+  "runs": [
+    {
+      "model": "claude-opus-5-5",
+      "requestedModel": "opus",
+      "agent": "claude",
+      "effort": "medium",
+      "status": "succeeded",
+      "cliVersion": "2.1.325",
+      "metrics": {
+        "version": 2,
+        "durationMs": 4042701,
+        "waitingMs": 1921240,
+        "firstTextMs": 1121765,
+        "inputTokens": 8345676,
+        "outputTokens": 176714,
+        "cacheReadTokens": 8119930,
+        "cacheCreationTokens": 222006,
+        "costUsd": 6.934563199999999,
+        "toolCalls": 46,
+        "toolsByName": {
+          "Bash": 30,
+          "Write": 1,
+          "Read": 15
+        },
+        "toolErrors": 3,
+        "toolDurationMs": 2207767,
+        "assistantMessages": 44,
+        "outputChars": 5139,
+        "contextTokens": 238741,
+        "model": "claude-opus-5-5"
+      },
+      "files": [
+        {
+          "path": "opus/index.html",
+          "sha256": "75da26cb03cbadbf8976e564d9101ae93d1e1d7376f67cb11657a11dcd19888d",
+          "sizeBytes": 47526
+        }
+      ]
+    },
+    {
+      "model": "claude-fable-5-2",
+      "requestedModel": "fable",
+      "agent": "claude",
+      "effort": "medium",
+      "status": "succeeded",
+      "cliVersion": "2.1.325",
+      "metrics": {
+        "version": 2,
+        "durationMs": 2033325,
+        "waitingMs": 0,
+        "firstTextMs": 1313628,
+        "inputTokens": 3566705,
+        "outputTokens": 141389,
+        "cacheReadTokens": 3380476,
+        "cacheCreationTokens": 182531,
+        "costUsd": 9.2520154,
+        "toolCalls": 34,
+        "toolsByName": {
+          "Bash": 22,
+          "Write": 1,
+          "Read": 11
+        },
+        "toolErrors": 4,
+        "toolDurationMs": 1027482,
+        "assistantMessages": 23,
+        "outputChars": 3577,
+        "contextTokens": 196002,
+        "model": "claude-fable-5-2"
+      },
+      "files": [
+        {
+          "path": "fable/index.html",
+          "sha256": "5078f903a94520cfd820fbed35b3a3d7de68e16f0acdfb12ab14240a4570fc97",
+          "sizeBytes": 39180
+        }
+      ]
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "requestedModel": "sonnet",
+      "agent": "claude",
+      "effort": "medium",
+      "status": "succeeded",
+      "cliVersion": "2.1.325",
+      "metrics": {
+        "version": 2,
+        "durationMs": 1226495,
+        "waitingMs": 0,
+        "firstTextMs": 700135,
+        "inputTokens": 3273853,
+        "outputTokens": 140926,
+        "cacheReadTokens": 3101922,
+        "cacheCreationTokens": 168235,
+        "costUsd": 2.3925889000000007,
+        "toolCalls": 24,
+        "toolsByName": {
+          "Bash": 16,
+          "Write": 1,
+          "Read": 7
+        },
+        "toolErrors": 0,
+        "toolDurationMs": 78093,
+        "assistantMessages": 22,
+        "outputChars": 4494,
+        "contextTokens": 181996,
+        "model": "claude-sonnet-5-5"
+      },
+      "files": [
+        {
+          "path": "sonnet/index.html",
+          "sha256": "353b7f6a3249ac4b1c98ca5288c1df607f4247bfd73a21454f2989d9aa4eaf5c",
+          "sizeBytes": 29000
+        }
+      ]
+    },
+    {
+      "model": "claude-haiku-5-5",
+      "requestedModel": "haiku",
+      "agent": "claude",
+      "effort": "medium",
+      "status": "succeeded",
+      "cliVersion": "2.1.325",
+      "metrics": {
+        "version": 2,
+        "durationMs": 581608,
+        "waitingMs": 0,
+        "firstTextMs": 576680,
+        "inputTokens": 2176083,
+        "outputTokens": 116777,
+        "cacheReadTokens": 2029937,
+        "cacheCreationTokens": 142462,
+        "costUsd": 0.33511795000000005,
+        "toolCalls": 18,
+        "toolsByName": {
+          "Bash": 10,
+          "Write": 1,
+          "Read": 7
+        },
+        "toolErrors": 2,
+        "toolDurationMs": 39330,
+        "assistantMessages": 16,
+        "outputChars": 2678,
+        "contextTokens": 154899,
+        "model": "claude-haiku-5-5"
+      },
+      "files": [
+        {
+          "path": "haiku/index.html",
+          "sha256": "0cbe7dfb2651ccabb600d8b1651f27ade9aba25df37b48a9cb3d1175bce00040",
+          "sizeBytes": 22736
+        }
+      ]
+    },
+    {
+      "model": "gpt-6-astra",
+      "requestedModel": "gpt-6-astra",
+      "agent": "codex",
+      "effort": "medium",
+      "status": "succeeded",
+      "cliVersion": "0.169.0",
+      "metrics": {
+        "version": 2,
+        "durationMs": 557546,
+        "waitingMs": 0,
+        "firstTextMs": 3668,
+        "inputTokens": 1705139,
+        "outputTokens": 19378,
+        "cacheReadTokens": 1654656,
+        "cacheCreationTokens": 0,
+        "costUsd": null,
+        "toolCalls": 32,
+        "toolsByName": {
+          "Bash": 23,
+          "ViewImage": 9
+        },
+        "toolErrors": 7,
+        "toolDurationMs": 166172,
+        "assistantMessages": 35,
+        "outputChars": 2567,
+        "contextTokens": 64418,
+        "model": "gpt-6-astra"
+      },
+      "files": [
+        {
+          "path": "gpt-6-astra/index.html",
+          "sha256": "d5014a9bac6b9200e48711c28ced688624e932dfe46c03a9389f46bc9c1c014b",
+          "sizeBytes": 23246
+        }
+      ]
+    },
+    {
+      "model": "gpt-6.2-sol",
+      "requestedModel": "gpt-6.2-sol",
+      "agent": "codex",
+      "effort": "medium",
+      "status": "succeeded",
+      "cliVersion": "0.169.0",
+      "metrics": {
+        "version": 2,
+        "durationMs": 476697,
+        "waitingMs": 0,
+        "firstTextMs": 4815,
+        "inputTokens": 1895488,
+        "outputTokens": 18091,
+        "cacheReadTokens": 1792128,
+        "cacheCreationTokens": 0,
+        "costUsd": null,
+        "toolCalls": 43,
+        "toolsByName": {
+          "WebSearch": 1,
+          "Bash": 29,
+          "ViewImage": 13
+        },
+        "toolErrors": 6,
+        "toolDurationMs": 288222,
+        "assistantMessages": 27,
+        "outputChars": 1566,
+        "contextTokens": 63694,
+        "model": "gpt-6.2-sol"
+      },
+      "files": [
+        {
+          "path": "gpt-6.2-sol/index.html",
+          "sha256": "fb4c36e3f6af7793dbd9bfc912743ea3dc575d33018d2d8bce0e42a76e2d2acb",
+          "sizeBytes": 28719
+        }
+      ]
+    },
+    {
+      "model": "gpt-6.2-astra",
+      "requestedModel": "gpt-6.2-astra",
+      "agent": "codex",
+      "effort": "medium",
+      "status": "succeeded",
+      "cliVersion": "0.169.0",
+      "metrics": {
+        "version": 2,
+        "durationMs": 283131,
+        "waitingMs": 0,
+        "firstTextMs": 4539,
+        "inputTokens": 446475,
+        "outputTokens": 6494,
+        "cacheReadTokens": 413440,
+        "cacheCreationTokens": 0,
+        "costUsd": null,
+        "toolCalls": 13,
+        "toolsByName": {
+          "Bash": 10,
+          "ViewImage": 3
+        },
+        "toolErrors": 3,
+        "toolDurationMs": 34755,
+        "assistantMessages": 10,
+        "outputChars": 1068,
+        "contextTokens": 31840,
+        "model": "gpt-6.2-astra"
+      },
+      "files": [
+        {
+          "path": "gpt-6.2-astra/index.html",
+          "sha256": "5fa579b84ae1d1e374777d8a8d76c0302d7cdfd28f885315696a76533b7feda9",
+          "sizeBytes": 12224
+        }
+      ]
+    },
+    {
+      "model": "gpt-6.1-terra",
+      "requestedModel": "gpt-6.1-terra",
+      "agent": "codex",
+      "effort": "medium",
+      "status": "succeeded",
+      "cliVersion": "0.169.0",
+      "metrics": {
+        "version": 2,
+        "durationMs": 73597,
+        "waitingMs": 0,
+        "firstTextMs": 3532,
+        "inputTokens": 95044,
+        "outputTokens": 3629,
+        "cacheReadTokens": 71552,
+        "cacheCreationTokens": 0,
+        "costUsd": null,
+        "toolCalls": 3,
+        "toolsByName": {
+          "Bash": 3
+        },
+        "toolErrors": 0,
+        "toolDurationMs": 0,
+        "assistantMessages": 4,
+        "outputChars": 915,
+        "contextTokens": 26437,
+        "model": "gpt-6.1-terra"
+      },
+      "files": [
+        {
+          "path": "gpt-6.1-terra/index.html",
+          "sha256": "2190a5c8ccff299dc77ef27431594c6a36520bc89f08e65bf91af7968091335b",
+          "sizeBytes": 8439
+        }
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "requestedModel": "gpt-6-luna",
+      "agent": "codex",
+      "effort": "medium",
+      "status": "succeeded",
+      "cliVersion": "0.169.0",
+      "metrics": {
+        "version": 2,
+        "durationMs": 165515,
+        "waitingMs": 0,
+        "firstTextMs": 3261,
+        "inputTokens": 210832,
+        "outputTokens": 8755,
+        "cacheReadTokens": 183552,
+        "cacheCreationTokens": 0,
+        "costUsd": null,
+        "toolCalls": 5,
+        "toolsByName": {
+          "Bash": 5
+        },
+        "toolErrors": 1,
+        "toolDurationMs": 0,
+        "assistantMessages": 9,
+        "outputChars": 1295,
+        "contextTokens": 37749,
+        "model": "gpt-6-luna"
+      },
+      "files": [
+        {
+          "path": "gpt-6-luna/index.html",
+          "sha256": "6358029c00bb3d991f2c96fa6d7966f27f809169a4ea30dec2a1be3bf629e372",
+          "sizeBytes": 19702
+        }
+      ]
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "requestedModel": "gpt-6.1-sol",
+      "agent": "codex",
+      "effort": "medium",
+      "status": "succeeded",
+      "cliVersion": "0.169.0",
+      "metrics": {
+        "version": 2,
+        "durationMs": 271560,
+        "waitingMs": 0,
+        "firstTextMs": 3862,
+        "inputTokens": 405988,
+        "outputTokens": 9055,
+        "cacheReadTokens": 374912,
+        "cacheCreationTokens": 0,
+        "costUsd": null,
+        "toolCalls": 14,
+        "toolsByName": {
+          "Bash": 9,
+          "ViewImage": 5
+        },
+        "toolErrors": 0,
+        "toolDurationMs": 60050,
+        "assistantMessages": 13,
+        "outputChars": 1361,
+        "contextTokens": 38375,
+        "model": "gpt-6.1-sol"
+      },
+      "files": [
+        {
+          "path": "gpt-6.1-sol/index.html",
+          "sha256": "43d1826f55093fe2e2af4abae620be880f850a7822aabbe77ee95527a934b0d6",
+          "sizeBytes": 14864
+        }
+      ]
+    }
+  ]
+}
