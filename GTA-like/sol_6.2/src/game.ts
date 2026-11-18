@@ -1,31 +1,44 @@
 import * as T from 'three';
 import {
-  bounds, carSpawn, chip, clamp, collective, distance, districtAt, dossier, elevation, exchange,
-  garage, gates, inRect, nodeContact, northDock, patrols, pedestrians, register, relay, residents, rooms, sensors,
-  sideContact, sorel, spawn, type Point, type Patrol, type Sensor,
+  bounds, carSpawn, chip, clamp, distance, districtAt, elevation, exchange,
+  garage, gates, inRect, patrols, rooms, sensors, spawn, type Point, type Patrol, type Sensor,
 } from './level';
-import { Physics, step } from './physics';
-import { City, Effects, makeCamera, makeCar, makeDrone, PersonModel, sightCone } from './visuals';
+import { Physics, step, type Contact } from './physics';
+import { City, Effects, makeCamera, makeCar, makeDrone, PersonModel, sightCone, type CarModel, type CarSide } from './visuals';
+import { furniture } from './furniture';
+import { civilFlows, populationPeriod, type CivilFlow } from './population';
+import { Traffic } from './traffic';
+import { places as p } from './places';
 import { Sound } from './sound';
-import { effects, implants, newGame, objectives, readSave, writeSave, type Ending, type Implant, type Route, type Save } from './progression';
+import {
+  effects, finishSide as awardSide, getSide, implants, nadiaPlateau, newGame, objectives,
+  readSave, sideAvailable, sideIds, writeSave, type ActionStep, type BlackmailChoice,
+  type Chapter, type Ending, type Implant, type Route, type Save, type SideId,
+} from './progression';
 
-type Intent = 'garage' | 'brief' | 'chip' | 'deliver' | 'dossier' | 'side' | 'register' | 'collective' | 'sorel' | 'relay' | 'residents' | 'car';
-type Interaction = { action: Intent; at: Point; label: string; range?: number };
-export type Pin = { at: Point; label: string; kind: 'goal' | 'route' | 'car' };
-export type Objective = { name: string; text: string; pins: Pin[] };
-export type Menu = 'garage' | 'brief' | 'side' | 'route' | 'ending' | 'failed' | 'epilogue' | 'residents';
-type Actor = { at: Point; previous: Point; yaw: number; health: number; hit: number; fall: number; model: PersonModel | T.Group; stride: number; momentum: Point };
+type Intent = 'garage' | 'brief' | 'progress' | 'offers' | 'offer' | 'sorel' | 'ada' | 'dialogue' | 'car';
+type Interaction = { action:Intent; at:Point; label:string; range?:number; side?:SideId; person?:string };
+export type Pin = { at:Point; label:string; kind:'goal'|'route'|'car' };
+export type Objective = { name:string; text:string; pins:Pin[] };
+export type Menu = 'garage'|'brief'|'offer'|'offers'|'route'|'ending'|'failed'|'epilogue'|'dialogue'|'side-choice';
+type Actor = { at:Point; previous:Point; yaw:number; health:number; hit:number; fall:number; model:PersonModel|T.Group; stride:number; momentum:Point };
 type Guard = Actor & {
-  spec: Patrol; cone: ReturnType<typeof sightCone>; state: 'patrol' | 'investigate' | 'pursue' | 'search';
-  routeIndex: number; path: Point[]; destination?: Point; timer: number; sight: number; gun: number; repath: number; stunned: number;
-  searchOrigin?: Point; searchIndex: number;
+  spec: Patrol; cone: ReturnType<typeof sightCone>; state:'patrol'|'investigate'|'pursue'|'search';
+  routeIndex:number; path:Point[]; destination?:Point; timer:number; sight:number; gun:number; repath:number; stunned:number;
+  searchOrigin?:Point; searchIndex:number;
 };
-type Civil = Actor & { a: Point; b: Point; returning: boolean; fear: number };
+type Civil = Actor & {
+  flow:CivilFlow; seed:number; start:Point; startNext:number; direction:number; next:number; wait:number; fear:number;
+  period:ReturnType<typeof populationPeriod>; route:Point[]; detour:Point[]; stalled:number; farTick:number;
+  changed:boolean;
+};
 type CameraSensor = { spec: Sensor; view: ReturnType<typeof makeCamera>; cone: ReturnType<typeof sightCone>; charge: number; disabled: number; yaw: number };
 type Observer = 'camera' | 'guard' | 'drone';
 const canvasLook = new T.Vector3(0, 56, 29);
 const initialYaw = Math.PI;
 const center: Point = [bounds.east, bounds.south];
+const publicService:Point[]=[[184.8,8.1],[190.4,9.6],[195.4,10.4],[197.3,11.3]];
+const redeployedWorkers:Point[]=[[199,-6.8],[210.1,-6.9],[216.1,-7.2],[219.8,-5.6]];
 const combine = (a: Point, b: Point, t: number): Point => [T.MathUtils.lerp(a[0], b[0], t), T.MathUtils.lerp(a[1], b[1], t)];
 const forward = (yaw: number): Point => [Math.sin(yaw), Math.cos(yaw)];
 const angle = (from: Point, to: Point) => Math.atan2(to[0] - from[0], to[1] - from[1]);
@@ -42,6 +55,11 @@ const actor = (at: Point, model: PersonModel | T.Group): Actor => ({
   at, previous: at, yaw: initialYaw, health: 100, hit: 0, fall: 0, model, stride: 0, momentum: [0, 0],
 });
 const position = (a: Actor) => a.model instanceof PersonModel ? a.model.root : a.model;
+const impactSide = (yaw: number, dx: number, dz: number): CarSide => {
+  const lateral = dx * Math.cos(yaw) - dz * Math.sin(yaw);
+  const lengthwise = dx * Math.sin(yaw) + dz * Math.cos(yaw);
+  return Math.abs(lateral) > Math.abs(lengthwise) ? (lateral > 0 ? 'right' : 'left') : (lengthwise > 0 ? 'front' : 'rear');
+};
 
 export class Game {
   readonly scene = new T.Scene();
@@ -49,6 +67,7 @@ export class Game {
   readonly renderer: T.WebGLRenderer;
   readonly physics = new Physics();
   readonly city = new City(this.scene);
+  readonly traffic = new Traffic(this.scene, this.physics);
   readonly sound = new Sound();
   readonly effects = new Effects(this.scene);
   readonly player = actor(spawn, new PersonModel('#9ccc79', 'player'));
@@ -63,7 +82,10 @@ export class Game {
   paused = false;
   driven = false;
   failed = false;
-  loot = false;
+  stage = 0;
+  selectedSide: SideId = 'U01';
+  dialoguePerson = 'Inès';
+  routeContact: Route = 'collective';
   confirmed = false;
   observation = 0;
   observer: Observer | null = null;
@@ -76,11 +98,19 @@ export class Game {
   pointer = { x: 0, y: 0, visible: false, down: false };
   aim: Point = [0, 0];
   cooldown: Record<Implant, number> = { intrusion: 0, decoy: 0, overload: 0 };
-  private impulse = 0;
+  private lastVehicleContact?: string;
+  private clearanceSinceContact = 0;
+  private readonly parkedModels = new Map<string, CarModel>();
   private gun = 0;
   private heat = -100;
   private alarm = false;
-  private hackGate = false;
+  private readonly hacked = new Set<string>();
+  private readonly gateState = new Map<string,boolean>();
+  private readonly escort = actor(p.ines,new PersonModel('#d2af83','contact'));
+  private escortActive = false;
+  private escortWait = 0;
+  private escortPath: Point[] = [];
+  private escortClock = 0;
   private frame = 0;
   private accumulator = 0;
   private resizeNeeded = true;
@@ -91,8 +121,9 @@ export class Game {
   private readonly cameraPlane = new T.Plane(new T.Vector3(0, 1, 0), 0);
   private readonly mina = home('#74d7c1', garage);
   private readonly minaExchange = home('#74d7c1', exchange);
-  private readonly contact = home('#d284a5', sideContact);
-  private readonly objectiveObjects: { group: T.Group; kind: 'chip' | 'dossier' | 'register' | 'relay' }[] = [];
+  private readonly nadiaPlateau = home('#8ed2a6',p.plateauNadia);
+  private readonly objectMarkers = new Map<string,{group:T.Group; at:Point}>();
+  private readonly communityDesk = home('#97dcaf',p.communityDesk);
 
   constructor(readonly canvas: HTMLCanvasElement, readonly onMenu: (menu: Menu) => void, readonly onFrame: (game: Game) => void) {
     this.renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -105,31 +136,42 @@ export class Game {
     const moon = new T.DirectionalLight('#b9d7fa', 1.48);
     moon.position.set(-24, 38, 29);
     this.scene.add(moon);
-    this.scene.add(position(this.player), this.car.model, this.mina, this.minaExchange, this.contact,
-      home('#d0b383', residents), home('#8eddac', collective), home('#a1c6f6', sorel), home('#a1c6f6', nodeContact));
-    for (const [at, yaw, tint] of [
+    this.scene.add(position(this.player),this.car.model,this.mina,this.minaExchange,this.nadiaPlateau,this.communityDesk,
+      position(this.escort),home('#a4c6e7',p.recordsSorel),home('#9bd3a7',p.nadia),home('#a1c6f6',p.sorel),
+      home('#a1c6f6',p.plateauSorel),home('#bc85a7',p.lise),home('#d69b85',p.keeper),
+      home('#c9b49b',p.paperOwner),home('#c8ab91',p.varenne));
+    for (const [index, [at, yaw, tint]] of ([
       [[-49, -16], .03, '#756564'], [[33, 38], -1.55, '#5f6682'], [[96, 39], 1.57, '#695965'], [[219, 10], Math.PI, '#536471'],
-    ] as [Point, number, string][]) {
+    ] as [Point, number, string][]).entries()) {
       const model = makeCar(tint);
       model.position.set(at[0], elevation(...at), at[1]);
       model.rotation.y = yaw;
       this.scene.add(model);
-      this.physics.addParked(at, yaw);
+      const id = 'parked-' + index;
+      this.parkedModels.set(id, model);
+      this.physics.addVehicle(id, at, yaw);
     }
-    for (const [kind, at, color] of [['chip', chip, '#e6f185'], ['dossier', dossier, '#e294b4'],
-      ['register', register, '#87eed8'], ['relay', relay, '#a0ccff']] as const) {
-      const group = new T.Group();
-      group.position.set(at[0], elevation(...at), at[1]);
-      const plinth = new T.Mesh(new T.BoxGeometry(1.18, .97, .75), new T.MeshStandardMaterial({ color: '#344654', metalness: .45, roughness: .56 }));
-      plinth.position.y = .5;
-      const terminal = new T.Mesh(new T.BoxGeometry(.81, .09, .46), new T.MeshBasicMaterial({ color }));
-      terminal.position.y = 1.025;
-      const panel = new T.Mesh(new T.BoxGeometry(.76, .09, .53), new T.MeshBasicMaterial({ color }));
-      panel.position.y = 1.32;
-      panel.rotation.y = .16;
-      group.add(plinth, terminal, panel);
+    const terminals = [
+      ['chip',chip,'#e8eea2'],['calendar',p.calendar,'#f5d199'],['portico',p.portico,'#9fd0be'],
+      ['audit',p.audit,'#8ac9cd'],['register',p.register,'#9ce2cf'],
+      ['nadiaConsole',p.nadiaConsole,'#a7e6bf'],['sorelConsole',p.sorelConsole,'#abcfff'],
+      ['purge',p.restoredConsole,'#f2c686'],['command',p.commander,'#bcd5f1'],
+      ['module',p.module,'#eac392'],['servicePanel',p.servicePanel,'#8edfae'],
+      ['residentLog',p.residentLog,'#e5cfaa'],['blackmail',p.blackmail,'#d2a5c2'],
+      ['paper',p.paper,'#e7c493'],['nightExit',p.lastGate,'#8fe2c7'],['sideItem',p.contracts,'#dec999'],
+      ['board',p.contracts,'#eac98b'],
+    ] as const;
+    for (const [kind,at,color] of terminals) {
+      const group=new T.Group();
+      group.position.set(at[0],elevation(at[0],at[1]),at[1]);
+      const plinth=new T.Mesh(new T.BoxGeometry(1.06,.94,.69),new T.MeshStandardMaterial({color:'#344654',metalness:.45,roughness:.56}));
+      plinth.position.y=.47;
+      const panel=new T.Mesh(new T.BoxGeometry(.83,.13,.56),new T.MeshBasicMaterial({color}));
+      panel.position.y=.994;
+      group.add(plinth,panel);
       this.scene.add(group);
-      this.objectiveObjects.push({ kind, group });
+      this.objectMarkers.set(kind,{group,at});
+      this.physics.addProp('terminal-'+kind,[at[0],at[1],1.06,.69],.94);
     }
     for (const spec of patrols) {
       const model = spec.drone ? makeDrone() : new PersonModel('#c08372', 'guard');
@@ -138,10 +180,16 @@ export class Game {
       this.scene.add(position(a), cone);
       this.guards.push({ ...a, spec, cone, state: 'patrol', routeIndex: 0, path: [], timer: 0, sight: 0, gun: .8, repath: 0, stunned: 0, searchIndex: 0 });
     }
-    for (const spec of pedestrians) {
-      const a = actor(spec.at, new PersonModel(spec.tint, 'civil'));
-      this.scene.add(position(a));
-      this.civils.push({ ...a, a: spec.at, b: spec.to, returning: false, fear: 0 });
+    const clothes = ['#9dbeaa','#b58373','#7a8cbb','#b9a66e','#83aaa7','#b281a2','#b3b8af','#6d8799'];
+    for (const flow of civilFlows) {
+      for(let i=0;i<flow.count;i++){
+        const lane=(i+.24)/flow.count*(flow.route.length-1), section=Math.floor(lane);
+        const seed=this.civils.length, start=combine(flow.route[section],flow.route[section+1],lane-section);
+        const person=actor(start,new PersonModel(clothes[seed%clothes.length],'civil'));
+        this.scene.add(position(person));
+        this.civils.push({ ...person, flow, seed, start, startNext:section+1, direction:1, next:section+1, wait:i%2?.70+i*.25:0,
+          fear:0,period:'morning',route:flow.route,detour:[],stalled:0,farTick:0,changed:false });
+      }
     }
     for (const spec of sensors) {
       const view = makeCamera(), cone = sightCone(13.8, 4.9, '#ffd473');
@@ -150,7 +198,7 @@ export class Game {
       this.cameras.push({ spec, view, cone, charge: 0, disabled: 0, yaw: spec.angle });
     }
     this.resetScene();
-    this.view.set(spawn[0], 0, spawn[1] - 2);
+    this.view.set(spawn[0], elevation(...spawn), spawn[1] - 2);
     window.addEventListener('resize', () => { this.resizeNeeded = true; });
     this.frame = performance.now();
     requestAnimationFrame(this.animate);
@@ -159,6 +207,26 @@ export class Game {
   get at() { return this.driven ? this.car.at : this.player.at; }
   get received() { return this.save.chapter > 1; }
   get active() { return this.save.checkpoint === this.save.chapter && !this.save.ending; }
+  get busy() { return this.active || this.save.side !== null; }
+  get loot() { return this.stage > 0; }
+  get offerIds() { return sideIds.filter(id=>sideAvailable(this.save,id)); }
+  get missionContact() {
+    return this.save.chapter===5 && this.save.route==='collective'
+      ? {at:p.plateauNadia,contact:'Nadia Keita'} : objectives[this.save.chapter];
+  }
+  get purgeClock() {
+    const remaining=330-Math.max(0,Math.floor(this.time-this.purgeStart));
+    const next=remaining<=0?0:remaining;
+    return String(Math.floor(next/60)).padStart(2,'0')+':'+String(next%60).padStart(2,'0');
+  }
+  private purgeStart = 0;
+  get dossier() { return getSide(this.save,this.selectedSide); }
+  private get currentStep():ActionStep|undefined {
+    if(this.save.side) return getSide(this.save,this.save.side).steps[this.stage];
+    if(!this.active) return;
+    if(this.save.chapter===5 && this.stage===0 && this.save.route==='collective') return nadiaPlateau;
+    return objectives[this.save.chapter].steps[this.stage];
+  }
   get pursuing() { return this.guards.some(g => g.health > 0 && (g.state === 'pursue' || g.state === 'search')); }
   get availableImplants(): Implant[] { return this.save.route ? ['intrusion', 'decoy', 'overload'] : ['intrusion', 'decoy']; }
 
@@ -167,7 +235,7 @@ export class Game {
     this.pause(false);
     this.persist();
     void this.sound.enable().catch(() => undefined);
-    if (this.active) this.notice('Reprise au garage. Le contrat est réinitialisé au briefing.');
+    if (this.busy) this.notice('Reprise au garage. Le contrat repart de son premier objectif.');
   }
 
   restart() {
@@ -204,54 +272,76 @@ export class Game {
   }
 
   track(which: Save['tracking']) {
-    if ((this.active || this.save.side === 'accepted') && this.save.tracking !== which) return;
-    this.save.tracking = which;
+    if (this.busy || (which!=='main'&&!sideAvailable(this.save,which))) return;
+    this.save.tracking=which;
     this.persist();
   }
 
   accept() {
-    if (this.active || this.save.ending || this.save.side === 'accepted') return;
-    this.save = { ...this.save, checkpoint: this.save.chapter, tracking: 'main' };
-    this.health = 100;
+    if (this.busy || this.save.ending) return;
+    this.stage=0;
+    this.save={...this.save,checkpoint:this.save.chapter,tracking:'main'};
+    this.health=100;
+    if(this.save.chapter>=5) this.purgeStart=this.time;
+    this.refreshWorld();
     this.persist();
-    this.sound.beep(503, .23, .18, 733);
-    this.notice('Contrat accepté. Le journal indique les accès connus.');
+    this.sound.beep(503,.23,.18,733);
+    this.notice('Mission acceptée. Le journal indique les accès connus.');
   }
 
-  acceptSide() {
-    if (this.active || this.save.side !== 'available') return;
-    this.save = { ...this.save, side: 'accepted', tracking: 'side' };
+  acceptSide(id:SideId) {
+    if (this.busy || !sideAvailable(this.save,id)) return;
+    this.stage=0;
+    this.save={...this.save,side:id,tracking:id};
+    this.refreshWorld();
     this.persist();
-    this.notice('Suivez le dossier dans la rue des ateliers.');
+    this.notice(getSide(this.save,id).name+' · Contrat accepté.');
+  }
+
+  selectSide(id:SideId) {
+    if(!sideAvailable(this.save,id)||this.busy) return;
+    this.selectedSide=id;
+    this.onMenu('offer');
   }
 
   finishRoute(route: Route) {
-    if (!this.active || this.save.chapter !== 2 || !this.loot) return;
-    this.save = { ...this.save, route, chapter: 3, checkpoint: null, credits: this.save.credits + 750 };
-    this.endSequence();
-    this.notice(effects[route].now + ' Surcharge est disponible au garage.', 6);
+    if(!this.active||this.save.chapter!==4||this.currentStep?.kind!=='choice') return;
+    this.save={...this.save,route};
+    this.completeMission(effects[route].now+' Surcharge est disponible au garage.');
   }
 
   finishEnding(ending: Ending) {
-    if (!this.active || this.save.chapter !== 3 || !this.loot) return;
-    this.save = { ...this.save, ending, checkpoint: null, credits: this.save.credits + 1000 };
-    this.endSequence();
+    if(!this.active||this.save.chapter!==6||this.currentStep?.kind!=='choice') return;
+    this.save={...this.save,ending};
+    this.completeMission(effects[ending].now);
     this.onMenu('epilogue');
   }
 
-  retry(abandon: boolean) {
-    if (abandon) this.save = { ...this.save, checkpoint: null, side: this.save.side === 'accepted' ? 'available' : this.save.side };
+  finishBlackmail(choice:BlackmailChoice) {
+    if(this.save.side!=='U03'||this.currentStep?.kind!=='choice') return;
+    this.completeSide('U03',choice);
+  }
+
+  retry(abandon:boolean) {
+    if(abandon) this.save={...this.save,checkpoint:null,side:null,tracking:'main'};
     this.resetScene();
     this.persist();
-    this.notice(abandon ? 'De retour en ville libre.' : 'Point de reprise au garage.');
+    this.notice(abandon?'De retour en ville libre.':'Point de reprise au garage.');
   }
 
   private resetScene() {
     Object.assign(this.player, { at: spawn, previous: spawn, yaw: initialYaw, health: 100, hit: 0, fall: 0, momentum: [0, 0] });
     Object.assign(this.car, { at: carSpawn, previous: carSpawn, yaw: initialYaw, lastYaw: initialYaw, speed: 0 });
+    this.lastVehicleContact = undefined;
+    this.clearanceSinceContact = 0;
+    this.car.model.resetDamage();
+    for (const vehicle of this.parkedModels.values()) vehicle.resetDamage();
+    this.traffic.reset();
+    this.city.resetProps();
+    for (const prop of furniture) this.physics.setProp(prop.id, true);
     this.driven = false;
     this.failed = false;
-    this.loot = false;
+    this.stage = 0;
     this.health = 100;
     this.safeFor = 5;
     this.confirmed = false;
@@ -259,12 +349,18 @@ export class Game {
     this.observer = null;
     this.heat = -100;
     this.alarm = false;
-    this.hackGate = false;
+    this.hacked.clear();
+    this.gateState.clear();
+    this.escortActive=false;
+    this.escortWait=0;
+    this.escortPath=[];
+    this.escortClock=0;
+    this.purgeStart=this.time;
     this.cooldown = { intrusion: 0, decoy: 0, overload: 0 };
     this.damageFlash = 0;
     this.gun = 0;
     this.effects.clear();
-    this.view.set(spawn[0], 0, spawn[1] - 1.8);
+    this.view.set(spawn[0], elevation(...spawn), spawn[1] - 1.8);
     this.physics.setParked(this.car.at, this.car.yaw, true);
     this.physics.tick();
     for (const g of this.guards) Object.assign(g, {
@@ -272,149 +368,241 @@ export class Game {
       routeIndex: 0, path: [], destination: undefined, timer: 0, sight: 0, repath: 0, stunned: 0, searchIndex: 0,
       momentum: [0, 0], gun: .8,
     });
-    for (const c of this.civils) Object.assign(c, { at: c.a, previous: c.a, health: 100, hit: 0, fall: 0, returning: false, fear: 0, momentum: [0, 0] });
+    for (const c of this.civils) {
+      const next=c.startNext;
+      Object.assign(c,{at:c.start,previous:c.start,health:100,hit:0,fall:0,direction:1,next,wait:c.seed%4*.42,
+        fear:0,momentum:[0,0],period:'morning',route:c.flow.route,detour:[],stalled:0,farTick:0,changed:false});
+    }
     for (const s of this.cameras) Object.assign(s, { charge: 0, disabled: 0 });
     this.refreshWorld();
     this.paint(1, 0);
   }
 
   private endSequence() {
-    this.loot = false;
-    this.alarm = false;
+    this.stage=0;
+    this.alarm=false;
+    this.escortActive=false;
     this.refreshWorld();
     this.persist();
-    this.sound.beep(678, .4, .13, 1010);
+    this.sound.beep(678,.4,.13,1010);
+  }
+
+  private completeMission(result?:string) {
+    const id=this.save.chapter, award=objectives[id].reward;
+    this.save={...this.save,chapter:Math.min(6,id+1) as Chapter,checkpoint:null,credits:this.save.credits+award,tracking:'main'};
+    this.endSequence();
+    const notices:Partial<Record<Chapter,string>>={
+      1:'Puce remise. Le passage de service est ouvert. Mina a du travail à l’atelier.',
+      2:'La purge vise la résidence haute. Nadia vous attend à La Dalle.',
+      3:'Le journal confirme le bordereau. Deux quêtes s’ouvrent à La Dalle.',
+      5:'Le poste affiche l’horloge de purge. Sorel veut vous parler.',
+    };
+    this.notice((result??notices[id]??'Mission terminée.')+' +'+award+' ₡',6);
+  }
+
+  private completeSide(id:SideId,choice?:BlackmailChoice) {
+    const quest=getSide(this.save,id), next=awardSide(this.save,id,choice);
+    if(next===this.save) return;
+    this.save=next;
+    this.endSequence();
+    this.notice(quest.result+' +'+quest.reward+' ₡',6);
+  }
+
+  private updateGates() {
+    const {chapter,route,ending,completed}=this.save;
+    const recordsShift=this.time%28;
+    const northernShift=this.time%23;
+    const open:Record<string,boolean>={
+      'depot-gate':false,
+      service:this.received,
+      'records-front':chapter>2 || (chapter===2&&recordsShift>=6&&recordsShift<24.5),
+      'records-side':chapter>2,
+      gallery:route==='collective'||ending==='publish',
+      community:route==='collective'||ending==='publish',
+      badge:route==='sorel'||ending==='protect',
+      'shop-door':completed.includes('U03'),
+      'residence-court':completed.includes('U02'),
+      'paper-way':completed.includes('U04'),
+      'night-exit':completed.includes('U05'),
+      'night-passage':!!ending || (chapter===6&&northernShift>=5&&northernShift<15),
+    };
+    for(const gate of gates){
+      const wanted=!!open[gate.id] || this.hacked.has(gate.id);
+      const staysOpen=this.gateState.get(gate.id) && inRect(...this.at,gate.area,this.driven?2:.5);
+      const active=wanted||!!staysOpen;
+      if(this.gateState.get(gate.id)===active) continue;
+      this.gateState.set(gate.id,active);
+      this.physics.setGate(gate.id,active);
+      this.city.gateMeshes.get(gate.id)!.visible=!active;
+    }
   }
 
   private refreshWorld() {
-    const open: Record<string, boolean> = {
-      'depot-gate': this.hackGate, service: this.received,
-      gallery: this.save.route === 'collective' || this.save.ending === 'publish',
-      community: this.save.route === 'collective' || this.save.ending === 'publish',
-      badge: this.save.route === 'sorel' || this.save.ending === 'protect',
-    };
-    for (const g of gates) {
-      this.physics.setGate(g.id, open[g.id]);
-      this.city.gateMeshes.get(g.id)!.visible = !open[g.id];
+    this.updateGates();
+    this.minaExchange.visible=this.active&&this.save.chapter===1&&this.stage===1;
+    this.nadiaPlateau.visible=this.save.route==='collective';
+    this.communityDesk.visible=this.save.ending==='publish';
+    this.city.setStoryLights(this.save.completed.includes('U01'),this.save.completed.includes('U04'),this.save.ending);
+    const step=this.currentStep;
+    for(const [kind,marker] of this.objectMarkers) {
+      const isGoal=kind===step?.signal;
+      const visible=isGoal || (kind==='chip'&&!this.received&&this.stage===0) || (kind==='board'&&this.received);
+      if(kind==='sideItem'&&isGoal) {
+        marker.at=step!.at;
+        marker.group.position.set(marker.at[0],elevation(...marker.at),marker.at[1]);
+        this.physics.placeProp('terminal-'+kind,marker.at,.94);
+      }
+      marker.group.visible=visible;
+      this.physics.setProp('terminal-'+kind,visible);
     }
-    this.minaExchange.visible = this.active && this.save.chapter === 1 && this.loot;
-    this.contact.visible = this.received;
-    for (const { kind, group } of this.objectiveObjects) {
-      group.visible = kind === 'dossier' ? this.save.side === 'accepted' && !this.loot
-        : kind === 'chip' ? !this.received && !this.loot
-        : kind === 'register' ? this.save.chapter <= 2 && !(this.save.chapter === 2 && this.loot)
-        : true;
+    const waitingEscort=this.save.side==='C04' && this.stage===0;
+    position(this.escort).visible=this.escortActive || waitingEscort || this.save.chapter>=3;
+    if(!this.escortActive){
+      const spot=waitingEscort&&step ? step.at : this.save.completed.includes('U02') ? [116.2,13.9] as Point : p.ines;
+      this.escort.at=this.escort.previous=spot;
     }
   }
 
   objective(): Objective {
-    const { chapter, checkpoint, side, tracking, ending, route } = this.save;
-    const goal = (name: string, text: string, at: Point, label: string, others: Pin[] = []): Objective =>
-      ({ name, text, pins: [waypoint(at, label), ...others] });
-    if (tracking === 'side' && side !== 'complete' && side !== 'locked') {
-      if (side === 'available') return goal('Sous scellés', 'Rencontrer Ilyes au dispensaire', sideContact, 'Ilyes');
-      return this.loot
-        ? goal('Sous scellés', 'Rapporter le dossier à Ilyes', sideContact, 'Ilyes')
-        : goal('Sous scellés', 'Récupérer le dossier près des ateliers', dossier, 'Dossier');
-    }
-    if (checkpoint === null) {
-      if (ending) return { name: 'Ville libre', text: 'Les choix du registre restent visibles dans la ville.', pins: [] };
-      return chapter === 3 ? goal(objectives[chapter].name, 'Rencontrer Sorel au Nœud', nodeContact, 'Sorel')
-        : goal(objectives[chapter].name, 'Parler à Mina au garage', garage, 'Mina', chapter === 1 ? [waypoint(carSpawn, 'Voiture', 'car')] : []);
-    }
-    if (chapter === 1) {
-      if (!this.loot) {
-        const inCourtyard = inRect(...this.at, [6.5, -28, 21, 20]);
-        const entry = inCourtyard ? waypoint(northDock, 'Quai nord ouvert', 'route')
-          : waypoint([4.7, -23.4], 'Cour latérale', 'route');
-        return goal('Puce fantôme', 'Récupérer la puce au dépôt F-07', chip, 'Puce', [
-          waypoint([22, -11.2], 'Entrée principale', 'route'), entry,
-        ]);
+    const {chapter,side,tracking,ending,route}=this.save;
+    const goal=(name:string,text:string,at:Point,label:string,others:Pin[]=[]):Objective=>({name,text,pins:[waypoint(at,label),...others]});
+    const step=this.currentStep;
+    if(step){
+      const name=side?getSide(this.save,side).name:objectives[chapter].name;
+      let routes=step.routes?.map(entry=>waypoint(entry.at,entry.label,'route'))??[];
+      if(!side&&chapter===1&&this.stage===0) {
+        const inCourtyard=inRect(...this.at,[6.5,-28,21,20]);
+        routes[1]=inCourtyard?routes[1]:waypoint([4.7,-23.4],'Cour latérale','route');
+        routes.push(waypoint(p.escapeParking,'Parking de fuite','route'));
       }
-      const routePins = this.driven ? [waypoint([43, -41], 'Pont routier', 'route')]
-        : [waypoint([13, -35], 'Escalier', 'route'), waypoint([43, -41], 'Pont routier', 'route')];
-      return goal('Puce fantôme', 'Remettre la puce à Mina sous les voies', exchange, 'Remise', routePins);
+      if(!side&&chapter===6) routes.push(route==='collective'
+        ?waypoint([178.8,-29],'Couloir communautaire','route')
+        :waypoint([192.5,-13.3],'Couloir du vestibule','route'));
+      return goal(name,step.text,step.at,step.label,routes);
     }
-    if (chapter === 2) {
-      if (!this.loot) return goal('Les effacés', 'Récupérer le registre aux archives', register, 'Registre', [
-        waypoint([102, -13.5], 'Guichet sud', 'route'), waypoint([114, -38], 'Passage nord', 'route'),
-      ]);
-      return goal('Les effacés', 'Choisir à qui confier le registre', collective, 'Collectif', [waypoint(sorel, 'Sorel', 'route')]);
+    if(tracking!=='main'&&sideAvailable(this.save,tracking)){
+      const q=getSide(this.save,tracking);
+      return goal(q.name,'Rencontrer '+q.contact,q.at,q.contact);
     }
-    if (!this.loot) return goal('Le Nœud', 'Activer le relais central', relay, 'Relais', [
-      route === 'collective' ? waypoint([178.1, -29], 'Accès communautaire', 'route') : waypoint([193, -12.7], 'Entrée de service', 'route'),
-    ]);
-    return goal('Le Nœud', 'Décider du sort du registre au relais', relay, 'Registre');
+    if(ending) return {name:'Ville libre',text:effects[ending].later,pins:[]};
+    const contact=this.missionContact;
+    return goal(objectives[chapter].name,'Parler à '+contact.contact,contact.at,contact.contact,
+      chapter===1?[waypoint(carSpawn,'Voiture','car')]:[]);
   }
 
   interaction(): Interaction | undefined {
-    if (this.driven) return { action: 'car', at: this.at, label: Math.abs(this.car.speed) > 2.2 ? 'Freinez pour descendre' : 'Descendre de la voiture' };
-    const { chapter, side, ending } = this.save, list: Interaction[] = [];
-    list.push({ action: 'garage', at: garage, label: 'Parler à Mina', range: 3.4 });
-    list.push({ action: 'car', at: this.car.at, label: 'Prendre la voiture', range: 3.25 });
-    list.push({ action: 'residents', at: residents, label: 'Parler à l’habitante' });
-    if (this.active) {
-      if (chapter === 1 && !this.loot) list.push({ action: 'chip', at: chip, label: 'Prendre la puce' });
-      if (chapter === 1 && this.loot) list.push({ action: 'deliver', at: exchange, label: this.safeFor >= 5 ? 'Donner la puce à Mina' : 'Attendre la fin de la détection', range: 3.25 });
-      if (chapter === 2 && !this.loot) list.push({ action: 'register', at: register, label: 'Prendre le registre' });
-      if (chapter === 2 && this.loot) list.push({ action: 'collective', at: collective, label: 'Parler au collectif' }, { action: 'sorel', at: sorel, label: 'Parler à Sorel' });
-      if (chapter === 3) list.push({ action: 'relay', at: relay, label: this.loot ? 'Décider du sort du registre' : 'Activer le relais', range: 2.45 });
-    } else if (!ending && side !== 'accepted') {
-      if (chapter === 2) list.push({ action: 'brief', at: sorel, label: 'Parler à Sorel' });
-      if (chapter === 3) list.push({ action: 'brief', at: nodeContact, label: 'Parler à Sorel' });
+    if(this.driven) return {action:'car',at:this.at,label:Math.abs(this.car.speed)>2.2?'Freinez pour descendre':'Descendre de la voiture'};
+    const {chapter,side,ending}=this.save;
+    const list:Interaction[]=[
+      {action:'garage',at:garage,label:'Parler à Mina',range:3.25},
+      {action:'car',at:this.car.at,label:'Prendre la voiture',range:3.25},
+    ];
+    const task=this.currentStep;
+    if(task){
+      const label=task.kind==='delivery'&&this.safeFor<5?'Attendre la fin de la détection'
+        : task.kind==='escort'&&distance(this.escort.at,task.at)>3.3?'Attendre la personne accompagnée':task.label;
+      list.unshift({action:'progress',at:task.at,label,range:task.kind==='delivery'?3.25:2.6});
+      if(chapter===4 && this.active && task.kind==='choice') list.push({action:'sorel',at:p.sorel,label:'Confier le registre à Sorel'});
+      if(side==='U03' && this.stage===0&&!this.hacked.has('shop-door')){
+        list.push({action:'ada',at:p.keeper,label:'Demander l’accès à Ada'});
+      }
+    } else {
+      const contact=this.missionContact;
+      if(!ending && chapter!==1) list.push({action:'brief',at:contact.at,label:'Parler à '+contact.contact});
+      if(this.received) list.push({action:'offers',at:p.contracts,label:'Voir les offres des relais'});
+      for(const id of this.offerIds){
+        if(id[0]==='C') continue;
+        const q=getSide(this.save,id);
+        if(id===this.save.tracking || distance(q.at,garage)>.5)
+          list.push({action:'offer',at:q.at,label:q.name,side:id,range:2.9});
+      }
     }
-    if (side !== 'locked' && side !== 'complete') list.push({ action: 'side', at: sideContact, label: side === 'available' ? 'Parler à Ilyes' : 'Remettre le dossier à Ilyes' });
-    if (side === 'accepted' && !this.loot) list.push({ action: 'dossier', at: dossier, label: 'Prendre le dossier' });
-    return list.filter(p => distance(p.at, this.at) <= (p.range ?? 2.65) && this.physics.ray(this.at, p.at, 1.3, 1.4, p.action === 'car') > .89)
-      .sort((a, b) => distance(a.at, this.at) - distance(b.at, this.at))[0];
+    if(chapter>=3&&!this.escortActive&&!this.save.completed.includes('U02')) list.push({action:'dialogue',at:p.ines,label:'Parler à Inès',person:'Inès'});
+    if(this.save.records) list.push({action:'dialogue',at:p.lise,label:'Parler à Lise',person:'Lise Marec'});
+    if(ending) list.push({action:'dialogue',at:p.varenne,label:'Parler à Varenne',person:'Élias Varenne'});
+    if(ending==='publish') list.push({action:'dialogue',at:p.communityDesk,label:'Demander un accès provisoire',person:'Relais de quartier'});
+    const reachable=list.filter(i=>distance(i.at,this.at)<=(i.range??2.65)
+      && this.physics.ray(this.at,i.at,1.3,1.4,i.action==='car')>.89);
+    return reachable.find(i=>i.action==='progress') ?? reachable.find(i=>i.side===this.save.tracking)
+      ?? reachable.sort((a,b)=>distance(a.at,this.at)-distance(b.at,this.at))[0];
   }
 
   interact() {
-    if (!this.running || this.paused || this.failed) return;
-    const intent = this.interaction();
-    if (!intent) return;
-    switch (intent.action) {
-      case 'car': this.transfer(); break;
-      case 'garage':
-        this.health = 100;
-        this.onMenu('garage');
+    if(!this.running||this.paused||this.failed) return;
+    const intent=this.interaction();
+    if(!intent) return;
+    switch(intent.action){
+      case 'car':this.transfer();break;
+      case 'garage':this.health=100;this.onMenu('garage');break;
+      case 'brief':this.onMenu('brief');break;
+      case 'offers':this.onMenu('offers');break;
+      case 'offer':if(intent.side) this.selectSide(intent.side);break;
+      case 'sorel':this.routeContact='sorel';this.onMenu('route');break;
+      case 'dialogue':this.dialoguePerson=intent.person!;this.onMenu('dialogue');break;
+      case 'ada':
+        this.hacked.add('shop-door');this.refreshWorld();
+        this.notice('Ada ouvre l’arrière-boutique. Elle attend que Lise décide du sort de la copie.',5);
         break;
-      case 'brief': this.onMenu('brief'); break;
-      case 'residents': this.onMenu('residents'); break;
-      case 'chip':
-      case 'register': this.take(intent.at); break;
-      case 'dossier':
-        this.loot = true;
-        this.refreshWorld();
-        this.sound.beep(580, .16, .13, 765);
-        this.notice('Dossier récupéré. Retournez voir Ilyes.');
-        break;
-      case 'deliver':
-        if (this.safeFor < 5) {
-          this.notice('La remise exige cinq secondes sans détection confirmée.');
-          return;
-        }
-        this.save = { ...this.save, chapter: 2, checkpoint: null, side: 'available', credits: this.save.credits + 450 };
-        this.endSequence();
-        this.notice('Puce remise. Passage de service ouvert. +450 ₡', 5);
-        break;
-      case 'side':
-        if (this.save.side === 'available') this.onMenu('side');
-        else if (this.loot && this.save.side === 'accepted') {
-          this.save = { ...this.save, side: 'complete', tracking: 'main', credits: this.save.credits + 280 };
-          this.endSequence();
-          this.notice('Ilyes détruit les dossiers. +280 ₡');
-        } else this.notice('Ilyes attend le dossier de chantage.');
-        break;
-      case 'collective':
-      case 'sorel': this.onMenu('route'); break;
-      case 'relay':
-        if (this.loot) this.onMenu('ending');
-        else {
-          this.take(intent.at);
-          this.notice('Relais connecté. Interagissez de nouveau pour décider.', 3.5);
-        }
-        break;
+      case 'progress':this.progress();break;
+    }
+  }
+
+  private progress() {
+    const step=this.currentStep;
+    if(!step) return;
+    const id=this.save.side, chapter=this.save.chapter;
+    if(step.kind==='delivery'&&this.safeFor<5){this.notice('Mina attend cinq secondes sans détection confirmée.');return;}
+    if(step.kind==='escort'&&(!this.escortActive || distance(this.escort.at,step.at)>3.3)){
+      this.notice('Restez près de la personne que vous accompagnez.');return;
+    }
+    if(step.kind==='choice'){
+      if(id==='U03') this.onMenu('side-choice');
+      else if(chapter===4){ this.routeContact='collective';this.onMenu('route'); }
+      else this.onMenu('ending');
+      return;
+    }
+    if(id&&((id==='U02'&&this.stage===1) || (id==='C04'&&this.stage===0))){
+      this.escort.at=this.escort.previous=step.at;
+      this.escortActive=true;
+      this.escortWait=0;
+      this.escortPath=[];
+      this.notice('Elle vous suit si vous restez à proximité.',4);
+    }
+    if(!id && ((chapter===1&&this.stage===0)||(chapter===4&&this.stage===1))){
+      this.startAlarm(step.at,objectives[chapter].district);
+    }
+    this.stage++;
+    if(id&&this.stage>=getSide(this.save,id).steps.length){this.completeSide(id);return;}
+    if(!id&&this.stage>=objectives[chapter].steps.length){this.completeMission();return;}
+    this.refreshWorld();
+    if(!this.alarm) this.sound.beep(560,.19,.13,725);
+    if(!id&&chapter===1) this.notice('Puce récupérée. Intervention au dépôt. Mina attend sous les voies.',5);
+    else if(!id&&chapter===4&&this.stage===2) this.notice('Registre récupéré. Nadia et Sorel attendent votre décision.',5);
+    else if(this.currentStep) this.notice(this.currentStep.text+'.');
+  }
+
+  private updateEscort(dt:number,chase:boolean) {
+    if(!this.escortActive||!this.save.side) return;
+    const a=this.escort;
+    a.previous=a.at;
+    const gap=distance(a.at,this.at);
+    if(this.driven||gap>16||gap<1.65){ a.stride=0; return; }
+    this.escortClock-=dt;
+    if(this.escortClock<=0){ this.escortPath=this.physics.findRoute(a.at,this.at);this.escortClock=.42; }
+    while(this.escortPath.length>1&&distance(a.at,this.escortPath[0])<.52) this.escortPath.shift();
+    const target=this.escortPath[0]??this.at;
+    const yaw=angle(a.at,target), v=forward(yaw), length=Math.min(3.55*dt,distance(a.at,target));
+    const result=this.physics.move(a.at,v[0]*length,v[1]*length);
+    a.stride=distance(result.at,a.at)/Math.max(.01,length);
+    a.at=result.at;
+    a.yaw=face(a.yaw,yaw,dt);
+    this.escortWait=result.hit&&a.stride<.2?this.escortWait+dt:Math.max(0,this.escortWait-dt*4);
+    if(this.escortWait>=5.5||(chase&&gap<8&&this.guards.some(g=>g.state==='pursue'&&distance(a.at,g.at)<4))){
+      const task=getSide(this.save,this.save.side);
+      this.escortActive=false;
+      this.stage=Math.max(0,task.steps.findIndex(s=>s.kind==='escort')-1);
+      this.refreshWorld();
+      this.notice('La personne est retournée au point de rendez-vous.',5);
     }
   }
 
@@ -439,27 +627,23 @@ export class Game {
     this.sound.beep(93, .14, .075, 175);
   }
 
-  private take(at: Point) {
-    this.loot = true;
-    this.safeFor = 0;
-    if (!this.alarm) {
-      this.alarm = true;
-      this.effects.pulse(at, '#ff9e79', 1.6);
-      this.sound.beep(441, .47, .21, 185);
-      for (const guard of this.guards) {
-        if (guard.spec.district !== this.save.chapter - 1 || guard.health <= 0 || guard.state === 'pursue') continue;
-        this.order(guard, at, 'investigate', 8.8);
-      }
+  private startAlarm(at:Point,district:number) {
+    this.safeFor=0;
+    if(this.alarm) return;
+    this.alarm=true;
+    this.effects.pulse(at,'#ff9e79',1.6);
+    this.sound.beep(441,.47,.21,185);
+    for(const guard of this.guards) {
+      if(guard.spec.district===district&&guard.health>0&&guard.state!=='pursue'&&distance(guard.at,at)<22)
+        this.order(guard,at,'investigate',8.8);
     }
-    this.refreshWorld();
-    this.notice(this.save.chapter === 1
-      ? 'Puce récupérée. Intervention au dépôt. Mina vous attend sous les voies.'
-      : this.save.chapter === 2 ? 'Registre récupéré. Le collectif et Sorel attendent votre décision.' : 'Relais connecté.', 5.2);
   }
 
   private get intrusion() {
-    if (!this.hackGate && distance(this.at, [8, -24]) <= 16 && distance(this.aim, [8, -24]) <= 3.1) return 'depot-gate';
-    return this.cameras.find(cam => this.cameraEnabled(cam) && distance(this.at, cam.spec.at) <= 16 && distance(this.aim, cam.spec.at) <= 3);
+    return gates.find(g=>['depot-gate','records-side'].includes(g.id)
+      && !this.gateState.get(g.id) && distance(this.at,[g.area[0],g.area[1]])<=16
+      && distance(this.aim,[g.area[0],g.area[1]])<3.2)
+      ?? this.cameras.find(cam=>this.cameraEnabled(cam)&&distance(this.at,cam.spec.at)<=16&&distance(this.aim,cam.spec.at)<=3);
   }
   private get droneTarget() {
     return this.guards.find(g => g.spec.drone && g.health > 0 && g.stunned <= 0 && distance(this.at, g.at) < 12.5 && distance(this.aim, g.at) < 3.2);
@@ -477,11 +661,11 @@ export class Game {
     if (choice === 'intrusion') {
       const target = this.intrusion;
       if (!target) { this.notice(implants[choice].help); return; }
-      if (target === 'depot-gate') {
-        this.hackGate = true;
+      if ('area' in target) {
+        this.hacked.add(target.id);
         this.refreshWorld();
-        this.effects.pulse([8, -24], '#a5f2bd');
-        this.notice('Grille du quai ouverte.');
+        this.effects.pulse([target.area[0],target.area[1]],'#a5f2bd');
+        this.notice(target.label+' ouvert.');
       } else {
         target.disabled = 10;
         target.charge = 0;
@@ -541,17 +725,19 @@ export class Game {
     }
     const heading = forward(car.yaw);
     const from = car.at;
-    const move = this.physics.move(from, heading[0] * car.speed * dt, heading[1] * car.speed * dt, car.yaw, true);
+    const velocity: Point = [heading[0] * car.speed, heading[1] * car.speed];
+    const move = this.physics.move(from, velocity[0] * dt, velocity[1] * dt, car.yaw, true);
     car.at = move.at;
     if (move.hit) {
-      if (Math.abs(car.speed) > 2.15 && this.impulse <= 0) {
-        const strong = Math.abs(car.speed) > 10.8;
-        this.sound.impact(strong);
-        this.effects.pulse(car.at, strong ? '#ffb67f' : '#c2c9da', .25);
-        this.impulse = .35;
-        if (strong) this.hurt(5);
-      }
-      car.speed *= -.13;
+      const normal = move.contact?.normal;
+      const other = move.contact && this.traffic.get(move.contact.id);
+      const relative = other ? [velocity[0]-Math.sin(other.yaw)*other.speed,velocity[1]-Math.cos(other.yaw)*other.speed] : velocity;
+      const strength = normal ? Math.abs(normal[0]*relative[0] + normal[1]*relative[1]) : Math.abs(car.speed);
+      if (move.contact) this.vehicleImpact(move.contact, velocity, strength);
+      car.speed *= normal && strength < Math.abs(car.speed)*.65 ? .73 : -.13;
+    } else if (this.lastVehicleContact) {
+      this.clearanceSinceContact += distance(from, car.at);
+      if (this.clearanceSinceContact > .55) this.lastVehicleContact = undefined;
     }
     if (Math.abs(car.speed) < 2.75) return;
     const c = Math.cos(car.yaw), s = Math.sin(car.yaw);
@@ -567,12 +753,30 @@ export class Game {
         this.sound.impact();
         if ('fear' in victim) (victim as Civil).fear = 4;
       } else {
+        car.model.impact(impactSide(car.yaw, dx, dz), strength*.47);
         this.injure(victim, strength > 14 ? 120 : 54, impact, true);
         this.sound.impact(true);
         this.violent();
       }
       car.speed *= strength > 8 ? .73 : .60;
     }
+  }
+
+  private vehicleImpact(contact: Contact, velocity: Point, strength: number) {
+    this.clearanceSinceContact = 0;
+    if (contact.id === this.lastVehicleContact || Math.hypot(...velocity) < .35) return;
+    this.lastVehicleContact = contact.id;
+    const [nx,nz] = contact.normal;
+    const car = this.car;
+    const side = impactSide(car.yaw, -nx, -nz);
+    car.model.impact(side, strength);
+    this.sound.impact(strength > 11);
+    this.effects.pulse(contact.point, strength > 11 ? '#ffb67f' : '#e1c5a5', .26);
+    const other = this.parkedModels.get(contact.id) ?? this.traffic.get(contact.id)?.model;
+    if (other) other.impact(impactSide(other.rotation.y, nx, nz), strength);
+    this.traffic.hold(contact.id,strength);
+    if (contact.type === 'furniture' && this.city.damageProp(contact.id, -nx, -nz, strength)) this.physics.setProp(contact.id, false);
+    if (strength > 13) this.hurt(5);
   }
 
   private shoot() {
@@ -630,10 +834,10 @@ export class Game {
     this.onMenu('failed');
   }
 
-  private restricted(district: number) {
-    if (this.save.ending === 'publish' && district === 2) return false;
-    const activeRoom = rooms[district + 1];
-    return inRect(...this.at, activeRoom.area, .45);
+  private restricted(district:number) {
+    if(district===2&&this.save.ending) return false;
+    const zones = district===0?['depot','records']:district===1?['archive','housing']:['core'];
+    return rooms.some(room=>zones.includes(room.id)&&inRect(...this.at,room.area,.43));
   }
 
   private cameraEnabled(cam: CameraSensor) {
@@ -669,11 +873,12 @@ export class Game {
     const wasConfirmed = this.confirmed;
     this.confirmed = false;
     const crime = this.time - this.heat < 8;
-    const liveDistrict = districtAt(this.at[0]);
+    const liveDistrict = districtAt(...this.at);
     for (const cam of this.cameras) {
       cam.disabled = Math.max(0, cam.disabled - dt);
       cam.yaw = cam.spec.angle + Math.sin(this.time * .78 + cam.spec.district) * .61;
-      const visible = liveDistrict === cam.spec.district && this.cameraEnabled(cam) && this.sees(cam.spec.at, cam.yaw, 13.8, .62, 2.63);
+      const restoredBadge = this.save.ending === 'protect' && cam.spec.district === 2 && !crime;
+      const visible = !restoredBadge && liveDistrict === cam.spec.district && this.cameraEnabled(cam) && this.sees(cam.spec.at, cam.yaw, 13.8, .62, 2.63);
       cam.charge = clamp(cam.charge + (visible ? dt * .83 : -dt * 1.9), 0, 1);
       this.reportObservation(cam.charge, 'camera');
       if (cam.charge < 1 || !visible) continue;
@@ -685,7 +890,7 @@ export class Game {
     for (const g of this.guards) {
       if (g.health <= 0 || g.stunned > 0) continue;
       const hostile = crime || this.restricted(g.spec.district) || g.state === 'pursue' || g.state === 'search' ||
-        (this.loot && this.active && this.save.chapter - 1 === g.spec.district);
+        (this.alarm && this.active && objectives[this.save.chapter].district === g.spec.district);
       const clear = hostile && this.sees(g.at, g.yaw, g.spec.drone ? 13.4 : g.state === 'pursue' ? 17.5 : 10.5,
         g.state === 'pursue' ? 1.12 : .78, g.spec.drone ? 1.75 : 1.43);
       g.sight = clamp(g.sight + (clear ? dt * (g.state === 'pursue' ? 4.6 : 1.46) : -dt * 2.45), 0, 1);
@@ -763,23 +968,67 @@ export class Game {
     g.stride = Math.min(1, distance(start, g.at) / (dt * 4.7));
   }
 
-  private moveCiv(c: Civil, dt: number) {
-    if (c.health <= 0 || distance(c.at, this.at) > 58) { c.stride = 0; return; }
+  private moveCiv(c: Civil, dt: number, period: Civil['period'], chase: boolean) {
+    if (c.health <= 0) { c.stride = 0; return; }
+    const proximity=distance(c.at,this.at);
+    if(proximity>59){
+      c.farTick+=dt;
+      if(c.farTick<.24) return;
+      dt=c.farTick;
+    }
+    c.farTick=0;
+    const redirected=!!(c.flow.civic&&this.save.ending==='publish');
+    if(c.period!==period||redirected!==c.changed){
+      c.period=period;
+      c.changed=redirected;
+      const route=redirected
+        ? (c.flow.route[0][1]>0 ? publicService : redeployedWorkers)
+        : (period==='evening'?c.flow.evening:period==='day'?c.flow.day:undefined)??c.flow.route;
+      if(c.route!==route){
+        c.route=route;
+        c.next=route.reduce((best,p,k)=>distance(c.at,p)<distance(c.at,route[best])?k:best,0);
+        c.direction=c.next===route.length-1?-1:1;
+        c.wait=0;
+        c.detour=proximity<62?this.physics.findRoute(c.at,route[c.next]):[];
+      }
+    }
+    if(chase && proximity<11 && Math.abs(elevation(...c.at)-elevation(...this.at))<2.2) c.fear=Math.max(c.fear,2.2);
     c.fear = Math.max(0, c.fear - dt);
-    const target = c.returning ? c.a : c.b;
-    if (distance(c.at, target) < .7) c.returning = !c.returning;
-    const next = c.fear > 0 && distance(c.at, this.at) < 10 ? angle(this.at, c.at) : angle(c.at, target);
-    const [x, z] = forward(next), speed = c.fear > 0 ? 5.25 : 1.59;
-    const start = c.at;
-    c.at = this.physics.move(start, x * speed * dt, z * speed * dt).at;
-    c.yaw = face(c.yaw, next, dt);
-    c.stride = Math.min(1, distance(start, c.at) / (dt * 4.5));
+    c.wait=Math.max(0,c.wait-dt);
+    const fleeing=c.fear>0&&proximity<14;
+    if(c.wait>0&&!fleeing){ c.stride=0; return; }
+    while(c.detour.length && distance(c.at,c.detour[0])<.62) c.detour.shift();
+    const target=c.detour[0]??c.route[c.next];
+    if(!fleeing && distance(c.at,target)<.54){
+      if(c.next+c.direction<0||c.next+c.direction>=c.route.length){
+        c.direction=-c.direction;
+        c.wait=c.flow.role==='transit' ? 1.05+c.seed%3 : 4.2+c.seed%7;
+      } else if(c.flow.role!=='transit') c.wait=(c.seed%3+1)*.95;
+      c.next+=c.direction;
+      return;
+    }
+    const yaw=fleeing ? angle(this.at,c.at)+(c.seed%2?-.47:.47) : angle(c.at,target);
+    const [x,z]=forward(yaw);
+    const speed=fleeing ? 4.85 : (c.flow.role==='transit' ? 1.44 : .93)+c.seed%5*.073;
+    const start=c.at;
+    const motion=proximity<63?this.physics.move(start,x*speed*dt,z*speed*dt).at:[start[0]+x*speed*dt,start[1]+z*speed*dt] as Point;
+    c.at=motion;
+    c.yaw=face(c.yaw,yaw,dt);
+    const moved=distance(start,motion);
+    c.stride=Math.min(1,moved/(dt*3.3));
+    c.stalled=moved<dt*speed*.24?c.stalled+dt:0;
+    if(c.stalled>.56){
+      c.stalled=0;
+      if(fleeing){ c.fear=Math.min(c.fear,1.5); return; }
+      c.detour=this.physics.findRoute(c.at,c.route[c.next]);
+      if(!c.detour.length){ c.next=(c.next+1)%c.route.length; c.wait=.8; }
+    }
   }
 
   private update(dt: number) {
     this.time += dt;
+    if(Math.floor(this.time*5)!==Math.floor((this.time-dt)*5)) this.updateGates();
     this.gun -= dt;
-    this.impulse -= dt;
     this.messageTime -= dt;
     this.damageFlash -= dt;
     for (const id of Object.keys(this.cooldown) as Implant[]) this.cooldown[id] = Math.max(0, this.cooldown[id] - dt);
@@ -789,7 +1038,15 @@ export class Game {
     this.updateAim();
     this.controls(dt);
     for (const g of this.guards) { g.previous = g.at; this.moveGuard(g, dt); }
-    for (const c of this.civils) { c.previous = c.at; this.moveCiv(c, dt); }
+    const period=populationPeriod(this.time), chase=this.confirmed||this.guards.some(g=>g.state==='pursue'&&distance(g.at,this.at)<22);
+    const sidewalk:Point[]=[];
+    for (const c of this.civils) {
+      c.previous = c.at;
+      this.moveCiv(c, dt, period, chase);
+      if(c.health>0 && distance(c.at,this.at)<70) sidewalk.push(c.at);
+    }
+    this.traffic.update(dt,this.at,sidewalk,chase);
+    this.updateEscort(dt,chase);
     for (const body of [...this.guards, ...this.civils]) {
       body.hit = Math.max(0, body.hit - dt * 2.9);
       if (body.health <= 0) body.fall = Math.min(1, body.fall + dt * 4.2);
@@ -810,9 +1067,11 @@ export class Game {
     if (!pointer.visible) return;
     this.raycaster.setFromCamera(this.pointerNdc.set(pointer.x / window.innerWidth * 2 - 1, 1 - pointer.y / window.innerHeight * 2), this.camera);
     this.cameraPlane.constant = -(elevation(...this.at) + .96);
-    if (this.raycaster.ray.intersectPlane(this.cameraPlane, this.projection)) {
-      const { x, z } = this.projection;
-      this.aim = [clamp(x, bounds.west, center[0]), clamp(z, bounds.north, center[1])];
+    for(let i=0;i<3;i++){
+      if(!this.raycaster.ray.intersectPlane(this.cameraPlane,this.projection)) return;
+      const {x,z}=this.projection;
+      this.aim=[clamp(x,bounds.west,center[0]),clamp(z,bounds.north,center[1])];
+      this.cameraPlane.constant=-(elevation(...this.aim)+.96);
     }
   }
 
@@ -848,11 +1107,15 @@ export class Game {
       }
     };
     renderActor(this.player);
+    if(position(this.escort).visible) renderActor(this.escort);
     position(this.player).visible = !this.driven;
     const car = combine(this.car.previous, this.car.at, alpha);
     this.car.model.position.set(car[0], elevation(...car), car[1]);
     this.car.model.rotation.y = this.car.lastYaw + deltaAngle(this.car.lastYaw, this.car.yaw) * alpha;
+    this.car.model.setBrake(this.driven && this.key(' '));
+    this.traffic.render(alpha,this.at);
     this.city.updateVisibility(x, z, dt);
+    this.city.setPeriod(populationPeriod(this.time));
     for (const g of this.guards) {
       renderActor(g);
       const p = position(g).position;
@@ -862,7 +1125,11 @@ export class Game {
       g.cone.rotation.y = g.yaw;
       g.cone.material.uniforms.strength.value = g.sight > .85 ? 2.4 : .72 + g.sight;
     }
-    for (const c of this.civils) renderActor(c);
+    for (const c of this.civils) {
+      const model=position(c);
+      model.visible=distance(c.at,this.at)<53;
+      if(model.visible) renderActor(c);
+    }
     for (const cam of this.cameras) {
       const active = this.cameraEnabled(cam);
       cam.cone.visible = active;

@@ -49,11 +49,11 @@ export class Implants {
   }
 
   /** Cible valide d'Intrusion sous le réticule (pour le HUD). */
-  target(ctx: Ctx): { obj: SurveillanceCam | 'grate'; label: string; distTo: number } | null {
+  target(ctx: Ctx): { obj: SurveillanceCam | { id: string }; label: string; distTo: number } | null {
     const p = ctx.player;
     const aim = p.aim;
     // caméras
-    let best: { obj: SurveillanceCam | 'grate'; label: string; distTo: number } | null = null;
+    let best: { obj: SurveillanceCam | { id: string }; label: string; distTo: number } | null = null;
     let bestD = 1e9;
     for (const c of ctx.cams) {
       if (c.disabled) continue;
@@ -70,7 +70,7 @@ export class Implants {
       const d = dist(aim.x, aim.z, g.def.x, g.def.z);
       const dp = dist(p.pos.x, p.pos.z, g.def.x, g.def.z);
       if (d < 2.4 && dp < IMPLANTS.INTRUSION_RANGE && dp < bestD) {
-        best = { obj: 'grate', label: 'GRILLE — forcer', distTo: dp };
+        best = { obj: { id: g.def.id }, label: 'GRILLE — forcer', distTo: dp };
         bestD = dp;
       }
     }
@@ -91,12 +91,13 @@ export class Implants {
     }
     this.cdIntrusion = IMPLANTS.INTRUSION_CD;
     ctx.audio.implantCast();
-    if (t.obj === 'grate') {
-      ctx.openGrate('grille-quai');
-      ctx.toast('Grille forcée', 'info');
-    } else {
-      t.obj.disable(ctx);
+    const obj = t.obj as unknown as { id?: string; disable?: (c: Ctx) => void };
+    if (typeof obj.disable === 'function') {
+      obj.disable(ctx);
       ctx.toast('Caméra hors ligne (10 s)', 'info');
+    } else if (obj.id) {
+      ctx.openGrate(obj.id);
+      ctx.toast('Grille forcée', 'info');
     }
     return true;
   }

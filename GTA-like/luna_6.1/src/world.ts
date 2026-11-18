@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { FORGES, ROAD_ROUTES, TRAFFIC_ROUTES, groundHeightAt } from './layout';
 
 export type Point = { x: number; z: number };
 
@@ -9,16 +10,18 @@ export type Building = {
   z: number;
   width: number;
   depth: number;
+  groundY: number;
   roof: THREE.Mesh;
 };
 
-export type NavGrid = { blocked: boolean[]; min: number; step: number; size: number };
+export type NavGrid = { blocked: boolean[]; heights: Float32Array; minX: number; minZ: number; step: number; width: number; height: number };
 
 export type City = {
   scene: THREE.Scene;
   camera: THREE.OrthographicCamera;
   renderer: THREE.WebGLRenderer;
   bridgeDeck: THREE.Mesh;
+  railDeck: THREE.Mesh;
   blockers: THREE.Object3D[];
   buildings: Building[];
   gateMesh: THREE.Group;
@@ -28,9 +31,16 @@ export type City = {
   mina: THREE.Group;
   minaTag: THREE.Sprite;
   guards: Guard[];
+  citizens: Citizen[];
   cameraUnit: THREE.Group;
   cameraCone: THREE.Mesh;
   car: Vehicle;
+  traffic: TrafficVehicle[];
+  trafficRouteMeshes: THREE.Group[];
+  servicePanel: THREE.Group;
+  breakables: Breakable[];
+  streetLights: THREE.PointLight[];
+  activityPhase: number;
   player: Character;
   floorPlane: THREE.Plane;
   aimRay: THREE.Raycaster;
@@ -54,6 +64,9 @@ export type Character = {
   alive: boolean;
   tint: THREE.MeshStandardMaterial;
   shadow: THREE.Mesh;
+  limbs: THREE.Group[];
+  walking: boolean;
+  animClock: number;
 };
 
 export type Guard = Character & {
@@ -80,7 +93,35 @@ export type Vehicle = {
   yaw: number;
   speed: number;
   available: boolean;
+  damageMarks: THREE.Mesh[];
+  impactCount: number;
+  contactHandles: Set<number>;
 };
+
+export type Citizen = {
+  group: THREE.Group;
+  shadow: THREE.Mesh;
+  limbs: THREE.Group[];
+  body: RAPIER.RigidBody;
+  collider: RAPIER.Collider;
+  controller: RAPIER.KinematicCharacterController;
+  position: Point;
+  routeSets: [Point[], Point[], Point[]];
+  route: Point[];
+  routeIndex: number;
+  phaseIndex: number;
+  speed: number;
+  pauseUntil: number;
+  gait: number;
+  startledUntil: number;
+  panicTarget: Point | null;
+  fallenUntil: number;
+  alive: boolean;
+};
+
+export type TrafficVehicle = Vehicle & { route: Point[]; routeIndex: number; direction: 1 | -1; cruiseSpeed: number; laneOffset: number; pauseUntil: number };
+
+export type Breakable = { mesh: THREE.Group; collider: RAPIER.Collider; kind: 'crate' | 'bollard'; durability: number; broken: boolean };
 
 const MAT = {
   ground: new THREE.MeshStandardMaterial({ color: 0x20292a, roughness: 1 }),
@@ -178,67 +219,60 @@ function createBuilding(
   depth: number,
   height: number,
   mainColor: number,
-  options: { door?: 'east' | 'south' | 'north' | 'west'; sideDoor?: boolean; sign?: string; accent?: THREE.Material } = {},
+  options: { door?: 'east' | 'south' | 'north' | 'west'; sideDoor?: 'east' | 'west'; sign?: string; accent?: THREE.Material; groundY?: number; doorWidth?: number } = {},
 ): Building {
   const wallMat = new THREE.MeshStandardMaterial({ color: mainColor, roughness: .9 });
   const trimMat = new THREE.MeshStandardMaterial({ color: 0x73817c, roughness: .8 });
-  const floor = boxMesh(scene, world, blockers, { x: point.x, z: point.z, y: -.015 }, { x: width, y: .16, z: depth }, MAT.concreteDark, false);
+  const groundY = options.groundY ?? 6;
+  const floor = boxMesh(scene, world, blockers, { x: point.x, z: point.z, y: groundY - .015 }, { x: width, y: .16, z: depth }, MAT.concreteDark, false);
   floor.receiveShadow = false;
   const t = .45;
   const h = height;
   const halfW = width / 2;
   const halfD = depth / 2;
-  const doorWidth = options.door ? (name === 'Dépôt logistique' ? 2.3 : 1.9) : 0;
+  const doorWidth = options.doorWidth ?? (name === 'Dépôt logistique' ? 4.8 : name === 'Garage de Mina' ? 5.2 : options.door ? 2.6 : 0);
   const wall = (x: number, z: number, sx: number, sz: number, material = wallMat) =>
-    boxMesh(scene, world, blockers, { x, z, y: h / 2 }, { x: sx, y: h, z: sz }, material, true);
-
-  wall(point.x, point.z - halfD, width, t);
-  if (options.sideDoor) {
-    const segment = Math.max(.8, (depth - 2.3) / 2);
-    wall(point.x - halfW, point.z - (2.3 + segment) / 2, t, segment);
-    wall(point.x - halfW, point.z + (2.3 + segment) / 2, t, segment);
-  } else {
-    wall(point.x - halfW, point.z, t, depth);
-  }
-  wall(point.x + halfW, point.z, t, depth);
-  if (options.door === 'south') {
-    const segment = Math.max(.8, (width - doorWidth) / 2);
-    wall(point.x - (doorWidth + segment) / 2, point.z + halfD, segment, t);
-    wall(point.x + (doorWidth + segment) / 2, point.z + halfD, segment, t);
-  } else if (options.door === 'east') {
-    const segment = Math.max(.8, (depth - doorWidth) / 2);
-    wall(point.x + halfW, point.z - (doorWidth + segment) / 2, t, segment);
-    wall(point.x + halfW, point.z + (doorWidth + segment) / 2, t, segment);
-  } else if (options.door === 'west') {
-    const segment = Math.max(.8, (depth - doorWidth) / 2);
-    wall(point.x - halfW, point.z - (doorWidth + segment) / 2, t, segment);
-    wall(point.x - halfW, point.z + (doorWidth + segment) / 2, t, segment);
-  } else if (options.door === 'north') {
-    const segment = Math.max(.8, (width - doorWidth) / 2);
-    wall(point.x - (doorWidth + segment) / 2, point.z - halfD, segment, t);
-    wall(point.x + (doorWidth + segment) / 2, point.z - halfD, segment, t);
-  } else {
-    wall(point.x, point.z + halfD, width, t);
-  }
-  const roof = boxMesh(scene, world, blockers, { x: point.x, z: point.z, y: h + .12 }, { x: width + .2, y: .24, z: depth + .2 }, MAT.roof.clone(), false);
+    boxMesh(scene, world, blockers, { x, z, y: groundY + h / 2 }, { x: sx, y: h, z: sz }, material, true);
+  const splitX = (z: number, opening: number) => {
+    if (!opening) { wall(point.x, z, width, t); return; }
+    const segment = Math.max(0, (width - opening) / 2);
+    if (segment > .2) {
+      wall(point.x - (opening + segment) / 2, z, segment, t);
+      wall(point.x + (opening + segment) / 2, z, segment, t);
+    }
+  };
+  const splitZ = (x: number, opening: number) => {
+    if (!opening) { wall(x, point.z, t, depth); return; }
+    const segment = Math.max(0, (depth - opening) / 2);
+    if (segment > .2) {
+      wall(x, point.z - (opening + segment) / 2, t, segment);
+      wall(x, point.z + (opening + segment) / 2, t, segment);
+    }
+  };
+  splitX(point.z - halfD, options.door === 'north' ? doorWidth : 0);
+  splitX(point.z + halfD, options.door === 'south' ? doorWidth : 0);
+  splitZ(point.x - halfW, options.sideDoor === 'west' ? 3.2 : options.door === 'west' ? doorWidth : 0);
+  splitZ(point.x + halfW, options.sideDoor === 'east' ? 3.2 : options.door === 'east' ? doorWidth : 0);
+  const roof = boxMesh(scene, world, blockers, { x: point.x, z: point.z, y: groundY + h + .12 }, { x: width + .2, y: .24, z: depth + .2 }, MAT.roof.clone(), false);
   roof.userData.buildingName = name;
-  const rim = boxMesh(scene, world, blockers, { x: point.x, z: point.z, y: h + .27 }, { x: width + .35, y: .08, z: .16 }, trimMat, false);
+  const rim = boxMesh(scene, world, blockers, { x: point.x, z: point.z, y: groundY + h + .27 }, { x: width + .35, y: .08, z: .16 }, trimMat, false);
   rim.position.z = point.z - halfD + .1;
   if (options.sign) {
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(width * .66, 7), .9), options.accent ?? MAT.neonCyan);
-    sign.position.set(point.x, 2.45, point.z + halfD + .07);
+    sign.position.set(point.x, groundY + 2.45, point.z - halfD - .07);
+    sign.rotation.y = Math.PI;
     scene.add(sign);
-    addBillboard(scene, options.sign, 'accès de service', { x: point.x, z: point.z + halfD + .25 }, options.accent === MAT.neonPink ? '#f08ba2' : '#62e0df', Math.min(width, 8));
+    addBillboard(scene, options.sign, 'accès de service', { x: point.x, z: point.z - halfD - .25 }, options.accent === MAT.neonPink ? '#f08ba2' : '#62e0df', Math.min(width, 8), groundY + h + .8);
   }
   const ventCount = Math.max(1, Math.floor(width / 4));
   for (let i = 0; i < ventCount; i++) {
-    const vent = boxMesh(scene, world, blockers, { x: point.x - width * .28 + i * width * .28, z: point.z - depth * .18, y: h + .33 }, { x: .9, y: .12, z: .65 }, MAT.concrete, false);
+    const vent = boxMesh(scene, world, blockers, { x: point.x - width * .28 + i * width * .28, z: point.z - depth * .18, y: groundY + h + .33 }, { x: .9, y: .12, z: .65 }, MAT.concrete, false);
     vent.rotation.y = i % 2 ? .22 : -.18;
   }
-  return { name, ...point, width, depth, roof };
+  return { name, ...point, width, depth, groundY, roof };
 }
 
-function characterMesh(scene: THREE.Scene, color: THREE.MeshStandardMaterial, uniform = false): { group: THREE.Group; tint: THREE.MeshStandardMaterial; shadow: THREE.Mesh } {
+function characterMesh(scene: THREE.Scene, color: THREE.MeshStandardMaterial, uniform = false): { group: THREE.Group; tint: THREE.MeshStandardMaterial; shadow: THREE.Mesh; limbs: THREE.Group[] } {
   const group = new THREE.Group();
   const tint = color.clone();
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(.32, .5, 3, 7), tint);
@@ -254,12 +288,32 @@ function characterMesh(scene: THREE.Scene, color: THREE.MeshStandardMaterial, un
   const facing = new THREE.Mesh(new THREE.BoxGeometry(.11, .13, .4), uniform ? MAT.amber : MAT.neonCyan);
   facing.position.set(0, 1.11, -.33);
   group.add(facing);
+  const limbMat = uniform ? MAT.guardArmor : new THREE.MeshStandardMaterial({ color: 0x344544, roughness: .82 });
+  const limbs: THREE.Group[] = [];
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Group();
+    leg.position.set(side * .14, .61, 0);
+    const legMesh = new THREE.Mesh(new THREE.BoxGeometry(.17, .46, .2), limbMat);
+    legMesh.position.y = -.23;
+    leg.add(legMesh);
+    group.add(leg);
+    limbs.push(leg);
+  }
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Group();
+    arm.position.set(side * .31, 1.02, 0);
+    const armMesh = new THREE.Mesh(new THREE.BoxGeometry(.15, .4, .17), tint);
+    armMesh.position.y = -.18;
+    arm.add(armMesh);
+    group.add(arm);
+    limbs.push(arm);
+  }
   const shadow = new THREE.Mesh(new THREE.CircleGeometry(.52, 20), new THREE.MeshBasicMaterial({ color: 0x060c0d, transparent: true, opacity: .6, depthWrite: false }));
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.y = .026;
   scene.add(shadow);
   scene.add(group);
-  return { group, tint, shadow };
+  return { group, tint, shadow, limbs };
 }
 
 function createCharacter(
@@ -270,7 +324,10 @@ function createCharacter(
   uniform = false,
 ): Character {
   const pieces = characterMesh(scene, material, uniform);
-  const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(point.x, .9, point.z));
+  const y = groundHeightAt(point) + .9;
+  pieces.group.position.set(point.x, y - .9, point.z);
+  pieces.shadow.position.set(point.x, groundHeightAt(point) + .026, point.z);
+  const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(point.x, y, point.z));
   const collider = world.createCollider(RAPIER.ColliderDesc.capsule(.44, .32).setFriction(0), body);
   const controller = world.createCharacterController(.035);
   controller.setMaxSlopeClimbAngle(.8);
@@ -280,16 +337,18 @@ function createCharacter(
     body,
     collider,
     controller,
-    position: v(point.x, .9, point.z),
+    position: v(point.x, y, point.z),
     facing: 0,
     health: 100,
     alive: true,
+    walking: false,
+    animClock: Math.random() * Math.PI * 2,
   };
 }
 
-function createVehicle(scene: THREE.Scene, world: RAPIER.World, point: Point): Vehicle {
+function createVehicle(scene: THREE.Scene, world: RAPIER.World, point: Point, color = 0x172e32): Vehicle {
   const group = new THREE.Group();
-  const chassisMat = new THREE.MeshStandardMaterial({ color: 0x172e32, metalness: .45, roughness: .45 });
+  const chassisMat = new THREE.MeshStandardMaterial({ color, metalness: .45, roughness: .45 });
   const glass = new THREE.MeshStandardMaterial({ color: 0x326a70, emissive: 0x09272b, emissiveIntensity: 1.2, metalness: .2, roughness: .3 });
   const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.48, .48, 2.9), chassisMat);
   chassis.position.y = .51;
@@ -316,14 +375,171 @@ function createVehicle(scene: THREE.Scene, world: RAPIER.World, point: Point): V
     wheel.position.set(x, .34, z);
     group.add(wheel);
   }
-  group.position.set(point.x, 0, point.z);
+  const damageMat = new THREE.MeshStandardMaterial({ color: 0x171a1a, roughness: .9, metalness: .1 });
+  const damageMarks: THREE.Mesh[] = [];
+  for (const [x, z, rotationY] of [
+    [-.34, -1.48, 0], [.34, -1.48, 0], [0, -1.49, 0],
+    [-.76, -.65, Math.PI / 2], [-.76, .55, Math.PI / 2],
+    [.76, -.65, -Math.PI / 2], [.76, .55, -Math.PI / 2],
+    [-.34, 1.48, 0], [.34, 1.48, 0], [0, 1.49, 0],
+  ] as const) {
+    const mark = new THREE.Mesh(new THREE.BoxGeometry(.26, .17, .035), damageMat);
+    mark.position.set(x, .53, z);
+    mark.rotation.y = rotationY;
+    mark.visible = false;
+    group.add(mark);
+    damageMarks.push(mark);
+  }
+  const groundY = groundHeightAt(point);
+  group.position.set(point.x, groundY, point.z);
   scene.add(group);
-  const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(point.x, .57, point.z));
+  const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(point.x, groundY + .57, point.z));
   const collider = world.createCollider(RAPIER.ColliderDesc.cuboid(.8, .52, 1.5).setFriction(.25), body);
   const controller = world.createCharacterController(.06);
   controller.setMaxSlopeClimbAngle(.45);
   controller.setMinSlopeSlideAngle(1.1);
-  return { group, body, collider, controller, position: v(point.x, .57, point.z), yaw: 0, speed: 0, available: true };
+  return { group, body, collider, controller, position: v(point.x, groundY + .57, point.z), yaw: 0, speed: 0, available: true, damageMarks, impactCount: 0, contactHandles: new Set() };
+}
+
+function addRoad(
+  scene: THREE.Scene,
+  world: RAPIER.World,
+  blockers: THREE.Object3D[],
+  route: typeof ROAD_ROUTES[number],
+  material: THREE.Material,
+): THREE.Vector3[] {
+  const curve = new THREE.CatmullRomCurve3(route.points.map((point) => v(point.x, point.y, point.z)), false, 'centripetal');
+  const divisions = Math.max(18, Math.ceil(curve.getLength() / 1.6));
+  const samples = curve.getPoints(divisions);
+  const positions = new Float32Array((samples.length) * 2 * 3);
+  const indices: number[] = [];
+  for (let i = 0; i < samples.length; i++) {
+    const tangent = curve.getTangentAt(i / divisions);
+    const normal = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize();
+    const p = samples[i];
+    const left = p.clone().addScaledVector(normal, route.width / 2);
+    const right = p.clone().addScaledVector(normal, -route.width / 2);
+    positions.set([left.x, p.y + .025, left.z, right.x, p.y + .025, right.z], i * 6);
+    if (i < samples.length - 1) {
+      const a = i * 2;
+      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const surface = new THREE.Mesh(geometry, material);
+  surface.receiveShadow = true;
+  surface.userData.routeId = route.id;
+  scene.add(surface);
+
+  if (route.sidewalk) {
+    for (const side of [-1, 1]) {
+      const walkPositions = new Float32Array(samples.length * 6);
+      const walkIndices: number[] = [];
+      for (let i = 0; i < samples.length; i++) {
+        const tangent = curve.getTangentAt(i / divisions);
+        const normal = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize();
+        const p = samples[i];
+        const center = p.clone().addScaledVector(normal, side * (route.width / 2 + 1.15));
+        const left = center.clone().addScaledVector(normal, 1.15);
+        const right = center.clone().addScaledVector(normal, -1.15);
+        walkPositions.set([left.x, p.y + .055, left.z, right.x, p.y + .055, right.z], i * 6);
+        if (i < samples.length - 1) {
+          const a = i * 2;
+          walkIndices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+        }
+      }
+      const walkGeometry = new THREE.BufferGeometry();
+      walkGeometry.setAttribute('position', new THREE.BufferAttribute(walkPositions, 3));
+      walkGeometry.setIndex(walkIndices);
+      walkGeometry.computeVertexNormals();
+      const walk = new THREE.Mesh(walkGeometry, MAT.sidewalk);
+      walk.receiveShadow = true;
+      scene.add(walk);
+    }
+  }
+
+  for (let i = 0; i < samples.length - 1; i++) {
+    const a = samples[i];
+    const b = samples[i + 1];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dz);
+    if (length < .05) continue;
+    const yaw = Math.atan2(dx, dz);
+    boxMesh(scene, world, blockers, { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, y: (a.y + b.y) / 2 - .12 },
+      { x: route.width, y: .24, z: length + .08 }, material, true, yaw);
+  }
+  return samples;
+}
+
+function createCitizen(scene: THREE.Scene, world: RAPIER.World, routeSets: [Point[], Point[], Point[]], color: number, speed: number, phaseIndex: number): Citizen {
+  const material = new THREE.MeshStandardMaterial({ color, roughness: .84 });
+  const pieces = characterMesh(scene, material, false);
+  const start = routeSets[phaseIndex][0];
+  const floorY = groundHeightAt(start);
+  const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(start.x, floorY + .9, start.z));
+  const collider = world.createCollider(RAPIER.ColliderDesc.capsule(.4, .28).setFriction(0), body);
+  const controller = world.createCharacterController(.035);
+  controller.setMaxSlopeClimbAngle(.8);
+  controller.setMinSlopeSlideAngle(1.1);
+  pieces.group.position.set(start.x, floorY, start.z);
+  pieces.shadow.position.set(start.x, floorY + .026, start.z);
+  return {
+    group: pieces.group, shadow: pieces.shadow, limbs: pieces.limbs, body, collider, controller,
+    position: { ...start }, routeSets, route: routeSets[phaseIndex], routeIndex: 1,
+    phaseIndex, speed, pauseUntil: 0, gait: Math.random() * Math.PI * 2,
+    startledUntil: 0, panicTarget: null, fallenUntil: 0, alive: true,
+  };
+}
+
+function addBarrier(
+  scene: THREE.Scene,
+  world: RAPIER.World,
+  blockers: THREE.Object3D[],
+  point: Point,
+  size: { x: number; y: number; z: number },
+  y: number,
+  material = MAT.concreteDark,
+): THREE.Mesh {
+  return boxMesh(scene, world, blockers, { ...point, y }, size, material, true);
+}
+
+function addStreetLight(scene: THREE.Scene, position: Point, groundY: number, color: number, streetLights: THREE.PointLight[], seed: number): void {
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(.08, .12, 5.2, 7), MAT.concrete);
+  pole.position.set(position.x, groundY + 2.6, position.z);
+  scene.add(pole);
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(.13, .11, .9), MAT.concrete);
+  arm.position.set(position.x, groundY + 5.12, position.z - .36);
+  scene.add(arm);
+  const bulbMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.3 });
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(.18, 9, 7), bulbMat);
+  bulb.position.set(position.x, groundY + 4.96, position.z - .7);
+  scene.add(bulb);
+  const light = new THREE.PointLight(color, 5.5, 17, 2);
+  light.position.set(position.x, groundY + 4.6, position.z - .7);
+  light.userData.seed = seed;
+  streetLights.push(light);
+  scene.add(light);
+  addStaticCircle(scene, position.x, position.z, 3.2, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .035, depthWrite: false }), groundY + .012);
+}
+
+export function showVehicleDamage(vehicle: Vehicle, side: 'front' | 'rear' | 'left' | 'right', severity: number): void {
+  const slots = side === 'front' ? [0, 1, 2] : side === 'left' ? [3, 4] : side === 'right' ? [5, 6] : [7, 8, 9];
+  const amount = severity > 7 ? slots.length : Math.min(2, slots.length);
+  for (let i = 0; i < amount; i++) vehicle.damageMarks[slots[i]].visible = true;
+  vehicle.impactCount++;
+}
+
+export function showVehicleDamageAt(vehicle: Vehicle, worldPoint: THREE.Vector3, severity: number): void {
+  vehicle.group.updateMatrixWorld(true);
+  const local = vehicle.group.worldToLocal(worldPoint.clone());
+  const side = Math.abs(local.x) > Math.abs(local.z) * .92
+    ? local.x < 0 ? 'left' : 'right'
+    : local.z < 0 ? 'front' : 'rear';
+  showVehicleDamage(vehicle, side, severity);
 }
 
 function createGuard(scene: THREE.Scene, world: RAPIER.World, point: Point, patrol: Point[]): Guard {
@@ -358,226 +574,315 @@ function createPackage(scene: THREE.Scene, point: Point, color: number, scale = 
   ring.rotation.x = Math.PI / 2;
   ring.position.y = .3 * scale;
   group.add(ring);
-  group.position.set(point.x, 0, point.z);
+  group.position.set(point.x, groundHeightAt(point), point.z);
   scene.add(group);
   return group;
 }
 
 export function buildCity(container: HTMLElement, world: RAPIER.World): City {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0c191c);
-  scene.fog = new THREE.FogExp2(0x0c191c, .013);
-  const camera = new THREE.OrthographicCamera(-27, 27, 27, -27, .1, 180);
-  camera.position.set(0, 51, 31);
-  camera.lookAt(0, 0, 0);
+  scene.background = new THREE.Color(0x101a1d);
+  scene.fog = new THREE.FogExp2(0x101a1d, .0024);
+  const camera = new THREE.OrthographicCamera(-40, 40, 22.5, -22.5, .1, 260);
+  camera.position.set(FORGES.playerStart.x, 57, FORGES.playerStart.z + 30);
+  camera.lookAt(FORGES.playerStart.x, 6, FORGES.playerStart.z);
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.45));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.35));
   renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.17;
+  renderer.toneMappingExposure = 1.12;
   renderer.shadowMap.enabled = false;
-  renderer.domElement.setAttribute('aria-label', 'Vue du quartier des Forges');
+  renderer.domElement.setAttribute('aria-label', 'Vue haute du quartier des Forges');
   container.appendChild(renderer.domElement);
 
-  scene.add(new THREE.HemisphereLight(0x9ac5c4, 0x11191b, 1.2));
-  const moon = new THREE.DirectionalLight(0xb6d5d0, 1.45);
-  moon.position.set(-22, 36, 19);
+  scene.add(new THREE.HemisphereLight(0xa9c7c1, 0x2b3030, 1.25));
+  const moon = new THREE.DirectionalLight(0xd0d9c8, 1.35);
+  moon.position.set(-34, 55, 18);
   scene.add(moon);
-  const cyanLight = new THREE.PointLight(0x14bec9, 18, 24, 2);
-  cyanLight.position.set(-20, 5, 18);
-  scene.add(cyanLight);
-  const pinkLight = new THREE.PointLight(0xd7527e, 12, 18, 2);
-  pinkLight.position.set(21, 4, -14);
-  scene.add(pinkLight);
   const blocks: THREE.Object3D[] = [];
   const buildings: Building[] = [];
+  const streetLights: THREE.PointLight[] = [];
+  const breakables: Breakable[] = [];
 
-  boxMesh(scene, world, blocks, { x: 0, z: 0, y: -.25 }, { x: 68, y: .5, z: 68 }, MAT.ground, true);
-  for (const edge of [-33.5, 33.5]) {
-    boxMesh(scene, world, blocks, { x: edge, z: 0, y: 2 }, { x: .7, y: 4, z: 68 }, MAT.concreteDark, true);
-    boxMesh(scene, world, blocks, { x: 0, z: edge, y: 2 }, { x: 68, y: 4, z: .7 }, MAT.concreteDark, true);
+  // The bible uses the north-west map corner as (0,0). The upper block is a real +6m deck.
+  boxMesh(scene, world, blocks, { x: 90, z: 60, y: -.14 }, { x: 184, y: .28, z: 124 }, MAT.ground, true);
+  // Split the elevated deck around the stairwell so the collision floor cannot cap the descent.
+  boxMesh(scene, world, blocks, { x: 90, z: 32, y: 5.8 }, { x: 180, y: .4, z: 64 }, MAT.concreteDark, true);
+  boxMesh(scene, world, blocks, { x: 61.25, z: 66, y: 5.8 }, { x: 122.5, y: .4, z: 4 }, MAT.concreteDark, true);
+  boxMesh(scene, world, blocks, { x: 153.75, z: 66, y: 5.8 }, { x: 52.5, y: .4, z: 4 }, MAT.concreteDark, true);
+  addBarrier(scene, world, blocks, { x: -1.7, z: 60 }, { x: .7, y: 12, z: 124 }, 4, MAT.concreteDark);
+  addBarrier(scene, world, blocks, { x: 181.7, z: 60 }, { x: .7, y: 12, z: 124 }, 4, MAT.concreteDark);
+  addBarrier(scene, world, blocks, { x: 90, z: -1.7 }, { x: 184, y: 12, z: .7 }, 4, MAT.concreteDark);
+  addBarrier(scene, world, blocks, { x: 90, z: 121.7 }, { x: 184, y: 12, z: .7 }, 4, MAT.concreteDark);
+  const curbLine = new THREE.Mesh(new THREE.BoxGeometry(180, .08, .34), MAT.concrete);
+  curbLine.position.set(90, 6.03, 68.35);
+  scene.add(curbLine);
+
+  // The rail bed remains at +3m. The sidewalk stair and tunnel are the only walking crossing.
+  const railDeck = boxMesh(scene, world, blocks, { x: 90, z: 74, y: 2.82 }, { x: 180, y: .36, z: 8 }, new THREE.MeshStandardMaterial({ color: 0x333c3b, roughness: .96 }), true);
+  for (const z of [71.6, 75.5]) {
+    boxMesh(scene, world, blocks, { x: 90, z, y: 3.12 }, { x: 180, y: .16, z: .18 }, new THREE.MeshStandardMaterial({ color: 0x8e9994, metalness: .65, roughness: .4 }), false);
   }
-  // The street grid leaves six traversable blocks around the main route.
-  for (const z of [-21, -5, 10, 25]) {
-    boxMesh(scene, world, blocks, { x: 0, z, y: .008 }, { x: 66, y: .02, z: z === -21 ? 7 : 7.5 }, MAT.asphalt, false);
-    for (let x = -30; x < 30; x += 7) {
-      boxMesh(scene, world, blocks, { x: x + 2, z, y: .022 }, { x: 3.3, y: .012, z: .075 }, new THREE.MeshBasicMaterial({ color: 0x596260, transparent: true, opacity: .42 }), false);
+  for (let x = 1; x < 180; x += 1.45) {
+    boxMesh(scene, world, blocks, { x, z: 73.55, y: 3.055 }, { x: .2, y: .12, z: 6.5 }, new THREE.MeshStandardMaterial({ color: x % 3 < 1 ? 0x5e4d3c : 0x695741, roughness: .9 }), false);
+  }
+  // Retaining wall/fence follows the railway edge; an opening matches the two-flight stair.
+  addBarrier(scene, world, blocks, { x: 61.25, z: 68.45 }, { x: 122.5, y: 1.55, z: .32 }, 6.75, MAT.wall);
+  addBarrier(scene, world, blocks, { x: 143, z: 68.45 }, { x: 31, y: 1.55, z: .32 }, 6.75, MAT.wall);
+  addBarrier(scene, world, blocks, { x: 175.5, z: 68.45 }, { x: 9, y: 1.55, z: .32 }, 6.75, MAT.wall);
+  addBarrier(scene, world, blocks, { x: 60.5, z: 79.55 }, { x: 121, y: 1.15, z: .28 }, 3.85, MAT.concreteDark);
+  addBarrier(scene, world, blocks, { x: 144, z: 79.55 }, { x: 30, y: 1.15, z: .28 }, 3.85, MAT.concreteDark);
+  addBarrier(scene, world, blocks, { x: 175.5, z: 79.55 }, { x: 9, y: 1.15, z: .28 }, 3.85, MAT.concreteDark);
+  // Continuous roadway meshes and collision strips are sampled from the same axes.
+  const asphalt = new THREE.MeshStandardMaterial({ color: 0x20292a, roughness: .96, metalness: .02 });
+  const roadSamples = new Map<string, THREE.Vector3[]>();
+  for (const route of ROAD_ROUTES) roadSamples.set(route.id, addRoad(scene, world, blocks, route, asphalt));
+  // Tunnel walls follow the same sampled curve as its floor instead of crossing the exit.
+  const tunnelSamples = roadSamples.get('passage-sous-voies')!;
+  for (const side of [-1, 1]) for (let i = 0; i < tunnelSamples.length - 1; i++) {
+    const a = tunnelSamples[i];
+    const b = tunnelSamples[i + 1];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dz);
+    if (length < .05) continue;
+    const normalX = dz / length;
+    const normalZ = -dx / length;
+    const yaw = Math.atan2(dx, dz);
+    boxMesh(scene, world, blocks,
+      { x: (a.x + b.x) / 2 + normalX * side * 4.2, z: (a.z + b.z) / 2 + normalZ * side * 4.2, y: 1.23 },
+      { x: .35, y: 2.45, z: length + .08 }, MAT.wall, true, yaw);
+  }
+
+  const lanePaint = new THREE.MeshBasicMaterial({ color: 0xd1ad78, transparent: true, opacity: .58, depthWrite: false });
+  for (const [x, z, rotation] of [[32, 31, 0], [112, 30, 0], [89, 30, 0], [151, 46, .55], [141, 100, Math.PI / 2], [69, 109, Math.PI / 2]] as const) {
+    for (let i = -2; i <= 2; i++) {
+      const paint = new THREE.Mesh(new THREE.BoxGeometry(1.25, .018, .16), lanePaint);
+      paint.position.set(x + Math.cos(rotation) * i * 1.65, groundHeightAt({ x, z }) + .075, z + Math.sin(rotation) * i * 1.65);
+      paint.rotation.y = rotation;
+      scene.add(paint);
     }
   }
-  for (const x of [-25, -8, 9, 25]) {
-    boxMesh(scene, world, blocks, { x, z: 0, y: .012 }, { x: x === 9 ? 7.5 : 6.2, y: .02, z: 66 }, MAT.asphalt, false);
-    for (let z = -30; z < 30; z += 7) {
-      boxMesh(scene, world, blocks, { x, z: z + 2, y: .024 }, { x: .07, y: .012, z: 3.2 }, new THREE.MeshBasicMaterial({ color: 0x596260, transparent: true, opacity: .36 }), false);
+  // Painted parking bay for the mission car, outside both the street and the court gate.
+  for (let i = 0; i < 3; i++) {
+    const x = 108 + i * 3.8;
+    for (const z of [25.8, 34.2]) {
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(.1, .022, 1.1), lanePaint);
+      stripe.position.set(x, 6.08, z);
+      scene.add(stripe);
     }
   }
-  // Railway trench and the two-level road bridge. The dark channel reads as a lower passage.
-  const bridgeDeck = boxMesh(scene, world, blocks, { x: 0, z: 10, y: 3.25 }, { x: 67, y: .65, z: 6.8 }, new THREE.MeshStandardMaterial({ color: 0x374448, roughness: .8 }), true);
-  boxMesh(scene, world, blocks, { x: 0, z: 10, y: 3.62 }, { x: 67, y: .08, z: .17 }, MAT.concrete, false);
-  for (const x of [-23, -14, 0, 15, 24]) {
-    boxMesh(scene, world, blocks, { x, z: 10, y: 1.48 }, { x: .7, y: 2.95, z: .8 }, MAT.concreteDark, true);
-  }
-  for (const x of [-27, -24, -21, -18, -15, -12, -9, -6, -3, 0, 3, 6, 9, 12, 15, 18, 21, 24, 27]) {
-    boxMesh(scene, world, blocks, { x, z: 6.48, y: 3.35 }, { x: 1.65, y: .13, z: .25 }, MAT.amber, false);
-    boxMesh(scene, world, blocks, { x, z: 13.52, y: 3.35 }, { x: 1.65, y: .13, z: .25 }, MAT.amber, false);
-  }
-  // Rails beneath the overpass; the release lane stays open in the middle.
-  for (const x of [-1.05, .8]) {
-    boxMesh(scene, world, blocks, { x, z: 9.95, y: .07 }, { x: .17, y: .12, z: 11 }, new THREE.MeshStandardMaterial({ color: 0x718184, metalness: .7, roughness: .42 }), false);
-  }
-  for (let z = 5; z < 16; z += 1.6) {
-    boxMesh(scene, world, blocks, { x: -.1, z, y: .045 }, { x: 3.2, y: .08, z: .2 }, new THREE.MeshStandardMaterial({ color: 0x3d4848 }), false);
-  }
-  addBillboard(scene, 'Passage inférieur', 'voie piétonne', { x: 8.8, z: 13.4 }, '#f1b66c', 6.5, 2.25);
-  addBillboard(scene, 'Voie haute', 'pont routier', { x: -10, z: 9.8 }, '#9ec2bd', 5.4, 5.8);
 
-  // A handful of low-detail blocks make the Forges legible without closing its shortcuts.
-  buildings.push(createBuilding(scene, world, blocks, 'Garage de Mina', { x: -19, z: 18.2 }, 10, 8, 3.5, 0x354347, { door: 'east', sign: 'Mina / Garage', accent: MAT.neonPink }));
-  buildings.push(createBuilding(scene, world, blocks, 'Atelier mécanique', { x: -18.2, z: -14.2 }, 11, 10, 4.2, 0x3c4646, { door: 'south' }));
-  buildings.push(createBuilding(scene, world, blocks, 'Dépôt logistique', { x: 21, z: -15 }, 13, 12, 4.8, 0x3d4746, { door: 'south', sideDoor: true, sign: 'Transit / 09', accent: MAT.neonCyan }));
-  buildings.push(createBuilding(scene, world, blocks, 'Imprimerie', { x: -17, z: 1.8 }, 13, 9, 4.1, 0x343f41, { door: 'west' }));
-  buildings.push(createBuilding(scene, world, blocks, 'Résidence des voies', { x: 0, z: -14.4 }, 10, 9, 5.5, 0x3c4648, { door: 'south' }));
-  buildings.push(createBuilding(scene, world, blocks, 'Clinique de quartier', { x: 18.5, z: 1.5 }, 11, 10, 4.8, 0x384648, { door: 'north' }));
-  buildings.push(createBuilding(scene, world, blocks, 'Hall de livraison', { x: 0, z: 18.4 }, 9, 7, 3.9, 0x394445, { door: 'north' }));
-  buildings.push(createBuilding(scene, world, blocks, 'Silo 4', { x: 18.7, z: 18.4 }, 9.5, 8.1, 6.1, 0x394346, { door: 'west' }));
-  buildings.push(createBuilding(scene, world, blocks, 'Ancien central', { x: 17.4, z: -30 }, 11, 7, 6.6, 0x364247, { door: 'south' }));
-  buildings.push(createBuilding(scene, world, blocks, 'Entrepôt bas', { x: -17.5, z: -30 }, 12, 7, 4.7, 0x3b4443, { door: 'south' }));
+  // Forges blocks: the garage, depot and forecourt match the measured concept plan.
+  buildings.push(createBuilding(scene, world, blocks, 'Garage de Mina', FORGES.garage, 34, 17, 5.3, 0x6c685e, { door: 'north', doorWidth: 6.2, sign: 'Mina / Garage', accent: MAT.neonPink }));
+  buildings.push(createBuilding(scene, world, blocks, 'Ateliers du rail', { x: 17.5, z: 15.5 }, 17, 11, 6.2, 0x615d53, { door: 'south', doorWidth: 3.5, sign: 'Ateliers', accent: MAT.amber }));
+  buildings.push(createBuilding(scene, world, blocks, 'Hangar des équipes', { x: 43, z: 13.5 }, 16, 10.5, 5.2, 0x59615e, { door: 'south', doorWidth: 4.5, sign: 'Hangar 06', accent: MAT.amber }));
+  buildings.push(createBuilding(scene, world, blocks, 'Annexe de maintenance', { x: 62, z: 47 }, 12.25, 12.75, 4.2, 0x515956, { door: 'south', doorWidth: 2.8, groundY: 6 }));
+  buildings.push(createBuilding(scene, world, blocks, 'Local de service', { x: 61.25, z: 58.25 }, 11.5, 5.5, 3.8, 0x56564e, { door: 'north', groundY: 6 }));
+  buildings.push(createBuilding(scene, world, blocks, 'Dépôt logistique', FORGES.depot, 29, 24, 6.2, 0x777166, { door: 'north', doorWidth: 5.2, sideDoor: 'east', sign: 'Transit / 09', accent: MAT.neonCyan }));
+  buildings.push(createBuilding(scene, world, blocks, 'Magasin du quai', { x: 142, z: 49.5 }, 15, 16, 5.2, 0x665e52, { door: 'north', doorWidth: 3.4, groundY: 6, sign: 'Épicerie du pont', accent: MAT.amber }));
+  buildings.push(createBuilding(scene, world, blocks, 'Entrepôt bas', { x: 35, z: 87.5 }, 20, 6.5, 4.7, 0x504e48, { door: 'south', groundY: 0 }));
+  buildings.push(createBuilding(scene, world, blocks, 'Maisons des remises', { x: 63, z: 91.5 }, 22.75, 8.75, 5.1, 0x625f57, { door: 'south', groundY: 0 }));
+  buildings.push(createBuilding(scene, world, blocks, 'Remises de l’Houmeau', { x: 94, z: 91 }, 22.75, 7.75, 4.5, 0x5b5147, { door: 'south', groundY: 0 }));
 
-  // Surface detail: curb strips, loading bays, pavers, light wells and the depot's two approaches.
-  for (const z of [-17.25, -10.4, -1, 13.7, 21.3]) {
-    boxMesh(scene, world, blocks, { x: -8, z, y: .055 }, { x: .22, y: .08, z: 2.4 }, MAT.concrete, false);
-    boxMesh(scene, world, blocks, { x: 8.6, z, y: .055 }, { x: .22, y: .08, z: 2.4 }, MAT.concrete, false);
-  }
-  for (let i = 0; i < 5; i++) {
-    boxMesh(scene, world, blocks, { x: 18.5 + i * 1.3, z: -8.62, y: .04 }, { x: .78, y: .045, z: .14 }, MAT.amber, false);
-  }
-  // North-south service lane into the depot court.
-  boxMesh(scene, world, blocks, { x: 13.65, z: -15, y: .025 }, { x: 2.3, y: .035, z: 15 }, MAT.asphalt, false);
-  for (let z = -21; z < -8; z += 2) {
-    boxMesh(scene, world, blocks, { x: 12.52, z, y: .03 }, { x: .12, y: .04, z: 1.1 }, MAT.amber, false);
-  }
-  // Courtyard fence with a hackable opening at the warehouse wall.
+  // Courtyard enclosure: 8m north entrance, depot-side door and the southern hackable grille.
+  addBarrier(scene, world, blocks, { x: 108, z: 42.5 }, { x: 8, y: 1.8, z: .3 }, 6.9, MAT.wall);
+  addBarrier(scene, world, blocks, { x: 124, z: 42.5 }, { x: 8, y: 1.8, z: .3 }, 6.9, MAT.wall);
+  addBarrier(scene, world, blocks, { x: 104, z: 46.5 }, { x: .3, y: 1.8, z: 8 }, 6.9, MAT.wall);
+  addBarrier(scene, world, blocks, { x: 104, z: 57.5 }, { x: .3, y: 1.8, z: 8 }, 6.9, MAT.wall);
+  addBarrier(scene, world, blocks, { x: 128, z: 52 }, { x: .3, y: 1.8, z: 19 }, 6.9, MAT.wall);
+  addBarrier(scene, world, blocks, { x: 108.7, z: 61.5 }, { x: 9.5, y: 1.8, z: .3 }, 6.9, MAT.wall);
+  addBarrier(scene, world, blocks, { x: 121.9, z: 61.5 }, { x: 12.2, y: 1.8, z: .3 }, 6.9, MAT.wall);
   const gateMesh = new THREE.Group();
-  const gateMat = new THREE.MeshStandardMaterial({ color: 0xf1b66c, emissive: 0x754515, emissiveIntensity: .72, metalness: .55, roughness: .45 });
-  for (let i = 0; i < 7; i++) {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(.075, 1.75, .075), gateMat);
-    bar.position.set(0, .88, -1.05 + i * .35);
+  const gateMat = new THREE.MeshStandardMaterial({ color: 0x78c6a0, emissive: 0x1f694c, emissiveIntensity: .7, metalness: .5, roughness: .45 });
+  for (let i = 0; i < 8; i++) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(.075, 1.6, .075), gateMat);
+    bar.position.set(-1.15 + i * .33, .82, 0);
     gateMesh.add(bar);
   }
-  const topBar = new THREE.Mesh(new THREE.BoxGeometry(.1, .1, 2.4), gateMat);
-  topBar.position.set(0, 1.72, 0);
-  gateMesh.add(topBar);
-  gateMesh.position.set(14.45, 0, -15);
+  const gateTop = new THREE.Mesh(new THREE.BoxGeometry(2.65, .1, .1), gateMat);
+  gateTop.position.y = 1.65;
+  gateMesh.add(gateTop);
+  gateMesh.position.set(114.5, 6, 61.5);
   scene.add(gateMesh);
-  const gateCollider = world.createCollider(RAPIER.ColliderDesc.cuboid(.11, .9, 1.25).setTranslation(14.45, .9, -15));
-  gateMesh.userData.collider = gateCollider;
+  gateMesh.userData.collider = world.createCollider(RAPIER.ColliderDesc.cuboid(1.28, .9, .11).setTranslation(114.5, 6.9, 61.5));
   blocks.push(gateMesh);
 
-  // Mina's service shortcut stays physically sealed until the delivery.
+  const bridgeDeck = boxMesh(scene, world, blocks, { x: 165, z: 73, y: 5.8 }, { x: 12.4, y: .4, z: 30 }, new THREE.MeshStandardMaterial({ color: 0x3c4544, roughness: .82 }), true);
+  for (const x of [158.7, 171.3]) {
+    addBarrier(scene, world, blocks, { x, z: 73 }, { x: .28, y: 1.1, z: 30 }, 6.7, MAT.concreteDark);
+    for (let z = 60; z < 87; z += 3.1) addBarrier(scene, world, blocks, { x, z }, { x: .35, y: .85, z: .35 }, 6.52, MAT.concrete);
+  }
+
+  // Persistent workshop shortcut and service panel used by U01 after M01 opens the grille.
   const shortcutMesh = new THREE.Group();
-  const serviceDoor = new THREE.Mesh(new THREE.BoxGeometry(.26, 2.2, 2.2), new THREE.MeshStandardMaterial({ color: 0x47645e, emissive: 0x173b35, emissiveIntensity: .42, metalness: .3 }));
-  serviceDoor.position.y = 1.1;
+  const serviceDoor = new THREE.Mesh(new THREE.BoxGeometry(.24, 2.1, 2.1), new THREE.MeshStandardMaterial({ color: 0x47645e, emissive: 0x173b35, emissiveIntensity: .42, metalness: .3 }));
+  serviceDoor.position.y = 1.05;
   shortcutMesh.add(serviceDoor);
   for (let i = 0; i < 5; i++) {
     const slit = new THREE.Mesh(new THREE.BoxGeometry(.28, .05, .14), MAT.neonPink);
-    slit.position.set(.17, .62 + i * .27, 0);
+    slit.position.set(.17, .58 + i * .25, 0);
     shortcutMesh.add(slit);
   }
-  shortcutMesh.position.set(-7.9, 0, 17.3);
+  shortcutMesh.position.set(FORGES.serviceGate.x, 6, FORGES.serviceGate.z);
   scene.add(shortcutMesh);
-  const shortcutCollider = world.createCollider(RAPIER.ColliderDesc.cuboid(.24, 1.1, 1.1).setTranslation(-7.9, 1.1, 17.3));
-  shortcutMesh.userData.collider = shortcutCollider;
+  shortcutMesh.userData.collider = world.createCollider(RAPIER.ColliderDesc.cuboid(.24, 1.05, 1.1).setTranslation(FORGES.serviceGate.x, 7.05, FORGES.serviceGate.z));
   blocks.push(shortcutMesh);
+  addBarrier(scene, world, blocks, { x: FORGES.serviceGate.x, z: 54.5 }, { x: .36, y: 2, z: 9 }, 7, MAT.wall);
+  addBarrier(scene, world, blocks, { x: FORGES.serviceGate.x, z: 65.5 }, { x: .36, y: 2, z: 9 }, 7, MAT.wall);
+  const servicePanel = new THREE.Group();
+  const panelBody = new THREE.Mesh(new THREE.BoxGeometry(.18, .72, .62), new THREE.MeshStandardMaterial({ color: 0x293c38, metalness: .45, roughness: .4 }));
+  panelBody.position.y = 1.25;
+  servicePanel.add(panelBody);
+  const panelLamp = new THREE.Mesh(new THREE.SphereGeometry(.12, 9, 7), new THREE.MeshStandardMaterial({ color: 0x7c8174, emissive: 0x181e19, emissiveIntensity: .35 }));
+  panelLamp.position.set(.13, 1.38, -.06);
+  servicePanel.add(panelLamp);
+  servicePanel.userData.lamp = panelLamp;
+  servicePanel.position.set(54.5, 6, 60.5);
+  scene.add(servicePanel);
 
-  // Street lamps are emissive pools rather than expensive dynamic shadow casters.
-  for (const [x, z, color] of [[-23, 11, 0x46dce2], [1, -4, 0x46dce2], [8, -17, 0xe9829a], [22, 10, 0xe9bb71], [-8, 22, 0x46dce2], [8, 20, 0x46dce2]] as const) {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(.07, .1, 4.7, 6), MAT.concrete);
-    post.position.set(x, 2.35, z);
-    scene.add(post);
-    const lampMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.4 });
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(.18, 8, 6), lampMat);
-    lamp.position.set(x, 4.68, z);
-    scene.add(lamp);
-    const spot = new THREE.PointLight(color, 6, 13, 2);
-    spot.position.set(x, 4.4, z);
-    scene.add(spot);
-    addStaticCircle(scene, x, z, 3.1, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .035, depthWrite: false }), .01);
+  // Stair flights and landings are visible and align to the walkable height profile.
+  for (let i = 0; i < 12; i++) {
+    const z = 65.25 + i * .48;
+    const y = 6 - i * .5;
+    const step = new THREE.Mesh(new THREE.BoxGeometry(4.5, .18, .58), new THREE.MeshStandardMaterial({ color: i % 2 ? 0x77786f : 0x696e68, roughness: .9 }));
+    step.position.set(125, y, z);
+    scene.add(step);
+    for (const x of [122.6, 127.4]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(.12, 1.05, .12), MAT.concrete);
+      rail.position.set(x, y + .48, z);
+      scene.add(rail);
+    }
   }
-  // Roadside details: containers, bollards, benches and barriers that make cover readable.
-  const steel = new THREE.MeshStandardMaterial({ color: 0x566260, metalness: .36, roughness: .72 });
-  const rust = new THREE.MeshStandardMaterial({ color: 0x82584a, roughness: .84 });
-  for (const [x, z] of [[-10.7, -16.6], [-11.1, -13.3], [26.8, -3.4], [-27.9, 23.3], [1.1, -9.1]] as const) {
-    boxMesh(scene, world, blocks, { x, z, y: .86 }, { x: 1.4, y: 1.7, z: .8 }, rust, true);
-    boxMesh(scene, world, blocks, { x, z: .2 + .86 }, { x: 1.42, y: .08, z: .84 }, steel, false);
-    for (let line = 0; line < 4; line++) boxMesh(scene, world, blocks, { x: x - .5 + line * .32, z: z + .42, y: .83 }, { x: .035, y: 1.25, z: .026 }, steel, false);
-  }
-  for (const [x, z] of [[-12.1, 22], [2.2, 8.4], [26, -8.8], [-29, -3.5], [12.9, -9.9]] as const) {
-    const bollard = new THREE.Mesh(new THREE.CylinderGeometry(.13, .16, .85, 8), MAT.concrete);
-    bollard.position.set(x, .43, z);
-    scene.add(bollard);
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(.14, .14, .12, 8), MAT.amber);
-    cap.position.set(x, .84, z);
-    scene.add(cap);
-  }
+  addBillboard(scene, 'Passage inférieur', 'vers la rue basse', { x: 133, z: 85 }, '#f1b66c', 7.2, 2.5);
+  addBillboard(scene, 'Pont des Forges', 'franchissement routier', { x: 165, z: 73 }, '#d2c29a', 7, 9.1);
+  addBillboard(scene, 'Voies ferrées', 'passage fermé au public', { x: 61, z: 73.5 }, '#a7aaa2', 7, 10.2);
 
-  const player = createCharacter(scene, world, { x: -20.5, z: 19.2 }, MAT.player);
-  const mina = new THREE.Group();
-  const minaBody = new THREE.Mesh(new THREE.CapsuleGeometry(.31, .5, 3, 8), MAT.neonPink);
-  minaBody.position.y = .78;
-  mina.add(minaBody);
-  const minaHead = new THREE.Mesh(new THREE.SphereGeometry(.21, 9, 7), new THREE.MeshStandardMaterial({ color: 0xdab4a3, roughness: .8 }));
-  minaHead.position.y = 1.25;
-  mina.add(minaHead);
-  const wrench = new THREE.Mesh(new THREE.BoxGeometry(.09, .45, .09), MAT.concrete);
-  wrench.position.set(.35, .8, -.05);
-  mina.add(wrench);
-  mina.position.set(-18.2, 0, 20);
-  scene.add(mina);
-  const minaTag = addBillboard(scene, 'Mina', 'mécanique / relais', { x: -18.2, z: 20 }, '#f08ba2', 2.8, 5.1);
+  // Workshop props and loading details stay outside the measured vehicle path.
+  const addCrate = (x: number, z: number, groundY: number, kind: 'crate' | 'bollard' = 'crate') => {
+    const group = new THREE.Group();
+    const wood = new THREE.MeshStandardMaterial({ color: 0x72583c, roughness: .95 });
+    const size = kind === 'crate' ? 1.1 : .46;
+    const height = kind === 'crate' ? 1.05 : .95;
+    const box = new THREE.Mesh(kind === 'crate' ? new THREE.BoxGeometry(size, height, size) : new THREE.CylinderGeometry(.2, .24, height, 8), wood);
+    box.position.y = height / 2;
+    group.add(box);
+    if (kind === 'crate') {
+      const band = new THREE.Mesh(new THREE.BoxGeometry(1.13, .1, 1.13), MAT.concrete);
+      band.position.y = height * .68;
+      group.add(band);
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(.08, .9, 1.12), MAT.amber);
+      stripe.position.y = height * .48;
+      group.add(stripe);
+    }
+    group.position.set(x, groundY, z);
+    scene.add(group);
+    const collider = world.createCollider(RAPIER.ColliderDesc.cuboid(size / 2, height / 2, size / 2).setTranslation(x, groundY + height / 2, z));
+    blocks.push(group);
+    breakables.push({ mesh: group, collider, kind, durability: kind === 'crate' ? 8 : 12, broken: false });
+  };
+  for (const [x, z, level] of [[23, 39, 6], [60, 39, 6], [70, 39, 6], [105, 38, 6], [150, 59, 6], [111, 92, 0], [108, 116, 0], [27, 84, 0]] as const) addCrate(x, z, level);
+  for (const [x, z] of [[8, 43], [47, 21], [99, 15.5], [148, 29], [175, 56], [151, 109], [115, 112]] as const) addCrate(x, z, groundHeightAt({ x, z }), 'bollard');
 
-  const chip = createPackage(scene, { x: 21.7, z: -15.4 }, 0x54f1dc, .7);
-  const secondaryPackage = createPackage(scene, { x: -3.1, z: 7.1 }, 0xf1b66c, .82);
-  const car = createVehicle(scene, world, { x: -22.1, z: 18.4 });
-  car.yaw = -Math.PI / 2;
-  car.group.rotation.y = car.yaw;
-
-  const guards: Guard[] = [
-    createGuard(scene, world, { x: 18.3, z: -12.2 }, [
-      { x: 18.3, z: -12.2 }, { x: 23.7, z: -12.1 }, { x: 23.2, z: -17.4 }, { x: 17.1, z: -17.8 },
-    ]),
-    createGuard(scene, world, { x: 23.5, z: -18.1 }, [
-      { x: 23.5, z: -18.1 }, { x: 25.2, z: -13.2 }, { x: 20.4, z: -11.4 }, { x: 17.4, z: -15.4 },
-    ]),
+  const streetLightPositions: Array<[number, number, number]> = [
+    [15, 32, 0xffbd72], [27, 33, 0xffbd72], [43, 32, 0xffbd72], [56, 27, 0xffcf83],
+    [72, 21, 0xffbd72], [92, 21, 0x74cbd0], [108, 30, 0x73d6ba], [124, 31, 0xffbd72],
+    [141, 35, 0xffbd72], [154, 48, 0x74cbd0], [164, 64, 0x78d4cf], [164, 83, 0xffbd72],
+    [146, 97, 0xffbd72], [123, 87, 0x75d5b6], [106, 107, 0xffbd72], [68, 109, 0x78d4cf],
+    [35, 101, 0xffbd72], [37.5, 40.8, 0xffbd72], [125, 62, 0x75d5b6],
   ];
+  streetLightPositions.forEach(([x, z, color], index) => addStreetLight(scene, { x, z }, groundHeightAt({ x, z }), color, streetLights, index * .83));
+
+  const mina = new THREE.Group();
+  const minaBody = new THREE.Mesh(new THREE.CapsuleGeometry(.34, .54, 3, 8), MAT.neonPink);
+  minaBody.position.y = .82;
+  mina.add(minaBody);
+  const coverall = new THREE.Mesh(new THREE.BoxGeometry(.58, .58, .38), new THREE.MeshStandardMaterial({ color: 0x694851, roughness: .76 }));
+  coverall.position.y = .8;
+  mina.add(coverall);
+  const minaHead = new THREE.Mesh(new THREE.SphereGeometry(.22, 9, 7), new THREE.MeshStandardMaterial({ color: 0xdab4a3, roughness: .8 }));
+  minaHead.position.y = 1.3;
+  mina.add(minaHead);
+  const chestLamp = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 6), MAT.amber);
+  chestLamp.position.set(.22, .95, -.22);
+  mina.add(chestLamp);
+  const wrench = new THREE.Mesh(new THREE.BoxGeometry(.09, .48, .09), MAT.concrete);
+  wrench.position.set(.38, .8, -.05);
+  mina.add(wrench);
+  mina.position.set(FORGES.garage.x - 7, 6, FORGES.garage.z);
+  scene.add(mina);
+  const minaTag = addBillboard(scene, 'Mina', 'mécanique · relais des Forges', { x: FORGES.garage.x - 7, z: FORGES.garage.z }, '#f08ba2', 3.2, 12.1);
+
+  const chip = createPackage(scene, FORGES.chip, 0x54f1dc, .7);
+  const secondaryPackage = createPackage(scene, FORGES.package, 0xf1b66c, .82);
+  const car = createVehicle(scene, world, FORGES.carStart, 0x253b3b);
+  car.yaw = 0;
+  car.group.rotation.y = car.yaw;
+  const guards: Guard[] = [
+    createGuard(scene, world, { x: 84, z: 48 }, [{ x: 84, z: 48 }, { x: 98, z: 48 }, { x: 99, z: 59 }, { x: 83, z: 59 }]),
+    createGuard(scene, world, { x: 116, z: 48 }, [{ x: 116, z: 48 }, { x: 123, z: 48 }, { x: 123, z: 57 }, { x: 108, z: 57 }]),
+    createGuard(scene, world, { x: 91, z: 36 }, [{ x: 91, z: 36 }, { x: 100, z: 35 }, { x: 111, z: 39 }, { x: 97, z: 39 }]),
+  ];
+
   const cameraUnit = new THREE.Group();
-  const cameraStand = new THREE.Mesh(new THREE.CylinderGeometry(.1, .16, 1.3, 7), steel);
-  cameraStand.position.y = .65;
+  const cameraStand = new THREE.Mesh(new THREE.CylinderGeometry(.1, .16, 1.5, 7), MAT.concrete);
+  cameraStand.position.y = .75;
   cameraUnit.add(cameraStand);
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(.5, .3, .65), new THREE.MeshStandardMaterial({ color: 0x29373a, metalness: .4, roughness: .4 }));
-  housing.position.set(0, 1.35, -.2);
+  const housing = new THREE.Mesh(new THREE.BoxGeometry(.56, .34, .7), new THREE.MeshStandardMaterial({ color: 0x29373a, metalness: .4, roughness: .4 }));
+  housing.position.set(0, 1.55, -.18);
   cameraUnit.add(housing);
-  const lens = new THREE.Mesh(new THREE.SphereGeometry(.12, 8, 7), MAT.neonPink);
-  lens.position.set(0, 1.35, -.53);
+  const lens = new THREE.Mesh(new THREE.SphereGeometry(.13, 8, 7), MAT.neonPink);
+  lens.position.set(0, 1.55, -.56);
   cameraUnit.add(lens);
-  cameraUnit.position.set(20, 0, -8.6);
+  cameraUnit.position.set(FORGES.camera.x, 6, FORGES.camera.z);
+  cameraUnit.rotation.y = Math.PI;
   scene.add(cameraUnit);
-  const coneGeo = new THREE.BufferGeometry();
-  const coneVerts = new Float32Array([0, .035, 0, -5, .035, -13, 5, .035, -13]);
-  coneGeo.setAttribute('position', new THREE.BufferAttribute(coneVerts, 3));
-  coneGeo.setIndex([0, 1, 2]);
-  coneGeo.computeVertexNormals();
-  const cameraCone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0xf06b80, transparent: true, opacity: .08, side: THREE.DoubleSide, depthWrite: false }));
-  cameraCone.position.set(20, 0, -8.6);
+  const coneGeometry = new THREE.BufferGeometry();
+  coneGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, .07, 0, -7, .07, -17, 7, .07, -17]), 3));
+  coneGeometry.setIndex([0, 1, 2]);
+  coneGeometry.computeVertexNormals();
+  const cameraCone = new THREE.Mesh(coneGeometry, new THREE.MeshBasicMaterial({ color: 0xec6980, transparent: true, opacity: .08, side: THREE.DoubleSide, depthWrite: false }));
+  cameraCone.position.set(FORGES.camera.x, 6.1, FORGES.camera.z);
+  cameraCone.rotation.y = Math.PI;
   scene.add(cameraCone);
 
-  // Recovery corridor shutter: two anchor walls leave a 2.2m gap for the persistent gate.
-  boxMesh(scene, world, blocks, { x: -7.9, z: 14.6, y: 1.05 }, { x: .32, y: 2.1, z: 3.1 }, MAT.concreteDark, true);
-  boxMesh(scene, world, blocks, { x: -7.9, z: 20.2, y: 1.05 }, { x: .32, y: 2.1, z: 2.8 }, MAT.concreteDark, true);
+  const citizenRoutes: Array<[Point[], Point[], Point[]]> = [
+    [[{ x: 14, z: 34 }, { x: 23, z: 35 }, { x: 33, z: 34 }, { x: 44, z: 37 }], [{ x: 14, z: 35 }, { x: 27, z: 37 }, { x: 42, z: 36 }, { x: 49, z: 31 }], [{ x: 14, z: 34 }, { x: 29, z: 34 }, { x: 38, z: 35 }, { x: 47, z: 38 }]],
+    [[{ x: 21, z: 39 }, { x: 31, z: 38 }, { x: 42, z: 37 }, { x: 48, z: 33 }], [{ x: 21, z: 39 }, { x: 28, z: 36 }, { x: 39, z: 36 }, { x: 48, z: 39 }], [{ x: 21, z: 39 }, { x: 35, z: 38 }, { x: 46, z: 35 }, { x: 52, z: 30 }]],
+    [[{ x: 40, z: 27 }, { x: 50, z: 27 }, { x: 62, z: 24 }, { x: 73, z: 21 }], [{ x: 40, z: 27 }, { x: 55, z: 26 }, { x: 68, z: 22 }, { x: 82, z: 20 }], [{ x: 40, z: 27 }, { x: 54, z: 27 }, { x: 66, z: 23 }, { x: 78, z: 21 }]],
+    [[{ x: 47, z: 36 }, { x: 55, z: 33 }, { x: 62, z: 29 }, { x: 71, z: 23 }], [{ x: 47, z: 36 }, { x: 58, z: 31 }, { x: 65, z: 28 }, { x: 75, z: 22 }], [{ x: 47, z: 36 }, { x: 57, z: 34 }, { x: 66, z: 27 }, { x: 75, z: 22 }]],
+    [[{ x: 63, z: 36 }, { x: 75, z: 34 }, { x: 88, z: 34 }, { x: 101, z: 34 }], [{ x: 63, z: 36 }, { x: 74, z: 37 }, { x: 90, z: 36 }, { x: 102, z: 33 }], [{ x: 63, z: 36 }, { x: 77, z: 34 }, { x: 91, z: 33 }, { x: 104, z: 35 }]],
+    [[{ x: 76, z: 34 }, { x: 83, z: 37 }, { x: 95, z: 37 }, { x: 107, z: 36 }], [{ x: 76, z: 34 }, { x: 85, z: 35 }, { x: 96, z: 34 }, { x: 106, z: 37 }], [{ x: 76, z: 34 }, { x: 89, z: 36 }, { x: 98, z: 36 }, { x: 110, z: 38 }]],
+    [[{ x: 103, z: 34 }, { x: 109, z: 36 }, { x: 113, z: 40 }, { x: 120, z: 40 }], [{ x: 103, z: 34 }, { x: 108, z: 39 }, { x: 116, z: 40 }, { x: 123, z: 37 }], [{ x: 103, z: 34 }, { x: 111, z: 36 }, { x: 116, z: 40 }, { x: 124, z: 39 }]],
+    [[{ x: 126, z: 30 }, { x: 136, z: 32 }, { x: 145, z: 36 }, { x: 153, z: 45 }], [{ x: 126, z: 30 }, { x: 138, z: 35 }, { x: 149, z: 40 }, { x: 155, z: 49 }], [{ x: 126, z: 30 }, { x: 137, z: 32 }, { x: 146, z: 38 }, { x: 153, z: 47 }]],
+    [[{ x: 108, z: 55 }, { x: 112, z: 57 }, { x: 117, z: 57 }, { x: 120, z: 54 }], [{ x: 108, z: 55 }, { x: 111, z: 58 }, { x: 117, z: 58 }, { x: 122, z: 55 }], [{ x: 108, z: 55 }, { x: 112, z: 59 }, { x: 117, z: 57 }, { x: 121, z: 53 }]],
+    [[{ x: 125, z: 84 }, { x: 125, z: 88 }, { x: 125, z: 91 }, { x: 135, z: 90 }, { x: 142, z: 99 }], [{ x: 125, z: 82 }, { x: 125, z: 88 }, { x: 125, z: 91 }, { x: 133, z: 94 }, { x: 142, z: 99 }], [{ x: 125, z: 84 }, { x: 125, z: 89 }, { x: 125, z: 91 }, { x: 137, z: 94 }, { x: 142, z: 99 }]],
+    [[{ x: 145, z: 96 }, { x: 153, z: 98 }, { x: 160, z: 100 }, { x: 165, z: 104 }], [{ x: 145, z: 96 }, { x: 151, z: 100 }, { x: 159, z: 101 }, { x: 164, z: 103 }], [{ x: 145, z: 96 }, { x: 153, z: 97 }, { x: 160, z: 100 }, { x: 163, z: 103 }]],
+    [[{ x: 122, z: 94 }, { x: 119, z: 100 }, { x: 111, z: 105 }, { x: 100, z: 108 }], [{ x: 122, z: 94 }, { x: 118, z: 101 }, { x: 110, z: 106 }, { x: 98, z: 109 }], [{ x: 122, z: 94 }, { x: 116, z: 100 }, { x: 108, z: 104 }, { x: 97, z: 108 }]],
+    [[{ x: 81, z: 108 }, { x: 68, z: 107 }, { x: 55, z: 105 }, { x: 43, z: 102 }], [{ x: 81, z: 108 }, { x: 69, z: 110 }, { x: 55, z: 106 }, { x: 42, z: 102 }], [{ x: 81, z: 108 }, { x: 66, z: 108 }, { x: 54, z: 104 }, { x: 40, z: 101 }]],
+    [[{ x: 34, z: 98 }, { x: 27, z: 100 }, { x: 18, z: 100 }, { x: 13, z: 98 }], [{ x: 34, z: 98 }, { x: 28, z: 101 }, { x: 17, z: 100 }, { x: 12, z: 98 }], [{ x: 34, z: 98 }, { x: 24, z: 100 }, { x: 18, z: 99 }, { x: 12, z: 97 }]],
+    [[{ x: 133, z: 88 }, { x: 138, z: 93 }, { x: 142, z: 98 }, { x: 148, z: 101 }], [{ x: 133, z: 88 }, { x: 137, z: 93 }, { x: 143, z: 97 }, { x: 151, z: 100 }], [{ x: 133, z: 88 }, { x: 139, z: 94 }, { x: 143, z: 99 }, { x: 151, z: 102 }]],
+  ];
+  const civilianColors = [0x96a589, 0xb98469, 0x71939b, 0xc8a86e, 0x9274a5, 0x67917d, 0xb57d82, 0x7893b6, 0xc0a987, 0x758f85, 0xb08d59, 0x7b8494, 0xc1815d, 0x8a9b72];
+  const citizens = citizenRoutes.map((routes, index) => createCitizen(scene, world, routes, civilianColors[index], .85 + (index % 4) * .11, index % 3));
+  const traffic: TrafficVehicle[] = TRAFFIC_ROUTES.map((route, index) => {
+    const dx = route[1].x - route[0].x;
+    const dz = route[1].z - route[0].z;
+    const length = Math.hypot(dx, dz) || 1;
+    const laneOffset = index === 0 ? 1.9 : index === 1 ? -1.9 : 1.9;
+    const start = { x: route[0].x + dz / length * laneOffset, z: route[0].z - dx / length * laneOffset };
+    const vehicle = createVehicle(scene, world, start, [0x655445, 0x35565c, 0x76604a][index]);
+    const next = route[1];
+    vehicle.yaw = Math.atan2(-(next.x - start.x), -(next.z - start.z));
+    vehicle.group.rotation.y = vehicle.yaw;
+    return { ...vehicle, route: [...route], routeIndex: 1, direction: 1, cruiseSpeed: 4.2 + index * .55, laneOffset, pauseUntil: 0 };
+  });
 
   const decoys: THREE.Group[] = [];
   for (let i = 0; i < 5; i++) {
     const group = new THREE.Group();
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(.32 + i * .16, .018, 4, 32), new THREE.MeshBasicMaterial({ color: 0x7bdeed, transparent: true, opacity: .45 }));
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(.36 + i * .17, .018, 4, 32), new THREE.MeshBasicMaterial({ color: 0x7bdeed, transparent: true, opacity: .45 }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = .08 + i * .04;
     group.add(ring);
@@ -585,34 +890,36 @@ export function buildCity(container: HTMLElement, world: RAPIER.World): City {
     scene.add(group);
     decoys.push(group);
   }
-
-  const particlePositions = new Float32Array(72 * 3);
-  const particleLife = new Float32Array(72);
+  const particlePositions = new Float32Array(96 * 3);
+  const particleLife = new Float32Array(96);
   const particleGeometry = new THREE.BufferGeometry();
   particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
   const particles = new THREE.Points(particleGeometry, new THREE.PointsMaterial({ color: 0xf26368, size: .13, transparent: true, opacity: .9, depthWrite: false }));
   scene.add(particles);
   const bloodMarks: THREE.Mesh[] = [];
-  for (let i = 0; i < 14; i++) {
-    const mark = new THREE.Mesh(new THREE.CircleGeometry(.14 + Math.random() * .17, 10), new THREE.MeshBasicMaterial({ color: 0x8d1f2e, transparent: true, opacity: .55, depthWrite: false }));
+  for (let i = 0; i < 22; i++) {
+    const mark = new THREE.Mesh(new THREE.CircleGeometry(.14 + Math.random() * .2, 10), new THREE.MeshBasicMaterial({ color: 0x8d1f2e, transparent: true, opacity: .55, depthWrite: false }));
     mark.rotation.x = -Math.PI / 2;
     mark.visible = false;
-    mark.position.y = .028;
     scene.add(mark);
     bloodMarks.push(mark);
   }
 
-  return {
-    scene, camera, renderer, bridgeDeck, blockers: blocks, buildings, gateMesh, shortcutMesh, chip, secondaryPackage,
-    mina, minaTag, guards, cameraUnit, cameraCone, car, player, floorPlane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
+  const player = createCharacter(scene, world, FORGES.playerStart, MAT.player);
+  const city: City = {
+    scene, camera, renderer, bridgeDeck, railDeck, blockers: blocks, buildings, gateMesh, shortcutMesh, chip, secondaryPackage,
+    mina, minaTag, guards, citizens, cameraUnit, cameraCone, car, traffic, trafficRouteMeshes: [], servicePanel, breakables,
+    streetLights, activityPhase: -1, player, floorPlane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -6),
     aimRay: new THREE.Raycaster(), decoys, bloodMarks, particles, particlePositions, particleLife,
     buildingsByName: new Map(buildings.map((building) => [building.name, building])),
-    navGrid: { blocked: [], min: -31.5, step: 1.5, size: 43 },
+    navGrid: { blocked: [], heights: new Float32Array(), minX: -3, minZ: -3, step: 1.5, width: 125, height: 83 },
   };
+  refreshNavigation(city);
+  return city;
 }
 
 export function refreshNavigation(city: City): void {
-  const { min, step, size } = city.navGrid;
+  const { minX, minZ, step, width, height } = city.navGrid;
   const obstacles: THREE.Box3[] = [];
   for (const object of city.blockers) {
     if (!object.visible) continue;
@@ -623,27 +930,42 @@ export function refreshNavigation(city: City): void {
     for (const mesh of meshes) {
       if (!mesh.visible) continue;
       const bounds = new THREE.Box3().setFromObject(mesh);
-      if (bounds.max.y < .35 || bounds.min.y > 1.85) continue;
       if (bounds.max.x - bounds.min.x > 60 || bounds.max.z - bounds.min.z > 60) continue;
+      if (bounds.max.y - bounds.min.y < .035) continue;
       obstacles.push(bounds);
     }
   }
-  const blocked = new Array<boolean>(size * size).fill(false);
-  for (let iz = 0; iz < size; iz++) {
-    const z = min + iz * step;
-    for (let ix = 0; ix < size; ix++) {
-      const x = min + ix * step;
-      blocked[iz * size + ix] = obstacles.some((b) => x > b.min.x - .49 && x < b.max.x + .49 && z > b.min.z - .49 && z < b.max.z + .49);
+  const blocked = new Array<boolean>(width * height).fill(false);
+  const heights = new Float32Array(width * height);
+  for (let iz = 0; iz < height; iz++) {
+    const z = minZ + iz * step;
+    for (let ix = 0; ix < width; ix++) {
+      const x = minX + ix * step;
+      const index = iz * width + ix;
+      const floorY = groundHeightAt({ x, z });
+      heights[index] = floorY;
+      blocked[index] = obstacles.some((b) =>
+        x > b.min.x - .48 && x < b.max.x + .48 && z > b.min.z - .48 && z < b.max.z + .48
+        && b.max.y > floorY + .14 && b.min.y < floorY + 1.66,
+      );
     }
   }
   city.navGrid.blocked = blocked;
+  city.navGrid.heights = heights;
 }
 
 export function updateActorVisual(actor: Character): void {
-  actor.group.position.set(actor.position.x, 0, actor.position.z);
+  const floorY = actor.position.y - .9;
+  actor.group.position.set(actor.position.x, floorY, actor.position.z);
   actor.group.rotation.y = actor.facing;
-  actor.shadow.position.x = actor.position.x;
-  actor.shadow.position.z = actor.position.z;
+  if (actor.walking) actor.animClock += .11;
+  else actor.animClock *= .82;
+  const swing = actor.walking ? Math.sin(actor.animClock) * .43 : 0;
+  actor.limbs[0].rotation.x = swing;
+  actor.limbs[1].rotation.x = -swing;
+  actor.limbs[2].rotation.x = -swing * .72;
+  actor.limbs[3].rotation.x = swing * .72;
+  actor.shadow.position.set(actor.position.x, floorY + .026, actor.position.z);
   actor.shadow.visible = actor.alive;
 }
 
@@ -654,13 +976,13 @@ export function flashBlood(city: City, point: Point, now: number): void {
     const index = (Math.random() * slots.length) | 0;
     slots[index] = 0.34 + Math.random() * .4;
     values[index * 3] = point.x + (Math.random() - .5) * .72;
-    values[index * 3 + 1] = .3 + Math.random() * .8;
+    values[index * 3 + 1] = groundHeightAt(point) + .3 + Math.random() * .8;
     values[index * 3 + 2] = point.z + (Math.random() - .5) * .72;
   }
   city.particles.geometry.attributes.position.needsUpdate = true;
   const mark = city.bloodMarks.find((entry) => !entry.visible) ?? city.bloodMarks[(Math.random() * city.bloodMarks.length) | 0];
   mark.visible = true;
-  mark.position.set(point.x, .03, point.z);
+  mark.position.set(point.x, groundHeightAt(point) + .03, point.z);
   mark.userData.expires = now + 22;
 }
 
@@ -683,6 +1005,182 @@ export function animateEffects(city: City, dt: number, now: number): void {
     });
     if (elapsed > 8) decoy.visible = false;
   }
+}
+
+export function updateForgesLife(city: City, dt: number, now: number, player: Point, alert: boolean): number {
+  const phase = Math.floor(now / 150) % 3;
+  if (phase !== city.activityPhase) {
+    city.activityPhase = phase;
+    const background = phase === 1 ? 0x38403d : phase === 0 ? 0x202a2b : 0x101a1d;
+    city.scene.background = new THREE.Color(background);
+    (city.scene.fog as THREE.FogExp2).color.setHex(background);
+    for (const citizen of city.citizens) {
+      if (citizen.phaseIndex === phase) continue;
+      let nearest = 0;
+      let best = Number.POSITIVE_INFINITY;
+      citizen.routeSets[phase].forEach((point, index) => {
+        const distance = Math.hypot(point.x - citizen.position.x, point.z - citizen.position.z);
+        if (distance < best) { best = distance; nearest = index; }
+      });
+      citizen.phaseIndex = phase;
+      citizen.route = citizen.routeSets[phase];
+      citizen.routeIndex = (nearest + 1) % citizen.route.length;
+      citizen.pauseUntil = now + .35;
+    }
+  }
+  const lampFactor = phase === 1 ? .14 : phase === 0 ? .68 : 1;
+  for (const light of city.streetLights) {
+    const seed = light.userData.seed as number;
+    const flicker = .94 + .06 * Math.sin(now * 2.1 + seed) * Math.sin(now * .37 + seed * .7);
+    light.intensity = THREE.MathUtils.damp(light.intensity, 5.5 * lampFactor * flicker, 3.4, dt);
+  }
+
+  for (const citizen of city.citizens) {
+    const distanceToPlayer = Math.hypot(citizen.position.x - player.x, citizen.position.z - player.z);
+    citizen.collider.setEnabled(distanceToPlayer < 52 && citizen.alive);
+    if (!citizen.alive) {
+      if (now < citizen.fallenUntil) continue;
+      citizen.alive = true;
+      citizen.group.rotation.set(0, 0, 0);
+      citizen.group.visible = true;
+      citizen.position = { ...citizen.route[0] };
+      citizen.routeIndex = 1;
+      citizen.startledUntil = 0;
+      citizen.panicTarget = null;
+    }
+    if (alert && distanceToPlayer < 20 && now > citizen.startledUntil) {
+      citizen.startledUntil = now + 7 + (citizen.gait % 2);
+      citizen.pauseUntil = 0;
+      const refuge = citizen.route.reduce((best, point) =>
+        Math.hypot(point.x - player.x, point.z - player.z) > Math.hypot(best.x - player.x, best.z - player.z) ? point : best,
+      citizen.route[0]);
+      citizen.panicTarget = { ...refuge };
+    }
+    const fleeing = now < citizen.startledUntil && citizen.panicTarget !== null;
+    const target = fleeing ? citizen.panicTarget! : citizen.route[citizen.routeIndex % citizen.route.length];
+    const dx = target.x - citizen.position.x;
+    const dz = target.z - citizen.position.z;
+    const remaining = Math.hypot(dx, dz);
+    if (remaining < .58) {
+      if (fleeing) {
+        citizen.panicTarget = null;
+        citizen.pauseUntil = now + 1.2;
+      } else {
+        citizen.routeIndex = (citizen.routeIndex + 1) % citizen.route.length;
+        citizen.pauseUntil = now + .45 + ((citizen.gait * 13.1) % 1.8);
+      }
+    } else if (now >= citizen.pauseUntil) {
+      const step = Math.min(remaining, citizen.speed * (fleeing ? 1.8 : 1) * dt);
+      const x = citizen.position.x + dx / remaining * step;
+      const z = citizen.position.z + dz / remaining * step;
+      const oldFloor = groundHeightAt(citizen.position);
+      const nextFloor = groundHeightAt({ x, z });
+      citizen.controller.computeColliderMovement(citizen.collider, { x: dx / remaining * step, y: nextFloor - oldFloor, z: dz / remaining * step });
+      const movement = citizen.controller.computedMovement();
+      citizen.position.x += movement.x;
+      citizen.position.z += movement.z;
+      citizen.body.setTranslation({ x: citizen.position.x, y: nextFloor + .9, z: citizen.position.z }, true);
+      const heading = Math.atan2(-dx, -dz);
+      citizen.group.rotation.y = THREE.MathUtils.damp(citizen.group.rotation.y, heading, 7.5, dt);
+      citizen.gait += dt * (fleeing ? 11 : 6.5);
+    }
+    const floorY = groundHeightAt(citizen.position);
+    citizen.group.position.set(citizen.position.x, floorY + (now < citizen.pauseUntil ? 0 : Math.abs(Math.sin(citizen.gait)) * .045), citizen.position.z);
+    citizen.group.rotation.z = fleeing ? -.12 : Math.sin(citizen.gait) * .025;
+    const swing = Math.sin(citizen.gait) * (fleeing ? .62 : .38);
+    citizen.limbs[0].rotation.x = swing;
+    citizen.limbs[1].rotation.x = -swing;
+    citizen.limbs[2].rotation.x = -swing * .7;
+    citizen.limbs[3].rotation.x = swing * .7;
+    citizen.shadow.position.set(citizen.position.x, floorY + .026, citizen.position.z);
+    citizen.shadow.scale.setScalar(fleeing ? .94 : 1 + Math.abs(Math.sin(citizen.gait)) * .025);
+  }
+
+  for (const vehicle of city.traffic) {
+    const lanePoint = (index: number): Point => {
+      const previous = vehicle.route[Math.max(0, index - 1)];
+      const next = vehicle.route[Math.min(vehicle.route.length - 1, index + 1)];
+      const dx = next.x - previous.x;
+      const dz = next.z - previous.z;
+      const length = Math.hypot(dx, dz) || 1;
+      const point = vehicle.route[index];
+      return { x: point.x + dz / length * vehicle.laneOffset, z: point.z - dx / length * vehicle.laneOffset };
+    };
+    const target = lanePoint(vehicle.routeIndex);
+    const toX = target.x - vehicle.position.x;
+    const toZ = target.z - vehicle.position.z;
+    const distance = Math.hypot(toX, toZ);
+    if (distance < 2.3) {
+      const nextIndex = vehicle.routeIndex + vehicle.direction;
+      if (nextIndex >= vehicle.route.length) {
+        vehicle.direction = -1;
+        vehicle.routeIndex = vehicle.route.length - 2;
+      } else if (nextIndex < 0) {
+        vehicle.direction = 1;
+        vehicle.routeIndex = 1;
+      } else {
+        vehicle.routeIndex = nextIndex;
+      }
+      vehicle.pauseUntil = now + .12;
+      continue;
+    }
+    const nearPlayer = Math.hypot(vehicle.position.x - player.x, vehicle.position.z - player.z) < 6.5;
+    const nearTraffic = city.traffic.some((other) => other !== vehicle && Math.hypot(other.position.x - vehicle.position.x, other.position.z - vehicle.position.z) < 2.3);
+    const nearCitizen = city.citizens.some((person) => person.alive && Math.hypot(person.position.x - vehicle.position.x, person.position.z - vehicle.position.z) < 2.6);
+    const desiredSpeed = now < vehicle.pauseUntil || (nearTraffic && distance < 5) ? 0 : nearPlayer || nearCitizen ? Math.min(2.1, vehicle.cruiseSpeed) : vehicle.cruiseSpeed;
+    vehicle.speed = THREE.MathUtils.damp(vehicle.speed, desiredSpeed, 1.8, dt);
+    if (vehicle.speed < .15) continue;
+    const desiredYaw = Math.atan2(-toX, -toZ);
+    let yawDelta = desiredYaw - vehicle.yaw;
+    yawDelta = ((yawDelta + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    vehicle.yaw += yawDelta * (1 - Math.exp(-dt * 4.8));
+    const step = Math.min(distance, vehicle.speed * dt);
+    const moveX = toX / distance * step;
+    const moveZ = toZ / distance * step;
+    const oldFloor = groundHeightAt({ x: vehicle.position.x, z: vehicle.position.z });
+    const nextFloor = groundHeightAt({ x: vehicle.position.x + moveX, z: vehicle.position.z + moveZ });
+    vehicle.controller.computeColliderMovement(vehicle.collider, { x: moveX, y: nextFloor - oldFloor, z: moveZ });
+    const moved = vehicle.controller.computedMovement();
+      if (Math.hypot(moved.x - moveX, moved.z - moveZ) > .001) {
+      const freshContacts = new Set<number>();
+      for (let i = 0; i < vehicle.controller.numComputedCollisions(); i++) {
+        const collision = vehicle.controller.computedCollision(i);
+        const collider = collision?.collider;
+        if (!collision || !collider) continue;
+        freshContacts.add(collider.handle);
+        if (vehicle.contactHandles.has(collider.handle) || vehicle.speed < .01) continue;
+        const severity = vehicle.speed;
+        showVehicleDamageAt(vehicle, new THREE.Vector3(collision.witness1.x, collision.witness1.y, collision.witness1.z), severity);
+        const breakable = city.breakables.find((entry) => entry.collider.handle === collider.handle && !entry.broken);
+        if (breakable) {
+          breakable.durability -= severity;
+          breakable.mesh.rotation.z += Math.sign(moveX + moveZ || 1) * Math.min(.18, .04 + severity * .022);
+          breakable.mesh.position.y += Math.min(.035, severity * .008);
+          if (breakable.durability <= 0) {
+            breakable.broken = true;
+            breakable.collider.setEnabled(false);
+            breakable.mesh.rotation.z = Math.sign(moveX + moveZ || 1) * .68;
+            breakable.mesh.position.y += .22;
+          }
+        }
+      }
+      vehicle.contactHandles = freshContacts;
+      vehicle.speed *= .18;
+      vehicle.pauseUntil = now + .5;
+    } else {
+      vehicle.contactHandles.clear();
+    }
+    vehicle.position.x += moved.x;
+    vehicle.position.z += moved.z;
+    const floorY = groundHeightAt({ x: vehicle.position.x, z: vehicle.position.z });
+    vehicle.position.y = floorY + .57;
+    vehicle.body.setTranslation({ x: vehicle.position.x, y: vehicle.position.y, z: vehicle.position.z }, true);
+    vehicle.body.setRotation({ x: 0, y: Math.sin(vehicle.yaw / 2), z: 0, w: Math.cos(vehicle.yaw / 2) }, true);
+    vehicle.group.position.set(vehicle.position.x, floorY, vehicle.position.z);
+    vehicle.group.rotation.y = vehicle.yaw;
+    vehicle.collider.setEnabled(Math.hypot(vehicle.position.x - player.x, vehicle.position.z - player.z) < 64);
+  }
+  return phase;
 }
 
 export function resizeCity(city: City, width: number, height: number): void {

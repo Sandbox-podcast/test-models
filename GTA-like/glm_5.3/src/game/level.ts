@@ -13,10 +13,10 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { G_STATIC } from './defs';
 
-export interface PatrolDef { name: string; points: { x: number; z: number }[]; }
+export interface PatrolDef { name: string; points: { x: number; z: number; y?: number }[]; }
 export interface CamDef { id: string; x: number; z: number; y: number; baseYaw: number; sweep: number; }
 export interface GrateDef {
-  id: 'grille-quai' | 'grille-service';
+  id: string; // 'grille-quai' | 'grille-service' | portes de campagne M02–M06 / U03 / U05…
   x: number; z: number; w: number; h: number;
   /** Grille compatible : ouverte par l'implant Intrusion. */
   byIntrusion: boolean;
@@ -37,6 +37,15 @@ export interface LevelData {
   ysec: { x: number; z: number };
   pedestal: { x: number; z: number };
   crate: { x: number; z: number };
+  /** U01 : module à prendre sur l'établi du garage. */
+  module: { x: number; z: number };
+  /** U01 : panneau de la grille de service, dans la galerie. */
+  panel: { x: number; z: number };
+  /** Lampes de la galerie de service — éteintes jusqu'à U01. */
+  galleryLamps: THREE.Mesh[];
+  galleryLampMat: THREE.MeshStandardMaterial;
+  /** Voyant du panneau de commande (s'allume à U01). */
+  panelLed: THREE.Mesh;
   patrols: PatrolDef[];
   cameras: CamDef[];
   medkits: { x: number; z: number }[];
@@ -44,6 +53,20 @@ export interface LevelData {
   props: { x: number; z: number; size: number }[];
   parkedCars: { x: number; z: number; yaw: number }[];
   fades: FadeZone[];
+  /** Jalons de campagne (bible 02/03) : objets à prendre / équipements à activer. */
+  questProps: { id: string; x: number; z: number; y?: number }[];
+  /** PNJ de campagne (Varenne, gardien de l’arrière-boutique, résidente). */
+  questNpcs: { id: string; x: number; z: number; y: number; color: number }[];
+  /** Route de l’agent des archives (M02) : dépôt → avenue → rue basse → quai → coteau → route du nord → départ. */
+  agentRoute: { x: number; z: number; y: number }[];
+  /** Patrouilles Civis de La Dalle (M03 et suivantes). */
+  dallePatrols: PatrolDef[];
+  /** Caméra du couloir de la salle de contrôle (M06). */
+  extraCams: CamDef[];
+  /** Carte annotée du garage, révélée à la fin d’U04. */
+  mapDecal: THREE.Mesh;
+  /** Panneau de contrats communs (bible 03), à l’angle du garage. */
+  board: { x: number; z: number };
 }
 
 export interface BuiltGrate {
@@ -101,7 +124,7 @@ export class LevelBuilder {
     const len = Math.hypot(dz, dy);
     const ang = -Math.atan2(dy, dz);
     const h = o.rail ? 0.9 : 0.5;
-    const yMid = (o.yA + o.yB) / 2 + (o.rail ? 0.75 : 0.26);
+    const yMid = (o.yA + o.yB) / 2 + (o.rail ? 0.75 : -0.24);
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(o.w, h, len), o.mat);
     mesh.position.set(o.x, yMid, (o.zA + o.zB) / 2);
     mesh.rotation.x = ang;
@@ -152,6 +175,13 @@ export class LevelBuilder {
       bar.position.set(-def.w / 2 + (i + 0.5) * (def.w / 5), -def.h / 2 + 0.15, 0);
       mesh.add(bar);
     }
+    // voyant vert « accès de service » (DA)
+    const led = new THREE.Mesh(
+      new THREE.BoxGeometry(def.w * 0.7, 0.1, 0.12),
+      this.mat('grateLed', { color: 0x05070a, emissive: 0x82d9af, emissiveIntensity: 1.8 }),
+    );
+    led.position.set(0, -def.h + 0.28, 0.26);
+    mesh.add(led);
     mesh.castShadow = true;
     this.root.add(mesh);
     const collider = this.world.createCollider(
@@ -165,20 +195,28 @@ export class LevelBuilder {
   }
 }
 
-/** Bloc d'immeuble : corps + bandeau de fenêtres sud + détails de toit (lisibilité zénithale). */
+/** Bloc d'immeuble : corps + socle calcaire + bandeau de fenêtres sud + toit détaillé. */
 function addBlock(
   B: LevelBuilder, x1: number, z1: number, x2: number, z2: number, h: number,
   wallMat: THREE.MeshStandardMaterial, winColor: number,
 ): { meshes: THREE.Mesh[]; x1: number; z1: number; x2: number; z2: number } {
   const w = x2 - x1, d = z2 - z1;
   const body = B.box({ x: (x1 + x2) / 2, y: h / 2, z: (z1 + z2) / 2, w, h, d, mat: wallMat });
+  // socle calcaire (DA : base claire des façades)
+  const plinth = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 0.16, 1.3, d + 0.16),
+    B.mat('calcaire', { color: 0x6e6656, roughness: 0.9 }),
+  );
+  plinth.position.set((x1 + x2) / 2, 0.65, (z1 + z2) / 2);
+  plinth.castShadow = true;
+  B.root.add(plinth);
   const band = new THREE.Mesh(
     new THREE.BoxGeometry(w * 0.78, Math.min(1.5, h * 0.15), 0.12),
     B.mat(`win-${x1}-${z1}-${winColor}`, { color: 0x05070a, emissive: winColor, emissiveIntensity: 2.2, roughness: 0.6 }),
   );
   band.position.set((x1 + x2) / 2, h * 0.62, z2 + 0.1);
   B.root.add(band);
-  const meshes: THREE.Mesh[] = [body, band];
+  const meshes: THREE.Mesh[] = [body, band, plinth];
   // détails de toit : bandeaux lumineux + clim/ateliers (vus du-dessus)
   const cx = (x1 + x2) / 2, cz = (z1 + z2) / 2;
   const strip = B.mat(`roofstrip-${winColor}`, { color: 0x05070a, emissive: winColor, emissiveIntensity: 1.8, roughness: 0.5 });
@@ -301,7 +339,19 @@ export function buildLevel(world: RAPIER.World): { data: LevelData; grates: Buil
   blocks.push(addBlock(B, 8, 20, 44, 40, 11, M.wallB, 0x2b4a5f));     // B1a
   blocks.push(addBlock(B, 44, 20, 88, 40, 9, M.wallA, 0x1f3a4a));     // B1b
   blocks.push(addBlock(B, 88, 20, 128, 40, 12, M.wallB, 0x35284a));   // B1c
-  blocks.push(addBlock(B, 175, 20, 212, 40, 10, M.wallA, 0x2b4a5f));  // B2
+  // B2 devient les ARCHIVES CIVIS (M02 « Date d’effet »)
+  B.box({ x: 194, y: 2.75, z: 38, w: 32, h: 5.5, d: 0.7, mat: M.wallA });       // sud
+  B.box({ x: 178, y: 2.75, z: 30, w: 0.7, h: 5.5, d: 16, mat: M.wallA });        // ouest
+  B.box({ x: 210, y: 2.75, z: 25, w: 0.7, h: 5.5, d: 6, mat: M.wallA });         // est (nord)
+  B.box({ x: 210, y: 2.75, z: 34.5, w: 0.7, h: 5.5, d: 7, mat: M.wallA });       // est (sud)
+  B.box({ x: 183, y: 2.75, z: 22, w: 10, h: 5.5, d: 0.7, mat: M.wallA });        // nord (ouest)
+  B.box({ x: 202, y: 2.75, z: 22, w: 16, h: 5.5, d: 0.7, mat: M.wallA });        // nord (est)
+  const archivesRoof = B.box({ x: 194, y: 5.65, z: 30, w: 33, h: 0.4, d: 17, mat: M.roof, collide: false });
+  B.floor(194, 30, 31, 15, M.concrete, 0.05);
+  B.box({ x: 194, y: 0.55, z: 30, w: 1.6, h: 1.1, d: 1.0, mat: M.metal });       // pupitre du calendrier
+  B.box({ x: 194, y: 5.9, z: 21.4, w: 10, h: 0.9, d: 0.3, mat: neon(0xffb347), collide: false });
+  B.grate({ id: 'porte-archives', x: 193, z: 22, w: 6, h: 4.2, byIntrusion: false, byStory: true });
+  B.grate({ id: 'porte-archives-cote', x: 210, z: 29.5, w: 3, h: 2.4, byIntrusion: true, byStory: false });
   blocks.push(addBlock(B, 8, 88, 34, 124, 9, M.wallA, 0x1f3a4a));     // B3a
   blocks.push(addBlock(B, 34, 88, 64, 124, 8, M.wallB, 0x2b4a5f));    // B3b
   blocks.push(addBlock(B, 64, 88, 92, 124, 10, M.wallA, 0x1f3a4a));   // B3c
@@ -378,11 +428,11 @@ export function buildLevel(world: RAPIER.World): { data: LevelData; grates: Buil
   B.floor(83, 156, 17, 15, M.concrete, 0.05);
   B.box({ x: 76.6, y: 0.5, z: 159.5, w: 1.2, h: 1, d: 4, mat: M.wood });     // établi
   B.box({ x: 76.8, y: 0.4, z: 152.4, w: 1.1, h: 0.8, d: 1.1, mat: M.metal }); // caisse outils
-  B.box({ x: 86, y: 4.4, z: 147.2, w: 8, h: 1.1, d: 0.3, mat: neon(0x00f0ff), collide: false }); // enseigne
+  B.box({ x: 86, y: 4.4, z: 147.2, w: 8, h: 1.1, d: 0.3, mat: neon(0xffc370), collide: false }); // enseigne atelier (ambre)
 
   // ------------------------------------------------------------------ bar Le Signal (x142..166 z148..164)
   blocks.push(addBlock(B, 104, 146, 140, 166, 8, M.wallC, 0x2b4a5f));
-  blocks.push(addBlock(B, 168, 146, 212, 166, 9, M.wallB, 0x1f3a4a));
+  blocks.push(addBlock(B, 168, 146, 198, 166, 9, M.wallB, 0x1f3a4a)); // réduit : la rue basse (J02) passe à l'est
   const barWalls: THREE.Mesh[] = [
     B.box({ x: 146, y: 2, z: 148, w: 8, h: 4, d: 0.6, mat: M.wallC }),   // x142..150
     B.box({ x: 161, y: 2, z: 148, w: 10, h: 4, d: 0.6, mat: M.wallC }),  // x156..166
@@ -399,8 +449,8 @@ export function buildLevel(world: RAPIER.World): { data: LevelData; grates: Buil
   B.box({ x: 119, y: 4.6, z: 111.2, w: 7, h: 1.1, d: 0.25, mat: neon(0xff2d78), collide: false });
   B.box({ x: 148, y: 5.2, z: 111.2, w: 6, h: 1.1, d: 0.25, mat: neon(0x52ff9a), collide: false });
   B.box({ x: 176, y: 4.4, z: 111.2, w: 6, h: 1.1, d: 0.25, mat: neon(0x00f0ff), collide: false });
-  // entrées du passage
-  B.box({ x: 104.8, y: 2.5, z: 73, w: 0.6, h: 0.9, d: 2.6, mat: neon(0x00f0ff), collide: false });
+  // entrées du passage (ouest : service — vert ; est : passage public — cyan)
+  B.box({ x: 104.8, y: 2.5, z: 73, w: 0.6, h: 0.9, d: 2.6, mat: neon(0x82d9af), collide: false });
   B.box({ x: 197.2, y: 2.5, z: 73, w: 0.6, h: 0.9, d: 2.6, mat: neon(0x00f0ff), collide: false });
 
   // ------------------------------------------------------------------ place de remise + fourgonnette
@@ -420,18 +470,36 @@ export function buildLevel(world: RAPIER.World): { data: LevelData; grates: Buil
     B.box({ x: lx, y: 4.25, z: lz, w: 0.9, h: 0.14, d: 0.4, mat: neon(0xbfe9ff), collide: false });
     B.floor(lx, lz, 6.5, 6.5, B.mat('pool', { color: 0x0a1420, emissive: 0x33526e, emissiveIntensity: 0.85, roughness: 1, transparent: true, opacity: 0.5 }), 0.06);
   }
-  for (const [tx, tz] of [[151, 65], [151, 73], [151, 81], [112, 81], [132, 81]]) {
+  // lampes du passage public (toujours allumées) et de la galerie de service (U01)
+  const galleryLampMat = B.mat('galleryLamp', { color: 0x05070a, emissive: 0xbfffe0, emissiveIntensity: 0.3, roughness: 0.5 });
+  for (const [tx, tz] of [[151, 65], [151, 73], [151, 81]]) {
     B.box({ x: tx, y: 2.12, z: tz, w: 1.6, h: 0.08, d: 0.4, mat: neon(0x9fdcff), collide: false });
   }
+  const galleryLamps: THREE.Mesh[] = [];
+  for (const [tx, tz] of [[108, 81], [121.5, 81], [135, 81], [145, 81]]) {
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.09, 0.5), galleryLampMat);
+    lamp.position.set(tx, 2.1, tz);
+    B.root.add(lamp);
+    galleryLamps.push(lamp);
+  }
+  // panneau de commande de la grille de service (U01) — mur nord de la galerie
+  const panelMat = B.mat('panel', { color: 0x2a3a32, roughness: 0.6, metalness: 0.5 });
+  B.box({ x: 99, y: 1.15, z: 78.6, w: 0.8, h: 1.0, d: 0.35, mat: panelMat });
+  const panelLed = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.12, 0.1),
+    B.mat('panelLed', { color: 0x05070a, emissive: 0x82d9af, emissiveIntensity: 0.25, roughness: 0.5 }),
+  );
+  panelLed.position.set(99, 1.78, 78.35);
+  B.root.add(panelLed);
 
   // ------------------------------------------------------------------ limites de carte
+  // (ouvertures : J01 au nord-est, J02/rue basse au sud-est vers Les Quais)
   const fence = (x: number, z: number, w: number, d: number) =>
     B.box({ x, y: 1.25, z, w, h: 2.5, d, mat: M.wallA });
   fence(110, 6.6, 208, 1.2);
-  fence(110, 168.6, 208, 1.2);
+  fence(103, 168.6, 190, 1.2);   // x 8..198 (J02 au-delà)
   fence(6.6, 87.6, 1.2, 165);
-  fence(211, 115, 1.2, 100);  // ferme la bande est (cour/lane)
-  fence(213.4, 47, 1.2, 82);
+  fence(211, 90, 1.2, 50);       // z 65..115 (J01 au nord, J02 au sud)
 
   // ------------------------------------------------------------------ train (cosmétique)
   const train = new THREE.Group();
@@ -454,7 +522,22 @@ export function buildLevel(world: RAPIER.World): { data: LevelData; grates: Buil
   B.fade(145.5, 60, 156.5, 86, 2.25, [lidUnder]);
   B.fade(94.5, 76, 156.5, 86, 2.25, [lidService]);
   B.fade(15, 38, 43, 92, 5.9, bridgeMeshes);
+  B.fade(176.5, 21.5, 211.5, 38.5, 5.4, [archivesRoof]);
   for (const b of blocks) B.fade(b.x1 - 0.6, b.z1 - 9, b.x2 + 0.6, b.z2 + 0.6, 99, b.meshes);
+
+  // ------------------------------------------------------------------ jalons de campagne (Forges)
+  // panneau de contrats communs à l'angle du garage (bible 03)
+  B.box({ x: 76.5, y: 1.5, z: 149.5, w: 0.3, h: 2.2, d: 1.6, mat: M.wood });
+  B.box({ x: 76.3, y: 1.6, z: 149.5, w: 0.12, h: 1.5, d: 1.2, mat: neon(0x82d9af), collide: false });
+  // carte annotée du garage, révélée à la fin d'U04
+  const mapDecal = new THREE.Mesh(
+    new THREE.PlaneGeometry(6, 3.4),
+    new THREE.MeshStandardMaterial({ color: 0x1c2a24, emissive: 0x3f7a5c, emissiveIntensity: 0.9, roughness: 0.9 }),
+  );
+  mapDecal.rotation.y = Math.PI / 2;
+  mapDecal.position.set(74.4, 2.2, 156);
+  mapDecal.visible = false;
+  B.root.add(mapDecal);
 
   const data: LevelData = {
     root: B.root,
@@ -466,6 +549,11 @@ export function buildLevel(world: RAPIER.World): { data: LevelData; grates: Buil
     ysec: { x: 155, z: 158 },
     pedestal: { x: 126, z: 93 },
     crate: { x: 120, z: 86.5 },
+    module: { x: 77.2, z: 158.2 },
+    panel: { x: 99, z: 79.4 },
+    galleryLamps,
+    galleryLampMat,
+    panelLed,
     patrols: [
       { name: 'hall', points: [{ x: 152, z: 118 }, { x: 152, z: 127.5 }, { x: 168, z: 116 }, { x: 136, z: 119 }] },
       { name: 'quai', points: [{ x: 110, z: 86 }, { x: 150, z: 86 }, { x: 178, z: 86 }, { x: 207, z: 86.5 }, { x: 200, z: 106 }] },
@@ -485,10 +573,29 @@ export function buildLevel(world: RAPIER.World): { data: LevelData; grates: Buil
       { x: 160, z: 56, size: 1.0 }, { x: 105, z: 86.6, size: 0.8 },
     ],
     parkedCars: [
-      { x: 60, z: 138.4, yaw: 0 }, { x: 90, z: 138.4, yaw: 0 }, { x: 124, z: 138.4, yaw: 0 },
-      { x: 50, z: 18.4, yaw: 0 }, { x: 180, z: 129.6, yaw: 0 },
+      { x: 60, z: 138.6, yaw: 0 }, { x: 90, z: 138.6, yaw: 0 }, { x: 124, z: 138.6, yaw: 0 },
+      { x: 50, z: 18.6, yaw: 0 }, { x: 180, z: 128.7, yaw: 0 },
     ],
     fades: B.fades,
+    questProps: [
+      { id: 'calendrier', x: 194, z: 30.5, y: 1.35 },   // M02
+      { id: 'colis-signal', x: 154, z: 161.5, y: 1.35 }, // C01 (comptoir du Signal)
+      { id: 'colis-relais', x: 76.8, z: 159.5, y: 1.35 },// C02 (établi du garage)
+    ],
+    questNpcs: [],
+    agentRoute: [
+      { x: 152, z: 122, y: 0 }, { x: 152, z: 127, y: 0 }, { x: 180, z: 131.2, y: 0 },
+      { x: 204, z: 131.2, y: 0 }, { x: 206, z: 150, y: 0 }, { x: 209, z: 190, y: 0 },
+      { x: 209, z: 208, y: 1.6 }, { x: 206, z: 216, y: 2 }, { x: 150, z: 212, y: 2 },
+      { x: 60, z: 212, y: 2 }, { x: 24, z: 212, y: 2 }, { x: 206, z: 214, y: 2 },
+      { x: 236, z: 226, y: 2.2 }, { x: 246, z: 214, y: 2.8 }, { x: 243, z: 170, y: 3.6 },
+      { x: 243, z: 60, y: 4 }, { x: 246, z: 26, y: 4 }, { x: 232, z: 14, y: 1.6 },
+      { x: 193, z: 15, y: 0 },
+    ],
+    dallePatrols: [],
+    extraCams: [],
+    mapDecal,
+    board: { x: 76.5, z: 149.5 },
   };
 
   void g2; void g3;

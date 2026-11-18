@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import './styles.css';
+import { FORGES, ROAD_ROUTES, groundHeightAt } from './layout';
 import { playAlarm, playImpact, playImplant, playShot, playSuccess, startSoundscape, toggleSound } from './audio';
 import {
   animateEffects,
@@ -8,6 +9,8 @@ import {
   flashBlood,
   refreshNavigation,
   resizeCity,
+  showVehicleDamageAt,
+  updateForgesLife,
   updateActorVisual,
   type Character,
   type City,
@@ -33,14 +36,15 @@ type SaveData = {
 
 const SAVE_KEY = 'deadline.puce-fantome.save.v1';
 const STEP = 1 / 60;
-const INITIAL_POSITION = { x: -20.5, z: 19.2 };
-const CAR_POSITION = { x: -22.1, z: 18.4 };
-const DEPOT = { x: 21.7, z: -15.4 };
-const HANDOFF = { x: 8.8, z: 14.4 };
-const PACKAGE = { x: -3.1, z: 7.1 };
-const MINA_GARAGE = { x: -18.2, z: 20 };
-const GATE_POINT = { x: 14.45, z: -15 };
-const CAMERA_POINT = { x: 20, z: -8.6 };
+const INITIAL_POSITION = FORGES.playerStart;
+const CAR_POSITION = FORGES.carStart;
+const DEPOT = FORGES.chip;
+const HANDOFF = FORGES.handoff;
+const PACKAGE = FORGES.package;
+const MINA_GARAGE = { x: FORGES.garage.x - 7, z: FORGES.garage.z };
+const GATE_POINT = { x: 114.5, z: 61.5 };
+const CAMERA_POINT = FORGES.camera;
+const SERVICE_PANEL_POINT = { x: 54.5, z: 60.5 };
 const IMPLANT_NAMES: Record<Implant, string> = {
   intrusion: 'Intrusion',
   leurre: 'Leurre',
@@ -152,6 +156,7 @@ let lastMessage = '';
 let hitMarkerUntil = 0;
 let damageCount = 0;
 let secondaryStorySeen = false;
+let previousActivityPhase = -1;
 let checkpointPosition = { ...INITIAL_POSITION };
 let menuBeforeStart = true;
 
@@ -213,16 +218,16 @@ function showMessage(text: string, duration = 3): void {
 function setMarker(point: Point | null): void {
   objectivePoint = point;
   objectiveMarker.visible = Boolean(point);
-  if (point) objectiveMarker.position.set(point.x, 0, point.z);
+  if (point) objectiveMarker.position.set(point.x, groundHeightAt(point), point.z);
 }
 
 function missionObjective(): { kicker: string; text: string; point: Point | null } {
   if (mainState === 'available') return { kicker: 'PISTE PRINCIPALE · MINA', text: 'Parler à Mina au garage', point: MINA_GARAGE };
-  if (mainState === 'accepted') return { kicker: 'PUCE FANTÔME · VOL', text: 'Approcher le dépôt par l’avenue ou la cour', point: { x: 18.5, z: -9.2 } };
+  if (mainState === 'accepted') return { kicker: 'PUCE FANTÔME · VOL', text: 'Approcher le dépôt par l’avenue ou la cour', point: { x: 89, z: 39 } };
   if (mainState === 'chip') return { kicker: 'PUCE FANTÔME · FUITE', text: 'Rejoindre Mina sous les voies', point: HANDOFF };
-  if (save.secondaryStage === 1) return { kicker: 'CONTRAT · DONNÉES FANTÔMES', text: 'Récupérer le paquet près des voies', point: PACKAGE };
-  if (save.secondaryStage === 2) return { kicker: 'CONTRAT · DONNÉES FANTÔMES', text: 'Rapporter le paquet à Mina', point: MINA_GARAGE };
-  if (save.secondaryUnlocked && !secondaryStorySeen) return { kicker: 'NOUVELLE PISTE', text: 'Revenir voir Mina au garage', point: MINA_GARAGE };
+  if (save.secondaryStage === 1) return { kicker: 'QUÊTE · UNE PORTE DE PLUS', text: 'Prendre le module au garage', point: PACKAGE };
+  if (save.secondaryStage === 2) return { kicker: 'QUÊTE · UNE PORTE DE PLUS', text: 'Rétablir l’éclairage au panneau de service', point: SERVICE_PANEL_POINT };
+  if (save.secondaryUnlocked && !save.sideRewardPaid && !secondaryStorySeen) return { kicker: 'NOUVELLE PISTE', text: 'Revenir voir Mina au garage', point: MINA_GARAGE };
   return { kicker: 'VILLE LIBRE', text: 'Explorer Les Forges', point: null };
 }
 
@@ -279,8 +284,9 @@ function readImplantSelection(): void {
 }
 
 function moveMina(point: Point): void {
-  city.mina.position.set(point.x, 0, point.z);
-  city.minaTag.position.set(point.x, point.z === HANDOFF.z ? 2.25 : 5.1, point.z);
+  const floorY = groundHeightAt(point);
+  city.mina.position.set(point.x, floorY, point.z);
+  city.minaTag.position.set(point.x, floorY + (distance(point.x, point.z, HANDOFF.x, HANDOFF.z) < 1 ? 2.25 : 5.1), point.z);
 }
 
 function setGate(open: boolean): void {
@@ -292,7 +298,7 @@ function setGate(open: boolean): void {
   } else {
     city.gateMesh.visible = true;
     if (!current || !current.isEnabled()) {
-      const desc = RAPIER.ColliderDesc.cuboid(.11, .9, 1.25).setTranslation(GATE_POINT.x, .9, GATE_POINT.z);
+      const desc = RAPIER.ColliderDesc.cuboid(1.28, .9, .11).setTranslation(GATE_POINT.x, groundHeightAt(GATE_POINT) + .9, GATE_POINT.z);
       city.gateMesh.userData.collider = physics.createCollider(desc);
     }
   }
@@ -308,7 +314,7 @@ function setShortcut(open: boolean): void {
   } else {
     city.shortcutMesh.visible = true;
     if (!current || !current.isEnabled()) {
-      const desc = RAPIER.ColliderDesc.cuboid(.24, 1.1, 1.1).setTranslation(-7.9, 1.1, 17.3);
+      const desc = RAPIER.ColliderDesc.cuboid(.24, 1.05, 1.1).setTranslation(FORGES.serviceGate.x, groundHeightAt(FORGES.serviceGate) + 1.05, FORGES.serviceGate.z);
       city.shortcutMesh.userData.collider = physics.createCollider(desc);
     }
   }
@@ -316,24 +322,30 @@ function setShortcut(open: boolean): void {
 }
 
 function setPlayerPosition(point: Point): void {
-  city.player.position.set(point.x, .9, point.z);
-  city.player.body.setTranslation({ x: point.x, y: .9, z: point.z }, true);
+  const y = groundHeightAt(point) + .9;
+  city.player.position.set(point.x, y, point.z);
+  city.player.body.setTranslation({ x: point.x, y, z: point.z }, true);
   updateActorVisual(city.player);
 }
 
 function setCarPosition(point: Point, yaw = -Math.PI / 2): void {
-  city.car.position.set(point.x, .57, point.z);
-  city.car.body.setTranslation({ x: point.x, y: .57, z: point.z }, true);
+  const groundY = groundHeightAt(point);
+  city.car.position.set(point.x, groundY + .57, point.z);
+  city.car.body.setTranslation({ x: point.x, y: groundY + .57, z: point.z }, true);
   city.car.yaw = yaw;
-  city.car.group.position.set(point.x, 0, point.z);
+  city.car.group.position.set(point.x, groundY, point.z);
   city.car.group.rotation.y = yaw;
   city.car.speed = 0;
   city.car.available = true;
+  city.car.contactHandles.clear();
+  city.car.impactCount = 0;
+  city.car.damageMarks.forEach((mark) => { mark.visible = false; });
 }
 
 function resetGuard(guard: Guard): void {
-  guard.position.set(guard.initial.x, .9, guard.initial.z);
-  guard.body.setTranslation({ x: guard.initial.x, y: .9, z: guard.initial.z }, true);
+  const y = groundHeightAt(guard.initial) + .9;
+  guard.position.set(guard.initial.x, y, guard.initial.z);
+  guard.body.setTranslation({ x: guard.initial.x, y, z: guard.initial.z }, true);
   guard.facing = 0;
   guard.health = 100;
   guard.alive = true;
@@ -360,7 +372,7 @@ function resetToCheckpoint(): void {
   setPlayerPosition(checkpointPosition);
   setCarPosition(CAR_POSITION);
   city.chip.visible = true;
-  city.secondaryPackage.visible = save.secondaryStage !== 2;
+  city.secondaryPackage.visible = save.secondaryStage === 1;
   moveMina(MINA_GARAGE);
   for (const guard of city.guards) resetGuard(guard);
   setGate(false);
@@ -432,19 +444,20 @@ function showMinaDialog(): void {
     );
     return;
   }
-  if (save.secondaryStage === 0 && save.secondaryUnlocked) {
+  if (save.secondaryStage === 0 && save.secondaryUnlocked && !save.sideRewardPaid) {
     openDialog(
-      'Une course de plus.',
-      `<p><strong>Mina :</strong> Un paquet d’archives est tombé du transit quand le réseau a été coupé. Il est resté près des voies. Rapporte-le sans le brancher sur une borne publique.</p><p>Ça paiera les réparations. Et le module d’assistance que j’ai récupéré est à toi.</p>${implantMarkup()}`,
+      'Une porte de plus.',
+      `<p><strong>Mina :</strong> Le passage de service s’est ouvert, mais ses lampes sont mortes. Prends le module posé dans le garage et porte-le au panneau de la grille.</p><p>Le raccourci est ouvert depuis le dépôt; tu peux aussi rejoindre le panneau par l’avenue.</p>${implantMarkup()}`,
       [
         { label: 'Prendre le contrat', style: 'primary', run: () => {
           readImplantSelection();
           save.secondaryStage = 1;
           secondaryStorySeen = true;
+          city.secondaryPackage.visible = true;
           persist();
           closeDialog();
           refreshObjective();
-          showMessage('Nouveau contrat: Données fantômes.', 4);
+          showMessage('U01 · Une porte de plus. Le module est dans le garage.', 4);
         } },
         { label: 'Plus tard', run: () => { secondaryStorySeen = true; closeDialog(); refreshObjective(); } },
       ],
@@ -455,9 +468,9 @@ function showMinaDialog(): void {
     return;
   }
   const copy = save.secondaryStage === 1
-    ? '<p>Le paquet est encore près des voies. Le service de Mina est ouvert sous le pont.</p>'
+    ? '<p>Le module attend dans le garage, près de l’établi.</p>'
     : save.secondaryStage === 2
-      ? '<p>Ramène le paquet au garage. Mina attend près de la rampe.</p>'
+      ? '<p>Le panneau est fixé à la grille de service ouverte. L’accès par l’avenue reste praticable.</p>'
       : '<p>Une partie des identités révoquées est encore récupérable. Mina déchiffre la puce; les Forges ont quelques raccourcis de plus ce soir.</p>';
   openDialog('Le garage tient encore.', `${copy}${implantMarkup()}`, [{ label: 'Reprendre la rue', style: 'primary', run: closeDialog }]);
   $('#implant-slot-one')?.addEventListener('change', readImplantSelection);
@@ -477,7 +490,7 @@ function openMinaHandoff(): void {
     finishMainContract();
     return;
   }
-  if (save.secondaryStage === 2) {
+  if (save.secondaryStage === 2 && distance(city.player.position.x, city.player.position.z, SERVICE_PANEL_POINT.x, SERVICE_PANEL_POINT.z) < 2.6) {
     save.secondaryStage = 0;
     save.secondaryUnlocked = false;
     if (!save.sideRewardPaid) {
@@ -485,13 +498,16 @@ function openMinaHandoff(): void {
       save.sideRewardPaid = true;
     }
     if (!save.ownedImplants.includes('surcharge')) save.ownedImplants.push('surcharge');
+    const panelLamp = city.servicePanel.userData.lamp as THREE.Mesh;
+    (panelLamp.material as THREE.MeshStandardMaterial).color.set(0x7ce5bb);
+    (panelLamp.material as THREE.MeshStandardMaterial).emissive.set(0x2da676);
+    (panelLamp.material as THREE.MeshStandardMaterial).emissiveIntensity = 2.2;
     persist();
-    moveMina(MINA_GARAGE);
     refreshObjective();
     updateHud();
     playSuccess();
-    openDialog('Données remises.', '<p>Mina a isolé un troisième module. <strong>Surcharge</strong> coupe brièvement un équipement proche; son arrêt avertit les vigiles.</p><p>La prime de 85 ¢ est déjà créditée.</p>', [{ label: 'Voir le garage', style: 'primary', run: closeDialog }], 'CONTRAT TERMINÉ');
-    showMessage('Prime +85 ¢ · Surcharge disponible au garage.', 5);
+    openDialog('Le passage reprend vie.', '<p>Le panneau confirme le rétablissement des lampes de service. Le raccourci reste ouvert dans les Forges.</p><p>Mina t’a crédité 85 ¢ et le module <strong>Surcharge</strong> est disponible à l’équipement.</p>', [{ label: 'Voir le garage', style: 'primary', run: closeDialog }], 'U01 · TERMINÉ');
+    showMessage('Éclairage rétabli · +85 ¢ · Surcharge débloquée.', 5);
     return;
   }
   showMinaDialog();
@@ -547,16 +563,16 @@ function objectiveTextForJournal(): string {
   if (mainState === 'available') return 'Mina a identifié le dépôt logistique au nord. Le contrat attend au garage.';
   if (mainState === 'accepted') return 'Prendre la puce dans le dépôt. Deux approches sont ouvertes: l’entrée principale et la cour de livraison.';
   if (mainState === 'chip') return 'La puce est récupérée. Rejoindre Mina sous les voies après cinq secondes sans détection directe.';
-  if (save.secondaryStage === 1) return 'Récupérer le paquet d’archives près des voies et le ramener au garage.';
-  if (save.secondaryStage === 2) return 'Le paquet est récupéré. Le remettre à Mina au garage.';
-  if (mainState === 'complete') return 'Mina déchiffre le registre. Une piste secondaire reste disponible au garage.';
+  if (save.secondaryStage === 1) return 'Prendre le module de service dans le garage de Mina.';
+  if (save.secondaryStage === 2) return 'Livrer le module au panneau de la grille et rallumer le passage.';
+  if (mainState === 'complete') return save.sideRewardPaid ? 'La grille et son éclairage restent opérationnels.' : 'Mina propose U01 · Une porte de plus au garage.';
   return 'Repérer les passages des Forges et les accès qui relient les ateliers aux voies.';
 }
 
 function showJournal(): void {
   const mainLabel = mainState === 'complete' ? 'TERMINÉ' : mainState === 'available' ? 'DISPONIBLE' : 'EN COURS';
-  const side = save.secondaryStage === 1 ? 'Paquet à récupérer' : save.secondaryStage === 2 ? 'Retour au garage' : save.secondaryUnlocked ? 'Données fantômes · disponible' : 'Aucun';
-  $('#journal-content').innerHTML = `<section class="journal-section"><h3>Puce fantôme <span style="color:#70e4e5;font-size:9px;letter-spacing:.12em">${mainLabel}</span></h3><p>${objectiveTextForJournal()}</p><ul><li>Garage de Mina · point de reprise</li><li>Dépôt logistique · avenue ou cour latérale</li><li>Remise sous les voies · cinq secondes sans être repéré</li></ul></section><section class="journal-section"><h3>Contrat secondaire</h3><p>${side}</p><h3>Contacts</h3><ul><li>Mina · mécanique, relais des Forges</li><li>Vigiles · patrouille du dépôt</li><li>Caméra · porte principale, orientation variable</li></ul></section>`;
+  const side = save.secondaryStage === 1 ? 'Module à prendre dans le garage' : save.secondaryStage === 2 ? 'Panneau de service à alimenter' : save.sideRewardPaid ? 'Une porte de plus · terminé' : save.secondaryUnlocked ? 'Une porte de plus · disponible' : 'Aucun';
+  $('#journal-content').innerHTML = `<section class="journal-section"><h3>Puce fantôme <span style="color:#70e4e5;font-size:9px;letter-spacing:.12em">${mainLabel}</span></h3><p>${objectiveTextForJournal()}</p><ul><li>Garage de Mina · point de reprise à +6 m</li><li>Dépôt logistique · entrée avenue et cour latérale</li><li>Fuite à pied · escalier, tunnel et remise à 0 m</li><li>Fuite en voiture · pont à +6 m et rampe vers la rue basse</li></ul></section><section class="journal-section"><h3>Quête unique</h3><p>${side}</p><h3>Contacts</h3><ul><li>Mina · mécanique, relais des Forges</li><li>Vigiles · patrouille du dépôt</li><li>Caméra · entrée principale, balayage variable</li></ul></section>`;
   journalLayer.classList.remove('hidden');
   journalOpen = true;
   pressed.clear();
@@ -611,7 +627,7 @@ function interact(): void {
     openMinaHandoff();
     return;
   }
-  if (save.secondaryStage === 2 && distance(player.x, player.z, MINA_GARAGE.x, MINA_GARAGE.z) < 3) {
+  if (save.secondaryStage === 2 && distance(player.x, player.z, SERVICE_PANEL_POINT.x, SERVICE_PANEL_POINT.z) < 2.6) {
     openMinaHandoff();
     return;
   }
@@ -624,11 +640,11 @@ function interact(): void {
     save.secondaryStage = 2;
     persist();
     refreshObjective();
-    showMessage('Paquet récupéré. Mina attend au garage.', 3.5);
+    showMessage('Module pris. Le panneau est sur la grille de service.', 3.5);
     return;
   }
   const nearMina = distance(player.x, player.z, city.mina.position.x, city.mina.position.z) < 2.8 || distance(player.x, player.z, MINA_GARAGE.x, MINA_GARAGE.z) < 3.2;
-  if (nearMina && (mainState === 'available' || save.secondaryUnlocked && save.secondaryStage === 0)) {
+  if (nearMina && (mainState === 'available' || save.secondaryUnlocked && save.secondaryStage === 0 && !save.sideRewardPaid)) {
     showMinaDialog();
     return;
   }
@@ -669,8 +685,9 @@ function enterVehicle(): void {
   vehicleMode = true;
   city.player.group.visible = false;
   city.player.collider.setEnabled(false);
-  city.player.position.set(city.car.position.x, .9, city.car.position.z);
-  city.player.body.setTranslation({ x: city.car.position.x, y: .9, z: city.car.position.z }, true);
+  const playerY = groundHeightAt({ x: city.car.position.x, z: city.car.position.z }) + .9;
+  city.player.position.set(city.car.position.x, playerY, city.car.position.z);
+  city.player.body.setTranslation({ x: city.car.position.x, y: playerY, z: city.car.position.z }, true);
   showMessage('Véhicule connecté. Lâche l’accélérateur avant de descendre.', 3);
   updateHud();
 }
@@ -712,12 +729,13 @@ function actorPoint(): Point {
 }
 
 function isAreaClear(x: number, z: number, radius: number): boolean {
+  const floorY = groundHeightAt({ x, z });
   for (const object of city.blockers) {
     if (!object.visible) continue;
     const inspect = (mesh: THREE.Object3D): boolean => {
       if (!(mesh as THREE.Mesh).isMesh || !mesh.visible) return false;
       const bounds = new THREE.Box3().setFromObject(mesh);
-      if (bounds.max.y < .32 || bounds.min.y > 2.25) return false;
+      if (bounds.max.y < floorY + .14 || bounds.min.y > floorY + 1.66) return false;
       return x > bounds.min.x - radius && x < bounds.max.x + radius && z > bounds.min.z - radius && z < bounds.max.z + radius;
     };
     if ((object as THREE.Mesh).isMesh ? inspect(object) : (() => { let hit = false; object.traverse((child) => { if (inspect(child)) hit = true; }); return hit; })()) return false;
@@ -740,46 +758,47 @@ function lineOfSight(from: THREE.Vector3, to: THREE.Vector3, padding = .22): boo
 
 function clearFromActor(point: Point, targetHeight = .95): boolean {
   const actor = actorPoint();
-  const from = new THREE.Vector3(actor.x, vehicleMode ? 1.02 : 1.1, actor.z);
-  const to = new THREE.Vector3(point.x, targetHeight, point.z);
+  const fromY = groundHeightAt(actor) + (vehicleMode ? 1.02 : 1.1);
+  const from = new THREE.Vector3(actor.x, fromY, actor.z);
+  const to = new THREE.Vector3(point.x, groundHeightAt(point) + targetHeight, point.z);
   return lineOfSight(from, to);
 }
 
 function navCell(point: Point): { x: number; z: number } {
   const grid = city.navGrid;
   return {
-    x: THREE.MathUtils.clamp(Math.round((point.x - grid.min) / grid.step), 0, grid.size - 1),
-    z: THREE.MathUtils.clamp(Math.round((point.z - grid.min) / grid.step), 0, grid.size - 1),
+    x: THREE.MathUtils.clamp(Math.round((point.x - grid.minX) / grid.step), 0, grid.width - 1),
+    z: THREE.MathUtils.clamp(Math.round((point.z - grid.minZ) / grid.step), 0, grid.height - 1),
   };
 }
 
 function navPoint(x: number, z: number): Point {
-  return { x: city.navGrid.min + x * city.navGrid.step, z: city.navGrid.min + z * city.navGrid.step };
+  return { x: city.navGrid.minX + x * city.navGrid.step, z: city.navGrid.minZ + z * city.navGrid.step };
 }
 
 function findRoute(start: Point, destination: Point): Point[] {
   const grid = city.navGrid;
   if (!grid.blocked.length) return [destination];
-  const seekFree = (cell: { x: number; z: number }): { x: number; z: number } => {
-    if (!grid.blocked[cell.z * grid.size + cell.x]) return cell;
+  const count = grid.width * grid.height;
+  const index = (x: number, z: number) => z * grid.width + x;
+  const seekFree = (cell: { x: number; z: number }, desiredHeight: number): { x: number; z: number } => {
+    if (!grid.blocked[index(cell.x, cell.z)] && Math.abs(grid.heights[index(cell.x, cell.z)] - desiredHeight) < 1.6) return cell;
     for (let ring = 1; ring <= 5; ring++) {
       for (let dz = -ring; dz <= ring; dz++) for (let dx = -ring; dx <= ring; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
         const x = cell.x + dx;
         const z = cell.z + dz;
-        if (x < 0 || z < 0 || x >= grid.size || z >= grid.size) continue;
-        if (!grid.blocked[z * grid.size + x]) return { x, z };
+        if (x < 0 || z < 0 || x >= grid.width || z >= grid.height) continue;
+        if (!grid.blocked[index(x, z)] && Math.abs(grid.heights[index(x, z)] - desiredHeight) < 1.6) return { x, z };
       }
     }
     return cell;
   };
-  const source = seekFree(navCell(start));
-  const target = seekFree(navCell(destination));
-  const index = (x: number, z: number) => z * grid.size + x;
+  const source = seekFree(navCell(start), groundHeightAt(start));
+  const target = seekFree(navCell(destination), groundHeightAt(destination));
   const startIndex = index(source.x, source.z);
   const goalIndex = index(target.x, target.z);
   if (startIndex === goalIndex) return [destination];
-  const count = grid.size * grid.size;
   const g = new Float32Array(count).fill(Number.POSITIVE_INFINITY);
   const previous = new Int32Array(count).fill(-1);
   const closed = new Uint8Array(count);
@@ -812,7 +831,10 @@ function findRoute(start: Point, destination: Point): Point[] {
     }
     return first;
   };
-  const heuristic = (x: number, z: number) => Math.hypot(target.x - x, target.z - z);
+  const heuristic = (x: number, z: number) => {
+    const point = navPoint(x, z);
+    return Math.hypot(destination.x - point.x, destination.z - point.z);
+  };
   g[startIndex] = 0;
   push({ index: startIndex, f: heuristic(source.x, source.z) });
   let visits = 0;
@@ -821,14 +843,15 @@ function findRoute(start: Point, destination: Point): Point[] {
     if (!current || closed[current.index]) continue;
     if (current.index === goalIndex) break;
     closed[current.index] = 1;
-    const cx = current.index % grid.size;
-    const cz = Math.floor(current.index / grid.size);
+    const cx = current.index % grid.width;
+    const cz = Math.floor(current.index / grid.width);
     for (const [dx, dz, scale] of navOffsets) {
       const nx = cx + dx;
       const nz = cz + dz;
-      if (nx < 0 || nz < 0 || nx >= grid.size || nz >= grid.size) continue;
+      if (nx < 0 || nz < 0 || nx >= grid.width || nz >= grid.height) continue;
       const ni = index(nx, nz);
       if (grid.blocked[ni] || closed[ni]) continue;
+      if (Math.abs(grid.heights[current.index] - grid.heights[ni]) > 1.6) continue;
       if (dx && dz && (grid.blocked[index(cx + dx, cz)] || grid.blocked[index(cx, cz + dz)])) continue;
       const cost = g[current.index] + (dx && dz ? scale / 10 : 1);
       if (cost >= g[ni]) continue;
@@ -837,7 +860,7 @@ function findRoute(start: Point, destination: Point): Point[] {
       push({ index: ni, f: cost + heuristic(nx, nz) });
     }
   }
-  if (previous[goalIndex] < 0) return [destination];
+  if (previous[goalIndex] < 0) return [start];
   const cells: number[] = [];
   let cursor = goalIndex;
   while (cursor !== startIndex && cursor >= 0 && cells.length < count) {
@@ -845,12 +868,15 @@ function findRoute(start: Point, destination: Point): Point[] {
     cursor = previous[cursor];
   }
   cells.reverse();
-  const points = cells.map((i) => navPoint(i % grid.size, Math.floor(i / grid.size)));
+  const points = cells.map((i) => navPoint(i % grid.width, Math.floor(i / grid.width)));
   points.push(destination);
   const smoothed: Point[] = [];
   let anchor = start;
   for (let i = 0; i < points.length; i++) {
-    if (i === points.length - 1 || !lineOfSight(new THREE.Vector3(anchor.x, .85, anchor.z), new THREE.Vector3(points[i + 1].x, .85, points[i + 1].z), .08)) {
+    if (i === points.length - 1 || !lineOfSight(
+      new THREE.Vector3(anchor.x, groundHeightAt(anchor) + .9, anchor.z),
+      new THREE.Vector3(points[i + 1].x, groundHeightAt(points[i + 1]) + .9, points[i + 1].z), .08,
+    )) {
       smoothed.push(points[i]);
       anchor = points[i];
     }
@@ -861,14 +887,19 @@ function findRoute(start: Point, destination: Point): Point[] {
 function moveActor(actor: Character, direction: Point, speed: number, dt: number): void {
   const length = Math.hypot(direction.x, direction.z);
   if (length < .001) return;
+  actor.walking = true;
   const dx = direction.x / length * speed * dt;
   const dz = direction.z / length * speed * dt;
-  actor.controller.computeColliderMovement(actor.collider, { x: dx, y: 0, z: dz });
+  const currentFloor = groundHeightAt({ x: actor.position.x, z: actor.position.z });
+  const destination = { x: actor.position.x + dx, z: actor.position.z + dz };
+  const nextFloor = groundHeightAt(destination);
+  actor.controller.computeColliderMovement(actor.collider, { x: dx, y: nextFloor - currentFloor, z: dz });
   const corrected = actor.controller.computedMovement();
   const nextX = actor.position.x + corrected.x;
   const nextZ = actor.position.z + corrected.z;
-  actor.body.setTranslation({ x: nextX, y: .9, z: nextZ }, true);
-  actor.position.set(nextX, .9, nextZ);
+  const nextY = actor.position.y + corrected.y;
+  actor.body.setTranslation({ x: nextX, y: nextY, z: nextZ }, true);
+  actor.position.set(nextX, nextY, nextZ);
   actor.facing = Math.atan2(-direction.x, -direction.z);
 }
 
@@ -882,8 +913,8 @@ function canSeeTarget(observer: Character, range: number, fovCos: number): boole
   const forwardX = -Math.sin(observer.facing);
   const forwardZ = -Math.cos(observer.facing);
   if ((forwardX * dx + forwardZ * dz) / length < fovCos) return false;
-  const source = new THREE.Vector3(observer.position.x, 1.15, observer.position.z);
-  const targetPoint = new THREE.Vector3(target.x, vehicleMode ? .95 : 1.0, target.z);
+  const source = new THREE.Vector3(observer.position.x, observer.position.y + .25, observer.position.z);
+  const targetPoint = new THREE.Vector3(target.x, groundHeightAt(target) + (vehicleMode ? .95 : 1.0), target.z);
   return lineOfSight(source, targetPoint, .28);
 }
 
@@ -897,7 +928,7 @@ function cameraSeesPlayer(): boolean {
   const yaw = city.cameraUnit.rotation.y;
   const dot = (-Math.sin(yaw) * dx - Math.cos(yaw) * dz) / length;
   if (dot < Math.cos(.57)) return false;
-  return lineOfSight(new THREE.Vector3(CAMERA_POINT.x, 1.42, CAMERA_POINT.z), new THREE.Vector3(target.x, 1, target.z), .2);
+  return lineOfSight(new THREE.Vector3(CAMERA_POINT.x, groundHeightAt(CAMERA_POINT) + 1.55, CAMERA_POINT.z), new THREE.Vector3(target.x, groundHeightAt(target) + 1, target.z), .2);
 }
 
 function securityActive(): boolean {
@@ -914,6 +945,7 @@ function chooseGuardTarget(guard: Guard, target: Point): void {
 
 function updateGuard(guard: Guard, dt: number, direct: boolean): void {
   if (!guard.alive) return;
+  guard.walking = false;
   if (guard.state === 'stunned') {
     if (gameTime < guard.stateUntil) return;
     guard.collider.setEnabled(true);
@@ -982,7 +1014,10 @@ function updateGuard(guard: Guard, dt: number, direct: boolean): void {
   if (direct && securityActive()) destination = target;
 
   guard.pathClock -= dt;
-  const directRoute = lineOfSight(new THREE.Vector3(guard.position.x, .85, guard.position.z), new THREE.Vector3(destination.x, .85, destination.z), .12);
+  const directRoute = lineOfSight(
+    new THREE.Vector3(guard.position.x, guard.position.y + .1, guard.position.z),
+    new THREE.Vector3(destination.x, groundHeightAt(destination) + .9, destination.z), .12,
+  );
   if (directRoute) {
     guard.route = [destination];
     guard.routeIndex = 0;
@@ -1001,7 +1036,7 @@ function updateGuard(guard: Guard, dt: number, direct: boolean): void {
   if (Math.hypot(dx, dz) > .12 && !(guard.state === 'search' && goalDistance < .7)) moveActor(guard, { x: dx, z: dz }, speed, dt);
 
   if (direct && guard.state === 'chase' && gameTime >= guard.attackClock && distance(guard.position.x, guard.position.z, target.x, target.z) < 11) {
-    if (lineOfSight(new THREE.Vector3(guard.position.x, 1.12, guard.position.z), new THREE.Vector3(target.x, 1, target.z), .35)) {
+    if (lineOfSight(new THREE.Vector3(guard.position.x, guard.position.y + .22, guard.position.z), new THREE.Vector3(target.x, groundHeightAt(target) + 1, target.z), .35)) {
       guard.attackClock = gameTime + 1.45 + Math.random() * .35;
       hitPlayer(7 + Math.random() * 3);
       spawnTrace({ x: guard.position.x, z: guard.position.z }, target, 0xe27672);
@@ -1012,7 +1047,7 @@ function updateGuard(guard: Guard, dt: number, direct: boolean): void {
 
 function updateSecurity(dt: number): void {
   const active = securityActive();
-  city.cameraUnit.rotation.y = Math.sin(gameTime * .34) * .31;
+  city.cameraUnit.rotation.y = Math.PI + Math.sin(gameTime * .34) * .31;
   city.cameraCone.rotation.y = city.cameraUnit.rotation.y;
   const cameraDirect = active && cameraSeesPlayer();
   const guardDirect = city.guards.some((guard) => guard.alive && canSeeTarget(guard, 15, Math.cos(.72)));
@@ -1077,7 +1112,7 @@ function hitPlayer(damage: number): void {
 }
 
 function spawnTrace(start: Point, end: Point, color = 0x83f5ed): void {
-  const points = [new THREE.Vector3(start.x, 1.12, start.z), new THREE.Vector3(end.x, .85, end.z)];
+  const points = [new THREE.Vector3(start.x, groundHeightAt(start) + 1.12, start.z), new THREE.Vector3(end.x, groundHeightAt(end) + .85, end.z)];
   const geometry = new THREE.BufferGeometry().setFromPoints(points);
   const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: .86 }));
   city.scene.add(line);
@@ -1132,7 +1167,7 @@ function fireWeapon(): void {
     const dz = guard.position.z - origin.z;
     const along = dx * direction.x + dz * direction.y;
     const error = Math.abs(dx * direction.y - dz * direction.x);
-    if (along > .4 && along < 16 && error < .64 && lineOfSight(new THREE.Vector3(origin.x, 1.12, origin.z), new THREE.Vector3(guard.position.x, 1, guard.position.z), .15)) {
+    if (along > .4 && along < 16 && error < .64 && lineOfSight(new THREE.Vector3(origin.x, groundHeightAt(origin) + 1.12, origin.z), new THREE.Vector3(guard.position.x, groundHeightAt(guard.position) + 1, guard.position.z), .15)) {
       candidates.push({ guard, along, error });
     }
   }
@@ -1198,7 +1233,7 @@ function useImplant(slot: 0 | 1): void {
       return;
     }
     const decoy = city.decoys.find((entry) => !entry.visible) ?? city.decoys[0];
-    decoy.position.set(point.x, 0, point.z);
+    decoy.position.set(point.x, groundHeightAt(point), point.z);
     decoy.userData.started = gameTime;
     decoy.visible = true;
     implantReadyAt[slot] = gameTime + 13;
@@ -1225,6 +1260,7 @@ function useImplant(slot: 0 | 1): void {
 
 function updateVehicle(dt: number): void {
   const car = city.car;
+  const previousContacts = car.contactHandles;
   const accelerate = pressed.has('KeyW') || pressed.has('KeyZ') || pressed.has('ArrowUp');
   const brake = pressed.has('KeyS') || pressed.has('ArrowDown');
   const left = pressed.has('KeyA') || pressed.has('KeyQ') || pressed.has('ArrowLeft');
@@ -1240,56 +1276,144 @@ function updateVehicle(dt: number): void {
   const forward = new THREE.Vector3(-Math.sin(car.yaw), 0, -Math.cos(car.yaw));
   const desired = { x: forward.x * car.speed * dt, z: forward.z * car.speed * dt };
   const intendedEnd = { x: car.position.x + desired.x, z: car.position.z + desired.z };
-  const impactCandidate = Math.abs(car.speed) > 3.5
-    ? city.guards.find((guard) => guard.alive && distanceToSegment({ x: guard.position.x, z: guard.position.z }, { x: car.position.x, z: car.position.z }, intendedEnd) < 2.05)
-    : undefined;
-  impactCandidate?.collider.setEnabled(false);
-  car.controller.computeColliderMovement(car.collider, { x: desired.x, y: 0, z: desired.z });
+  const impactSpeed = Math.abs(car.speed);
+  type ImpactTarget = { kind: 'guard' | 'citizen' | 'traffic'; entity: typeof city.guards[number] | typeof city.citizens[number] | typeof city.traffic[number]; range: number };
+  const candidates: ImpactTarget[] = impactSpeed > .01 ? [
+    ...city.guards.filter((guard) => guard.alive).map((entity) => ({ kind: 'guard' as const, entity, range: 1.95 })),
+    ...city.citizens.filter((person) => person.alive).map((entity) => ({ kind: 'citizen' as const, entity, range: 1.9 })),
+    ...city.traffic.filter((traffic) => traffic.collider.isEnabled()).map((entity) => ({ kind: 'traffic' as const, entity, range: 2.5 })),
+  ] : [];
+  const impactTarget = candidates
+    .map((candidate) => ({ candidate, distance: distanceToSegment(candidate.entity.position, { x: car.position.x, z: car.position.z }, intendedEnd) }))
+    .filter((entry) => entry.distance < entry.candidate.range && !previousContacts.has(entry.candidate.entity.collider.handle))
+    .sort((a, b) => a.distance - b.distance)[0]?.candidate;
+  impactTarget?.entity.collider.setEnabled(false);
+  const currentFloor = groundHeightAt({ x: car.position.x, z: car.position.z });
+  const nextFloor = groundHeightAt(intendedEnd);
+  car.controller.computeColliderMovement(car.collider, { x: desired.x, y: nextFloor - currentFloor, z: desired.z });
   const moved = car.controller.computedMovement();
-  const collision = Math.hypot(moved.x - desired.x, moved.z - desired.z) > .08;
+  const contacts = new Set<number>();
+  let freshImpact: THREE.Vector3 | null = null;
+  const collision = Math.hypot(moved.x - desired.x, moved.z - desired.z) > .001;
   if (collision) {
-    car.speed *= .13;
-    if (Math.abs(car.speed) > 5) hitPlayer(3);
-    if (Math.abs(moved.x) + Math.abs(moved.z) < .015) showMessage('Le mur arrête la voiture.', 1.6);
+    for (let i = 0; i < car.controller.numComputedCollisions(); i++) {
+      const contact = car.controller.computedCollision(i);
+      const collider = contact?.collider;
+      if (!contact || !collider) continue;
+      contacts.add(collider.handle);
+      if (previousContacts.has(collider.handle) || impactSpeed < .01) continue;
+      freshImpact ??= new THREE.Vector3(contact.witness1.x, contact.witness1.y, contact.witness1.z);
+      showVehicleDamageAt(car, new THREE.Vector3(contact.witness1.x, contact.witness1.y, contact.witness1.z), impactSpeed);
+      const prop = city.breakables.find((entry) => entry.collider.handle === collider.handle && !entry.broken);
+      if (prop) {
+        prop.durability -= impactSpeed;
+        prop.mesh.rotation.z += Math.sign(desired.x + desired.z || 1) * Math.min(.18, .04 + impactSpeed * .022);
+        prop.mesh.position.y += Math.min(.035, impactSpeed * .008);
+        if (prop.durability <= 0) {
+          prop.broken = true;
+          prop.collider.setEnabled(false);
+          prop.mesh.rotation.z = Math.sign(desired.x + desired.z || 1) * .72;
+          prop.mesh.position.y += .22;
+          showMessage(prop.kind === 'crate' ? 'La caisse éclate sous le choc.' : 'La borne est arrachée.', 2.2);
+        }
+      }
+    }
+    car.speed *= .16;
+    if (impactSpeed >= 5.4) hitPlayer(Math.min(9, Math.round((impactSpeed - 4.5) * .8)));
+    if (!freshImpact && impactSpeed > 2.5) showMessage('La carrosserie heurte un obstacle.', 1.5);
+  } else {
+    contacts.clear();
   }
   car.position.x += moved.x;
   car.position.z += moved.z;
-  car.body.setTranslation({ x: car.position.x, y: .57, z: car.position.z }, true);
+  const floorY = groundHeightAt({ x: car.position.x, z: car.position.z });
+  car.position.y = floorY + .57;
+  car.body.setTranslation({ x: car.position.x, y: car.position.y, z: car.position.z }, true);
   car.body.setRotation({ x: 0, y: Math.sin(car.yaw / 2), z: 0, w: Math.cos(car.yaw / 2) }, true);
-  car.group.position.set(car.position.x, 0, car.position.z);
+  car.group.position.set(car.position.x, floorY, car.position.z);
   car.group.rotation.y = car.yaw;
-  city.player.position.set(car.position.x, .9, car.position.z);
-  city.player.body.setTranslation({ x: car.position.x, y: .9, z: car.position.z }, true);
+  const playerY = floorY + .9;
+  city.player.position.set(car.position.x, playerY, car.position.z);
+  city.player.body.setTranslation({ x: car.position.x, y: playerY, z: car.position.z }, true);
   city.player.facing = car.yaw;
-  const candidateReached = impactCandidate && distance(car.position.x, car.position.z, impactCandidate.position.x, impactCandidate.position.z) < 2.15;
-  if (impactCandidate && !candidateReached) impactCandidate.collider.setEnabled(true);
-  const overlapping = candidateReached ? impactCandidate : city.guards.find((guard) => guard.alive && distance(car.position.x, car.position.z, guard.position.x, guard.position.z) < 1.75);
-  if (overlapping && Math.abs(car.speed) > 3.5) {
-    const severity = Math.abs(car.speed);
-    overlapping.health -= severity * 10;
-    overlapping.state = severity > 6 ? 'down' : 'stunned';
-    overlapping.alive = severity > 6 ? false : overlapping.alive;
-    overlapping.stateUntil = gameTime + 2;
-    overlapping.collider.setEnabled(false);
-    overlapping.position.x += forward.x * .9;
-    overlapping.position.z += forward.z * .9;
-    overlapping.body.setTranslation({ x: overlapping.position.x, y: .9, z: overlapping.position.z }, true);
-    if (severity > 5) flashBlood(city, { x: overlapping.position.x, z: overlapping.position.z }, gameTime);
-    if (!overlapping.alive) overlapping.group.rotation.x = Math.PI / 2;
-    updateActorVisual(overlapping);
+  const targetReached = impactTarget && distance(car.position.x, car.position.z, impactTarget.entity.position.x, impactTarget.entity.position.z) < impactTarget.range + .3;
+  if (impactTarget && !targetReached) impactTarget.entity.collider.setEnabled(true);
+  if (targetReached && impactTarget) {
+    const severity = impactSpeed;
+    const contactPoint = new THREE.Vector3(impactTarget.entity.position.x, floorY + .56, impactTarget.entity.position.z);
+    showVehicleDamageAt(car, contactPoint, severity);
+    if (impactTarget.kind === 'traffic') {
+      const other = impactTarget.entity as typeof city.traffic[number];
+      other.collider.setEnabled(true);
+      showVehicleDamageAt(other, contactPoint, severity);
+      other.speed *= .28;
+      other.pauseUntil = gameTime + 1.2;
+    } else if (impactTarget.kind === 'guard') {
+      const guard = impactTarget.entity as typeof city.guards[number];
+      guard.health = Math.max(0, guard.health - severity * 10);
+      guard.state = severity > 6 ? 'down' : 'stunned';
+      guard.alive = guard.health > 0;
+      guard.stateUntil = gameTime + 2.5;
+      guard.collider.setEnabled(false);
+      guard.position.x += forward.x * 1.05;
+      guard.position.z += forward.z * 1.05;
+      guard.position.y = groundHeightAt(guard.position) + .9;
+      guard.body.setTranslation({ x: guard.position.x, y: guard.position.y, z: guard.position.z }, true);
+      if (severity > 5) flashBlood(city, { x: guard.position.x, z: guard.position.z }, gameTime);
+      if (!guard.alive) guard.group.rotation.x = Math.PI / 2;
+      else guard.collider.setEnabled(true);
+      updateActorVisual(guard);
+    } else {
+      const citizen = impactTarget.entity as typeof city.citizens[number];
+      citizen.startledUntil = gameTime + 7;
+      citizen.panicTarget = citizen.route.reduce((best, point) =>
+        distance(point.x, point.z, car.position.x, car.position.z) > distance(best.x, best.z, car.position.x, car.position.z) ? point : best,
+      citizen.route[0]);
+      if (severity > 6) {
+        citizen.alive = false;
+        citizen.fallenUntil = gameTime + 8;
+        citizen.collider.setEnabled(false);
+        citizen.group.rotation.x = Math.PI / 2;
+        flashBlood(city, citizen.position, gameTime);
+      } else {
+        citizen.collider.setEnabled(true);
+        citizen.position.x += forward.x * .9;
+        citizen.position.z += forward.z * .9;
+        citizen.body.setTranslation({ x: citizen.position.x, y: groundHeightAt(citizen.position) + .9, z: citizen.position.z }, true);
+      }
+    }
     confirmedAt = gameTime;
     observed = Math.max(observed, .9);
     violenceAlarmUntil = gameTime + 20;
     car.speed *= .42;
-    showMessage(severity > 5 ? 'Collision grave. Les vigiles ont ta position.' : 'Un vigile est renversé. L’alerte monte.', 3);
+    showMessage(severity > 5 ? 'Choc grave. Les vigiles et les passants réagissent.' : 'Collision. Les passants s’écartent.', 3);
+    contacts.add(impactTarget.entity.collider.handle);
   }
+  const nearbyActors: Array<{ entity: Character | typeof city.citizens[number] | typeof city.traffic[number]; range: number }> = [
+    ...city.guards.map((entity) => ({ entity, range: 2.45 })),
+    ...city.citizens.map((entity) => ({ entity, range: 2.4 })),
+    ...city.traffic.map((entity) => ({ entity, range: 3 })),
+  ];
+  for (const { entity, range } of nearbyActors) {
+    if (previousContacts.has(entity.collider.handle) && distance(car.position.x, car.position.z, entity.position.x, entity.position.z) < range) {
+      contacts.add(entity.collider.handle);
+    }
+  }
+  car.contactHandles = contacts;
 }
 
 function fixedUpdate(dt: number): void {
   gameTime += dt;
+  const fleeingAlarm = observed >= .72 || gameTime < violenceAlarmUntil || mainState === 'chip' && gameTime - confirmedAt < 12;
+  const activityPhase = updateForgesLife(city, dt, gameTime, actorPoint(), fleeingAlarm);
+  if (previousActivityPhase >= 0 && activityPhase !== previousActivityPhase) {
+    showMessage(['Le matin reprend aux Forges.', 'Les ateliers tournent à plein régime.', 'La nuit retombe sur le quartier.'][activityPhase], 3.2);
+  }
+  previousActivityPhase = activityPhase;
   if (!vehicleMode) {
     const x = Number(pressed.has('KeyD') || pressed.has('ArrowRight')) - Number(pressed.has('KeyA') || pressed.has('KeyQ') || pressed.has('ArrowLeft'));
     const z = Number(pressed.has('KeyS') || pressed.has('ArrowDown')) - Number(pressed.has('KeyW') || pressed.has('KeyZ') || pressed.has('ArrowUp'));
+    city.player.walking = Boolean(x || z);
     if (x || z) moveActor(city.player, { x, z }, 4.4, dt);
     const dx = aimPoint.x - city.player.position.x;
     const dz = aimPoint.z - city.player.position.z;
@@ -1313,8 +1437,9 @@ function updateCamera(dt: number): void {
   const ease = 1 - Math.exp(-dt * 3.5);
   const lookX = THREE.MathUtils.lerp(currentLook.x, targetX, ease);
   const lookZ = THREE.MathUtils.lerp(currentLook.z, targetZ, ease);
-  city.camera.position.set(lookX, 51, lookZ + 31);
-  city.camera.lookAt(lookX, 0, lookZ);
+  const lookY = THREE.MathUtils.lerp(currentLook.y, groundHeightAt(active), ease);
+  city.camera.position.set(lookX, lookY + 51, lookZ + 31);
+  city.camera.lookAt(lookX, lookY, lookZ);
 }
 
 function updateCutaways(): void {
@@ -1330,13 +1455,13 @@ function updateCutaways(): void {
       material.needsUpdate = true;
     }
   }
-  const beneathBridge = actor.z > 5.4 && actor.z < 14.6;
-  const deckMaterial = city.bridgeDeck.material as THREE.MeshStandardMaterial;
-  const deckOpacity = beneathBridge ? .2 : 1;
+  const underRailTunnel = actor.x > 120 && actor.x < 130 && actor.z > 69 && actor.z < 92;
+  const deckMaterial = city.railDeck.material as THREE.MeshStandardMaterial;
+  const deckOpacity = underRailTunnel ? .14 : 1;
   if (deckMaterial.opacity !== deckOpacity) {
-    deckMaterial.transparent = beneathBridge;
+    deckMaterial.transparent = underRailTunnel;
     deckMaterial.opacity = deckOpacity;
-    deckMaterial.depthWrite = !beneathBridge;
+    deckMaterial.depthWrite = !underRailTunnel;
     deckMaterial.needsUpdate = true;
   }
 }
@@ -1365,11 +1490,13 @@ function updateInteraction(): void {
       text = 'Remettre la puce à Mina';
     }
   } else if (save.secondaryStage === 1 && city.secondaryPackage.visible && distance(actor.x, actor.z, PACKAGE.x, PACKAGE.z) < 2.1) {
-    key = 'E'; label = 'CONTRAT SECONDAIRE'; text = 'Récupérer le paquet';
+    key = 'E'; label = 'U01 · MODULE'; text = 'Prendre le module';
+  } else if (save.secondaryStage === 2 && distance(actor.x, actor.z, SERVICE_PANEL_POINT.x, SERVICE_PANEL_POINT.z) < 3) {
+    key = 'E'; label = 'U01 · PANNEAU'; text = 'Rétablir les lampes';
   } else if (mainState === 'accepted' && city.chip.visible && distance(actor.x, actor.z, DEPOT.x, DEPOT.z) < 2.1) {
     key = 'E'; label = 'OBJECTIF'; text = 'Prendre la puce';
-  } else if (distance(actor.x, actor.z, city.mina.position.x, city.mina.position.z) < 2.8 && (mainState === 'available' || save.secondaryUnlocked && save.secondaryStage === 0)) {
-    key = 'E'; label = 'CONTACT'; text = mainState === 'available' ? 'Écouter Mina' : 'Nouveau contrat · Mina';
+  } else if (distance(actor.x, actor.z, city.mina.position.x, city.mina.position.z) < 2.8 && (mainState === 'available' || save.secondaryUnlocked && save.secondaryStage === 0 && !save.sideRewardPaid)) {
+    key = 'E'; label = 'CONTACT'; text = mainState === 'available' ? 'Écouter Mina' : 'Nouvelle quête · Mina';
   } else if (!vehicleMode && city.car.available && distance(actor.x, actor.z, city.car.position.x, city.car.position.z) < 3.2) {
     key = 'E'; label = 'VÉHICULE'; text = 'Prendre le volant';
   } else if (distance(actor.x, actor.z, city.mina.position.x, city.mina.position.z) < 3 || distance(actor.x, actor.z, MINA_GARAGE.x, MINA_GARAGE.z) < 3.2 && mainState !== 'chip') {
@@ -1407,58 +1534,63 @@ function updateHud(): void {
   alertText.textContent = alert;
   alertPill.classList.toggle('observed', observed > .04 && observed < 1.05);
   alertPill.classList.toggle('confirmed', observed >= 1.05 || securityActive() && gameTime - confirmedAt < 4);
+  const timeLabel = $('#district-time');
+  if (timeLabel) timeLabel.textContent = `LES FORGES · ${['AUBE', 'JOUR', 'NUIT'][Math.max(0, city.activityPhase)]}`;
   if (messageUntil > gameTime) messageLine.textContent = lastMessage;
   else messageLine.textContent = vehicleMode ? `VITESSE ${Math.abs(city.car.speed * 12).toFixed(0)} KM/H` : '';
   updateInteraction();
 }
 
 function mapPoint(point: Point, size: number): { x: number; y: number } {
-  const border = 7;
-  const scale = (size - border * 2) / 68;
-  return { x: border + (point.x + 34) * scale, y: border + (point.z + 34) * scale };
+  const border = 8;
+  const extent = size - border * 2;
+  return { x: border + point.x / FORGES.width * extent, y: border + point.z / FORGES.depth * extent };
 }
 
 function drawMap(): void {
   const ctx = mapContext;
   const size = canvasMap.width;
+  const margin = 8;
+  const extent = size - margin * 2;
+  const scaleX = extent / FORGES.width;
+  const scaleZ = extent / FORGES.depth;
   ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = '#152326';
+  ctx.fillStyle = '#16211f';
   ctx.fillRect(0, 0, size, size);
-  const scale = (size - 14) / 68;
   const xy = (x: number, z: number) => mapPoint({ x, z }, size);
-  ctx.fillStyle = '#2b3738';
-  for (const z of [-21, -5, 10, 25]) {
-    const p = xy(-33, z);
-    ctx.fillRect(p.x, p.y - 3.75 * scale, 66 * scale, 7.5 * scale);
+  ctx.fillStyle = '#343a35';
+  ctx.fillRect(margin, margin, extent, 68 * scaleZ);
+  ctx.fillStyle = 'rgba(6,12,15,.94)';
+  ctx.fillRect(margin, xy(0, 70).y, extent, 8 * scaleZ);
+  ctx.fillStyle = '#838c83';
+  for (const z of [71.6, 75.5]) {
+    ctx.fillRect(margin, xy(0, z).y - .7, extent, 1.4);
   }
-  for (const x of [-25, -8, 9, 25]) {
-    const p = xy(x, -33);
-    ctx.fillRect(p.x - (x === 9 ? 3.75 : 3.1) * scale, p.y, (x === 9 ? 7.5 : 6.2) * scale, 66 * scale);
+  ctx.strokeStyle = '#67706b';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const route of ROAD_ROUTES) {
+    ctx.beginPath();
+    route.points.forEach((point, index) => {
+      const p = xy(point.x, point.z);
+      if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+    });
+    ctx.lineWidth = Math.max(1.5, route.width * scaleX);
+    ctx.stroke();
   }
-  // Rails and bridge deck are drawn as separate bands so their two levels read on the plan.
-  let p = xy(-33, 10);
-  ctx.fillStyle = 'rgba(9,15,18,.88)';
-  ctx.fillRect(p.x, p.y - 3.4 * scale, 66 * scale, 6.8 * scale);
-  ctx.fillStyle = '#596364';
-  ctx.fillRect(p.x, p.y - .11 * scale, 66 * scale, .22 * scale);
-  ctx.fillStyle = '#d39d60';
-  for (const x of [-23, -14, 0, 15, 24]) {
-    const pillar = xy(x, 10);
-    ctx.fillRect(pillar.x - 2.5, pillar.y - 2.5, 5, 5);
-  }
-  ctx.fillStyle = '#56615f';
+  ctx.fillStyle = '#56615c';
   for (const building of city.buildings) {
     const pos = xy(building.x, building.z);
-    ctx.fillRect(pos.x - building.width * scale / 2, pos.y - building.depth * scale / 2, building.width * scale, building.depth * scale);
+    ctx.fillRect(pos.x - building.width * scaleX / 2, pos.y - building.depth * scaleZ / 2, building.width * scaleX, building.depth * scaleZ);
   }
   const depot = city.buildingsByName.get('Dépôt logistique');
   if (depot) {
     const pos = xy(depot.x, depot.z);
     ctx.strokeStyle = mainState === 'accepted' ? '#e7b56d' : '#718887';
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(pos.x - depot.width * scale / 2, pos.y - depot.depth * scale / 2, depot.width * scale, depot.depth * scale);
+    ctx.strokeRect(pos.x - depot.width * scaleX / 2, pos.y - depot.depth * scaleZ / 2, depot.width * scaleX, depot.depth * scaleZ);
   }
-  ctx.strokeStyle = 'rgba(196,222,215,.18)';
+  ctx.strokeStyle = 'rgba(196,222,215,.12)';
   ctx.lineWidth = .7;
   for (let x = 0; x < size; x += 20) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size); ctx.stroke(); }
   const actor = actorPoint();
@@ -1470,6 +1602,12 @@ function drawMap(): void {
   }
   const minaPoint = mapPoint({ x: city.mina.position.x, z: city.mina.position.z }, size);
   ctx.fillStyle = '#e6849a'; ctx.beginPath(); ctx.arc(minaPoint.x, minaPoint.y, 2.7, 0, Math.PI * 2); ctx.fill();
+  for (const citizen of city.citizens) {
+    if (!citizen.alive) continue;
+    const person = mapPoint(citizen.position, size);
+    ctx.fillStyle = gameTime < citizen.startledUntil ? '#efb77a' : 'rgba(202,215,188,.6)';
+    ctx.beginPath(); ctx.arc(person.x, person.y, 1.15, 0, Math.PI * 2); ctx.fill();
+  }
   if (securityActive()) {
     ctx.fillStyle = '#ea7180';
     for (const guard of city.guards) {
@@ -1487,11 +1625,15 @@ function drawMap(): void {
     ctx.save(); ctx.translate(car.x, car.y); ctx.rotate(city.car.yaw);
     ctx.fillStyle = vehicleMode ? '#d4ffff' : '#60c8ca'; ctx.fillRect(-2.2, -3.4, 4.4, 6.8); ctx.restore();
   }
+  for (const traffic of city.traffic) {
+    const pos = mapPoint({ x: traffic.position.x, z: traffic.position.z }, size);
+    ctx.fillStyle = '#c89d68'; ctx.beginPath(); ctx.arc(pos.x, pos.y, 1.6, 0, Math.PI * 2); ctx.fill();
+  }
   const player = mapPoint(actor, size);
   const angle = vehicleMode ? city.car.yaw : city.player.facing;
   ctx.save(); ctx.translate(player.x, player.y); ctx.rotate(angle);
   ctx.fillStyle = '#e7fffa'; ctx.beginPath(); ctx.moveTo(0, -4.4); ctx.lineTo(3.3, 3.3); ctx.lineTo(-3.3, 3.3); ctx.closePath(); ctx.fill(); ctx.restore();
-  ctx.strokeStyle = 'rgba(112,228,229,.3)'; ctx.lineWidth = 1; ctx.strokeRect(.5, .5, size - 1, size - 1);
+  ctx.strokeStyle = 'rgba(112,228,229,.3)'; ctx.lineWidth = 1; ctx.strokeRect(margin, margin, extent, extent);
 }
 
 function pointerMove(event: PointerEvent | MouseEvent): void {
@@ -1501,6 +1643,7 @@ function pointerMove(event: PointerEvent | MouseEvent): void {
   pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointerNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   city.aimRay.setFromCamera(pointerNdc, city.camera);
+  city.floorPlane.constant = -groundHeightAt(actorPoint());
   if (city.aimRay.ray.intersectPlane(city.floorPlane, aimPlanePoint)) {
     aimPoint.copy(aimPlanePoint);
     const actor = actorPoint();
@@ -1637,13 +1780,16 @@ async function initialize(): Promise<void> {
     city = buildCity($('#world'), physics);
     city.scene.add(objectiveMarker);
     city.scene.add(bulletPoints);
-    city.secondaryPackage.visible = save.secondaryStage !== 2;
+    city.secondaryPackage.visible = save.secondaryStage === 1;
+    if (save.sideRewardPaid) {
+      const panelLamp = city.servicePanel.userData.lamp as THREE.Mesh;
+      (panelLamp.material as THREE.MeshStandardMaterial).color.set(0x7ce5bb);
+      (panelLamp.material as THREE.MeshStandardMaterial).emissive.set(0x2da676);
+      (panelLamp.material as THREE.MeshStandardMaterial).emissiveIntensity = 2.2;
+    }
     city.chip.visible = !save.mainComplete;
     city.player.health = 100;
     if (save.shortcutOpen) setShortcut(true);
-    else setShortcut(false);
-    setGate(false);
-    refreshNavigation(city);
     refreshObjective();
     resizeCity(city, window.innerWidth, window.innerHeight);
     window.addEventListener('resize', () => resizeCity(city, window.innerWidth, window.innerHeight));

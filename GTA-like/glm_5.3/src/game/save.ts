@@ -24,6 +24,14 @@ export interface SaveData {
   carX: number;
   carZ: number;
   carYaw: number;
+  /** Campagne (bible 02/03) : états des quêtes M02–M06, U02–U05, C01–C04. */
+  quests?: Record<string, { taken: boolean; stage: number; done: boolean; choice?: string }>;
+  filiere?: 'nadia' | 'sorel' | null;
+  fin?: 'A' | 'B' | null;
+  /** Props de quête déjà ramassées (id). */
+  propsTaken?: string[];
+  /** Portes ouvertes par l'histoire (id). */
+  doorsOpen?: string[];
 }
 
 const KEY = 'deadline-puce-fantome-v1';
@@ -33,7 +41,8 @@ export function loadSave(): SaveData | null {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as SaveData;
-    if (data.v !== 1) return null;
+    if (data.v !== 1 && data.v !== 2) return null;
+    if (data.v === 1) data.v = 2; // migration : campagne absente = non commencée
     return data;
   } catch {
     return null;
@@ -42,7 +51,7 @@ export function loadSave(): SaveData | null {
 
 export function writeSave(data: SaveData) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(data));
+    localStorage.setItem(KEY, JSON.stringify({ ...data, v: 2 }));
   } catch {
     /* stockage indisponible : la session continue sans sauvegarde */
   }

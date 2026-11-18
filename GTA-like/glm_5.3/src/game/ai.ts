@@ -4,7 +4,7 @@
  */
 import * as THREE from 'three';
 import type { Ctx } from './ctx';
-import { Actor } from './actors';
+import { Actor, actorColliderOn } from './actors';
 import type { Observer } from './vision';
 import { GUARD, CAM, clamp, dist, lerp } from './defs';
 
@@ -33,7 +33,7 @@ export class Guard extends Actor implements Observer {
   state: GuardState = 'patrol';
   offDuty = false;
   waypoint = 0;
-  points: { x: number; z: number }[];
+  points: { x: number; z: number; y?: number }[];
   pauseT = 0;
   target = new THREE.Vector3();       // cible investigation/poursuite
   searchT = 0;
@@ -54,7 +54,7 @@ export class Guard extends Actor implements Observer {
   fanMat: THREE.MeshBasicMaterial;
   muzzle!: THREE.PointLight;
 
-  constructor(public name: string, points: { x: number; z: number }[]) {
+  constructor(public name: string, points: { x: number; z: number; y?: number }[]) {
     super('guard');
     this.points = points;
     const f = makeVisionFan(GUARD.VIEW_DIST, GUARD.FOV, 0x52ff9a);
@@ -64,7 +64,7 @@ export class Guard extends Actor implements Observer {
 
   init(ctx: Ctx) {
     const p = this.points[0];
-    this.initPhysics(ctx, p.x, p.z, 1.0);
+    this.initPhysics(ctx, p.x, p.z, (p.y ?? 0) + 1);
     this.hp = GUARD.HP;
     this.buildMesh(ctx);
     ctx.alert.attach(this);
@@ -84,6 +84,16 @@ export class Guard extends Actor implements Observer {
     const cap = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.32), new THREE.MeshStandardMaterial({ color: 0x11161c }));
     cap.position.y = 1.6;
     g.add(cap);
+    // bandeau de casque lumineux (DA : repère vigile)
+    const helmBand = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.05, 0.1), new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xffc370, emissiveIntensity: 2.2 }));
+    helmBand.position.set(0, 1.62, -0.14);
+    g.add(helmBand);
+    // épaules carrées (DA)
+    for (const sx of [-0.32, 0.32]) {
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.3), new THREE.MeshStandardMaterial({ color: 0x2c333d, roughness: 0.7 }));
+      pad.position.set(sx, 1.32, 0);
+      g.add(pad);
+    }
     const vest = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.34, 0.42), new THREE.MeshStandardMaterial({ color: 0x151a20, emissive: 0xffb347, emissiveIntensity: 0.9, roughness: 0.6 }));
     vest.position.y = 1.06;
     g.add(vest);
@@ -121,6 +131,7 @@ export class Guard extends Actor implements Observer {
     this.stuckT = 0;
     this.deadAnimT = 0;
     this.fan.visible = true;
+    actorColliderOn(this);
     const p = this.points[0];
     this.teleportTo(ctx, p.x, p.z);
   }
@@ -416,9 +427,17 @@ export class SurveillanceCam implements Observer {
 
 // --------------------------------------------------------------------------- civils
 
+/**
+ * Passants à flux (bible 07) : chaque civil suit une route entre lieux
+ * fréquentés (atelier, arrêt, bar, place…), marquée de pauses — attente,
+ * discussion, travail — avant l'étape suivante. Marcheurs cinématiques
+ * légers SANS contrôleur Rapier (les KCC de masse sont réservés au joueur
+ * et aux vigiles) : la hauteur suit l'interpolation de la route.
+ */
 export class Civilian extends Actor {
-  private wp: { x: number; z: number }[];
+  private wp: { x: number; z: number; y?: number }[];
   private idx = 0;
+  private fromIdx = 0;
   private fleeT = 0;
   witness = false;
   witnessT = 0;
@@ -426,15 +445,20 @@ export class Civilian extends Actor {
   crimePos = new THREE.Vector3();
   private dir = new THREE.Vector3();
   private shirt: THREE.Mesh;
+  private pause = 0;
+  private bobT = Math.random() * 6;
+  readonly walkSpeed: number;
 
-  constructor(points: { x: number; z: number }[], ctx: Ctx) {
+  constructor(points: { x: number; z: number; y?: number }[], ctx: Ctx) {
     super('civ');
     this.wp = points;
-    this.initPhysics(ctx, points[0].x, points[0].z, 1.0);
+    this.walkSpeed = 1.1 + Math.random() * 0.5;
+    this.pos.set(points[0].x, (points[0].y ?? 0) + 1, points[0].z);
+    this.prev.copy(this.pos);
     this.hp = 60;
     const g = new THREE.Group();
-    const hue = 0.5 + Math.random() * 0.4;
-    const color = new THREE.Color().setHSL(hue, 0.4, 0.45);
+    const hue = Math.random();
+    const color = new THREE.Color().setHSL(hue, 0.35 + Math.random() * 0.25, 0.42 + Math.random() * 0.14);
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.32, 0.78, 6, 10), new THREE.MeshStandardMaterial({ color, roughness: 0.8 }));
     body.position.y = 0.78;
     body.castShadow = true;
@@ -442,10 +466,23 @@ export class Civilian extends Actor {
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), new THREE.MeshStandardMaterial({ color: 0x9aa7b5, roughness: 0.6 }));
     head.position.y = 1.45;
     g.add(head);
+    if (Math.random() < 0.5) {
+      const hat = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.09, 0.32), new THREE.MeshStandardMaterial({ color: 0x1c222b, roughness: 0.9 }));
+      hat.position.y = 1.56;
+      g.add(hat);
+    }
     this.shirt = body;
     this.mesh = g;
     this.yaw = Math.random() * Math.PI * 2;
     ctx.scene.add(g);
+  }
+
+  /** Change de flux (plage horaire ou reprise). */
+  assignRoute(points: { x: number; z: number; y?: number }[]) {
+    this.wp = points;
+    this.idx = 0;
+    this.fromIdx = 0;
+    this.pause = 0;
   }
 
   panic(from: THREE.Vector3) {
@@ -466,26 +503,39 @@ export class Civilian extends Actor {
       this.yaw = Math.atan2(mx, -mz);
     } else {
       const wp = this.wp[this.idx];
+      const from = this.wp[this.fromIdx];
       const d = dist(this.pos.x, this.pos.z, wp.x, wp.z);
-      if (d < 0.8) {
+      if (d < 0.9) {
+        this.fromIdx = this.idx;
         this.idx = (this.idx + 1) % this.wp.length;
-        this.pause = 1 + Math.random() * 3;
+        this.pause = 2 + Math.random() * 6;
       } else if (this.pause > 0) {
+        // arrêt : on patiente, on discute, on travaille (léger balancement)
         this.pause -= dt;
+        this.bobT += dt;
+        this.yaw += Math.sin(this.bobT * 0.9) * dt * 0.5;
       } else {
         const dx = (wp.x - this.pos.x) / d, dz = (wp.z - this.pos.z) / d;
-        mx = dx * 1.2 * dt;
-        mz = dz * 1.2 * dt;
+        mx = dx * this.walkSpeed * dt;
+        mz = dz * this.walkSpeed * dt;
         this.yaw = Math.atan2(dx, -dz);
+        // hauteur interpolée le long du segment (paliers, rampes, terrasses)
+        const seg = dist(from.x, from.z, wp.x, wp.z);
+        const t = seg > 0.01 ? clamp(1 - d / seg, 0, 1) : 0;
+        const yFrom = (from.y ?? 0) + 1, yTo = (wp.y ?? 0) + 1;
+        this.pos.y = lerp(yFrom, yTo, t);
       }
     }
-    this.moveKcc(ctx, mx, -9.81 * dt * dt, mz);
+    this.pos.x += mx;
+    this.pos.z += mz;
     // fuite si alerte confirmée à proximité
     if (ctx.alert.level(ctx) === 'confirmé' && dist(this.pos.x, this.pos.z, ctx.player.pos.x, ctx.player.pos.z) < 26) {
       this.panic(ctx.player.pos);
     }
   }
-  private pause = 0;
+
+  /** Pas de corps physique : l'interpolation d'affichage lit directement pos. */
+  postStep() { this.prev.copy(this.pos); }
 
   kill(ctx: Ctx, _from: THREE.Vector3, _gore: 'bullet' | 'impact' | 'none' = 'bullet') {
     super.kill(ctx, _from, _gore);
@@ -496,14 +546,16 @@ export class Civilian extends Actor {
   /** Réinitialisation après un point de reprise. */
   teleportCiv() {
     const p = this.wp[0];
-    this.pos.set(p.x, 1, p.z);
+    this.dead = false;
+    this.hp = 60;
+    this.pos.set(p.x, (p.y ?? 0) + 1, p.z);
     this.prev.copy(this.pos);
-    this.body.setTranslation({ x: p.x, y: 1, z: p.z }, true);
     this.deadAnimT = 0;
     this.mesh.rotation.z = 0;
     this.mesh.position.y = 0;
     this.fleeT = 0;
     this.idx = 0;
+    this.fromIdx = 0;
     this.sawCrime = false;
   }
 
@@ -522,9 +574,9 @@ export class Civilian extends Actor {
 
 export class Npc extends Actor {
   private head!: THREE.Mesh;
-  constructor(x: number, z: number, ctx: Ctx, private color: number) {
+  constructor(x: number, z: number, ctx: Ctx, private color: number, y = 0) {
     super('npc');
-    this.initPhysics(ctx, x, z, 1.0);
+    this.initPhysics(ctx, x, z, y + 1);
     this.hp = 9999;
     const g = new THREE.Group();
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.33, 0.8, 6, 12), new THREE.MeshStandardMaterial({ color, roughness: 0.65 }));
@@ -537,16 +589,20 @@ export class Npc extends Actor {
     const mark = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.06, 0.2), new THREE.MeshStandardMaterial({ color: 0x000, emissive: this.color, emissiveIntensity: 2 }));
     mark.position.y = 1.72;
     g.add(mark);
+    // lampe de poitrine (DA : Mina s'identifie par sa combinaison d'atelier)
+    const chestLamp = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.08), new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xfff1c4, emissiveIntensity: 2.6 }));
+    chestLamp.position.set(0, 1.18, -0.28);
+    g.add(chestLamp);
     this.mesh = g;
     ctx.scene.add(g);
   }
 
-  teleport(x: number, z: number, faceYaw: number) {
-    this.pos.set(x, 1, z);
+  teleport(x: number, z: number, faceYaw: number, y = 0) {
+    this.pos.set(x, y + 1, z);
     this.prev.copy(this.pos);
     this.yaw = faceYaw;
     this.prevYaw = faceYaw;
-    this.body.setTranslation({ x, y: 1, z }, true);
+    this.body.setTranslation({ x, y: y + 1, z }, true);
   }
 
   protected update(dt: number, ctx: Ctx) {

@@ -1,12 +1,10 @@
 # DeadLine
 
-Jeu solo d’action et d’infiltration en 2,5D pour navigateur de bureau. La ville condense la topographie d’Angoulême en trois quartiers reliés. Les Forges réunissent le garage, les ateliers et les voies. La Dalle s’étage sur le coteau. Le Nœud occupe le plateau administratif.
+Jeu solo d’action et d’infiltration en 2,5D pour navigateur de bureau. Les Forges réunissent les ateliers et les voies ferrées. La Dalle s’étage sur le coteau. Le Nœud occupe le plateau administratif. Les Quais rejoignent la Charente et les Belvédères prolongent les remparts.
 
-## Lancer le jeu
+## Jouer en local
 
-Avec Node.js 22 et npm, exécuter `npm ci`, puis `npm run dev`. Ouvrir l’adresse locale affichée par Vite. `npm run build` vérifie TypeScript et prépare `dist/` pour un hébergement statique. Le jeu utilise WebGL 2. Les ressources, dont le moteur physique Rapier, sont incluses dans la compilation.
-
-`npm run build:portable` produit `outputs/DeadLine.html`. Ouvrir ce fichier dans Chrome ou Firefox pour jouer directement, sans serveur.
+Ouvrir [DeadLine.html](outputs/DeadLine.html) dans Chrome ou Firefox. Le fichier contient le jeu et ses ressources. La partie est enregistrée dans le navigateur pour ce fichier.
 
 | Action | Commandes |
 | --- | --- |
@@ -16,12 +14,19 @@ Avec Node.js 22 et npm, exécuter `npm ci`, puis `npm run dev`. Ouvrir l’adres
 | Interagir, entrer et sortir de la voiture | E |
 | Utiliser un implant | 1 ou 2 |
 | Freiner | Espace |
-| Ouvrir le journal ou mettre en pause | Tab ou Échap |
+| Ouvrir le journal ou la carte | Tab ou M |
+| Mettre en pause | Échap |
 
-## Progression
+Parler à Mina pour accepter « Puce fantôme ». La cour et le quai nord permettent une entrée à pied. La rue longeant le dépôt donne sur un parking de fuite et sur le pont routier. La remise s’effectue à pied, sous les voies, après cinq secondes sans détection confirmée.
 
-Parler à Mina au garage pour accepter « Puce fantôme ». Le dépôt a une entrée sur l’avenue, une grille compatible avec Intrusion et un quai piéton ouvert au nord. Après le vol, la remise s’effectue à pied, sous les voies, après cinq secondes sans détection confirmée. Le pont à l’est permet de franchir les voies en voiture. La remise ouvre la grille de service et rend « Sous scellés » disponible auprès d’Ilyes.
+Les six missions principales suivent le bordereau de la puce jusqu’au poste de commande de Civis. Le destinataire du registre détermine l’accès privilégié au Nœud. Le choix final agit sur les contrôles et les services. Les cinq quêtes uniques modifient des lieux de la ville. Le panneau des relais propose aussi quatre types de contrats avec des trajets fixes qui se renouvellent après validation.
 
-La campagne se poursuit dans « Les effacés », puis « Le Nœud ». Le destinataire du registre dans La Dalle détermine l’entrée ouverte au Nœud. La décision finale modifie les accès et les contrôles réutilisés en exploration. Surcharge devient disponible au garage après le choix du destinataire.
+Le journal indique le prochain accès praticable et les conséquences des choix. Les passants vont aux ateliers, à l’école, à la halle ou aux guichets selon l’heure. Le trafic cède le passage aux intersections. La collision utilise les mêmes emplacements que le décor. Les traces d’impact restent sur la carrosserie jusqu’à la reprise au garage.
 
-La progression est liée au navigateur et à l’adresse de la page. Une fermeture pendant un contrat principal ramène au garage au point de reprise du briefing. Une livraison enregistre les choix, les accès et le paiement dans la même sauvegarde.
+## Sauvegarde et compilation
+
+Une fermeture pendant une séquence restaure son point de reprise. La version 2 reprend les crédits, les implants et les décisions des sauvegardes de la démo lorsqu’elles sont accessibles au navigateur. Les anciennes missions actives reprennent au premier objectif de leur équivalent dans la nouvelle campagne.
+
+Avec Node.js 22 et npm, exécuter npm ci, puis npm run dev. npm run build:portable reconstruit outputs/DeadLine.html. npm run build prépare aussi la distribution statique dans dist/.
+
+npm run test:world vérifie les passages des deux voies dans les deux sens, les accès des missions, le placement du mobilier et les trajets des passants et des véhicules avec Rapier.

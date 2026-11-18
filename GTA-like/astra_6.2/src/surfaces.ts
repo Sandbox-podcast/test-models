@@ -1,40 +1,86 @@
 import * as T from 'three'
-import {blocks,roadsX,roadsZ,ground,type Block} from './level'
+import {origins,routes,nearestLane,ground,ribbon,along,sites,type Block} from './level'
 
 function noise(seed:number){return ()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296}}
 function texture(canvas:HTMLCanvasElement){const t=new T.CanvasTexture(canvas);t.colorSpace=T.SRGBColorSpace;t.anisotropy=4;return t}
+
+function roadMaterial(col:string,rough=false){
+ const cv=document.createElement('canvas');cv.width=cv.height=128;const c=cv.getContext('2d')!;c.fillStyle=col;c.fillRect(0,0,128,128)
+ const rand=noise(90);for(let i=0;i<2600;i++){c.fillStyle=rand()>.48?'#d8dfd80d':'#09121d1c';c.fillRect(rand()*128,rand()*128,rand()*2+.5,rand()*2+.5)}
+ if(rough){c.strokeStyle='#93978838';c.strokeRect(0,0,64,32);c.strokeRect(64,0,64,32)}
+ const map=texture(cv);map.wrapS=map.wrapT=T.RepeatWrapping
+ return new T.MeshStandardMaterial({map,roughness:.87,side:T.DoubleSide})
+}
+const wallsByColor=new Map<string,T.MeshStandardMaterial>()
+export function stonework(color:string){
+ const old=wallsByColor.get(color);if(old)return old
+ const cv=document.createElement('canvas');cv.width=512;cv.height=256;const c=cv.getContext('2d')!,rng=noise(475)
+ c.fillStyle=color;c.fillRect(0,0,512,256)
+ for(let row=0;row<16;row++){let x=row%2?-17:-3
+  while(x<512){const w=20+Math.floor(rng()*26),y=row*16;c.fillStyle=rng()>.48?'#f9edcd25':'#3a392f25';c.fillRect(x+1,y+1,w-1,14)
+   c.fillStyle='#35312e50';c.fillRect(x,y+15,w,1);c.fillRect(x,y,1,15);x+=w}}
+ for(let i=0;i<9200;i++){c.fillStyle=rng()>.5?'#f2edcf1c':'#483f322b';c.fillRect(rng()*512,rng()*256,1+rng()*3,1)}
+ const m=new T.MeshStandardMaterial({map:texture(cv),roughness:.94});wallsByColor.set(color,m);return m
+}
 export function streetscape(scene:T.Scene){
- const rng=noise(7401),x0=-71,x1=169,z0=-59,z1=62,unit=13,w=x1-x0,d=z1-z0
- const cv=document.createElement('canvas');cv.width=w*unit;cv.height=d*unit;const c=cv.getContext('2d')!
- c.scale(unit,unit);c.translate(-x0,-z0);c.fillStyle='#343a40';c.fillRect(x0,z0,w,d)
- const line=(x:number,z:number,ex:number,ez:number,col:string,width:number)=>{c.beginPath();c.moveTo(x,z);c.lineTo(ex,ez);c.strokeStyle=col;c.lineWidth=width;c.stroke()}
- const road=(x:number,z:number,rw:number,rd:number)=>{c.fillStyle='#677070';c.fillRect(x-.22,z-.22,rw+.44,rd+.44);c.fillStyle='#212932';c.fillRect(x,z,rw,rd)}
- for(const x of roadsX)road(x-3.8,z0,7.6,d)
- for(const z of roadsZ)road(x0,z-3.7,w,7.4)
- for(const x of roadsX)for(const z of roadsZ){c.fillStyle='#222a32';c.fillRect(x-4,z-4,8,8);for(let j=-3;j<=3;j++){c.fillStyle='#8c9593';c.fillRect(x+j*.88-.18,z+4.5,.36,1.05)}}
- for(const x of roadsX)for(let z=z0;z<z1;z+=5.3)if(!roadsZ.some(v=>Math.abs(v-z)<6))line(x,z,x,z+1.9,'#aea071',.12)
- for(const z of roadsZ)for(let x=x0;x<x1;x+=5.3)if(!roadsX.some(v=>Math.abs(v-x)<6))line(x,z,x+2,z,'#b5a56e',.13)
- for(let i=0;i<57000;i++){const x=x0+rng()*w,z=z0+rng()*d;c.fillStyle=rng()>.51?'#d5dddf13':'#01080e32';c.fillRect(x,z,.04+rng()*.18,.04+rng()*.10)}
- for(let i=0;i<550;i++){const x=x0+rng()*w,z=z0+rng()*d;line(x,z,x+.2+rng()*1.4,z+.2,'#0f181e66',.04)}
- for(const b of blocks){const x=b.x-b.w/2,z=b.z-b.d/2;c.fillStyle='#10161d';c.shadowBlur=unit*1.3;c.shadowColor='#02060bd9';c.shadowOffsetX=unit*1.2;c.shadowOffsetY=unit*1.1;c.fillRect(x,z,b.w,b.d);c.shadowColor='transparent';c.shadowBlur=0;c.shadowOffsetX=c.shadowOffsetY=0
-   for(let j=x;j<x+b.w;j+=1.35)line(j,z+b.d,j+.05,z+b.d+1.04,'#19262b',.065)
+ const groundMats=['#525755','#898078','#59626a','#6c726c','#837b70'].map(c=>roadMaterial(c,true))
+ const road=roadMaterial('#343d45'),side=roadMaterial('#81857f',true),path=roadMaterial('#757d77',true)
+ const marking=new T.MeshBasicMaterial({color:'#b3aba0'}), stripes=new T.InstancedMesh(new T.BoxGeometry(1,1,1),marking,routes.reduce((n,r)=>n+Math.ceil(r.length/4)*3,0))
+ const temp=new T.Object3D();let count=0
+ function stripe(x:number,y:number,z:number,a:number,w:number,d:number){temp.position.set(x,y,z);temp.rotation.set(0,a,0);temp.scale.set(w,.025,d);temp.updateMatrix();stripes.setMatrixAt(count++,temp.matrix)}
+ function mesh(vertices:Float32Array,indices:Uint32Array,material:T.Material){
+  const g=new T.BufferGeometry(),uv=[];for(let i=0;i<vertices.length;i+=3)uv.push(vertices[i]/6,vertices[i+2]/6)
+  g.setAttribute('position',new T.BufferAttribute(vertices,3));g.setAttribute('uv',new T.Float32BufferAttribute(uv,2));g.setIndex(new T.BufferAttribute(indices,1));g.computeVertexNormals();scene.add(new T.Mesh(g,material))
  }
- function light(x:number,z:number,r:number,color:string){const g=c.createRadialGradient(x,z,0,x,z,r);g.addColorStop(0,color+'ab');g.addColorStop(.32,color+'57');g.addColorStop(1,color+'00');c.fillStyle=g;c.fillRect(x-r,z-r,r*2,r*2)}
- for(const z of roadsZ)for(let x=-51;x<160;x+=17){if(roadsX.some(q=>Math.abs(q-x)<4))continue
-   light(x,z+2.4,5.5,'#c28b47');const dl=x-1.1;for(let k=0;k<7;k++)line(dl+k*.14,z-3.25,dl+k*.14,z-2.92,'#11191d',.08)
-   for(let k=0;k<7;k++){const ox=(rng()-.5)*3,oz=rng()*4;line(x+ox,z+oz,x+ox+.15+rng()*.3,z+oz,'#e3b97141',.055)}
+ // Beyond the playable streets, the Charente valley continues below the escarpments.
+ const valley=roadMaterial('#586450',true),vx:number[]=[],vi:number[]=[],rows=62,cols=80
+ for(let z=0;z<=rows;z++)for(let x=0;x<=cols;x++){const xx=-110+x*8,zz=-305+z*10
+  vx.push(xx,-3+.7*Math.sin(xx*.045+zz*.035)+.48*Math.cos(zz*.074),zz);const a=z*(cols+1)+x
+  if(x<cols&&z<rows)vi.push(a,a+cols+1,a+1,a+1,a+cols+1,a+cols+2)}
+ mesh(new Float32Array(vx),new Uint32Array(vi),valley)
+ for(const [i,o] of origins.entries()){
+  const w=i?160:180,d=i?110:120,nx=Math.ceil(w/2),nz=Math.ceil(d/2),xyz=[],idx=[]
+  for(let z=0;z<=nz;z++)for(let x=0;x<=nx;x++){const xx=o.x+x*w/nx,zz=o.z+z*d/nz;let y=ground(xx,zz)-.1
+   const close=nearestLane({x:xx,z:zz});if(close&&close.d<close.r.width/2+.85)y-=.28
+   if(i===0&&xx>155&&xx<175&&zz>=70&&zz<=80)y=0
+   xyz.push(xx,y,zz);const v=z*(nx+1)+x;if(x<nx&&z<nz)idx.push(v,v+nx+1,v+1,v+1,v+nx+1,v+nx+2)}
+  mesh(new Float32Array(xyz),new Uint32Array(idx),groundMats[i])
+  const face:number[]=[],tris:number[]=[],rim=[...Array.from({length:nx+1},(_,x)=>x),...Array.from({length:nz},(_,z)=>(z+1)*(nx+1)+nx),...Array.from({length:nx},(_,x)=>nz*(nx+1)+nx-1-x),...Array.from({length:nz},(_,z)=>(nz-1-z)*(nx+1))]
+  for(const [j,v] of rim.entries()){const [x,y,z]=xyz.slice(v*3,v*3+3);face.push(x,y,z,x,-4.8,z);if(j){const k=j*2;tris.push(k-2,k-1,k,k,k-1,k+1)}}
+  mesh(new Float32Array(face),new Uint32Array(tris),groundMats[i])
  }
- for(const [x,z,r,col] of [[-44,16,7,'#1db8ad'],[-26,-11,6,'#ec735a'],[-19,17,6,'#b7609e'],[11,20,6,'#21aaa5'],[76,21,7,'#d35d8c'],[138,-4,6,'#1bb5dc']] as const)light(x,z,r,col)
- for(const [x,z,w,rot,word] of [[-32,19,2,0,'MINA / 07'],[-26,-2,2,0,'DÉPÔT 09'],[9,28,2.2,0,'ATELIERS'],[60,10,1.1,-Math.PI/2,'LA DALLE'],[130,1,1.4,0,'CONTRÔLE']] as const){c.save();c.translate(x,z);c.rotate(rot);c.font='bold '+w+'px monospace';c.fillStyle='#9caeaa80';c.fillText(word,0,0);c.restore()}
- for(const [x,z] of [[-44,15.5],[-22,-13],[5,-21],[135,-3]]){for(let k=0;k<7;k++)line(x+k*.55,z,x+.42+k*.55,z-.65,'#d3b15d',.19)}
- const xs=[x0,19.49,19.51,30.49,30.51,34,56,99,116,x1],zs=[z0,-38,-30,-20,-12,z1]
- const xyz:number[]=[],uv:number[]=[],indices:number[]=[]
- for(let iz=0;iz<zs.length;iz++)for(let ix=0;ix<xs.length;ix++){const x=xs[ix],z=zs[iz],i=iz*xs.length+ix
-  xyz.push(x,ground(x,z)+.135,z);uv.push((x-x0)/w,1-(z-z0)/d)
-  if(ix+1<xs.length&&iz+1<zs.length)indices.push(i,i+xs.length,i+1,i+1,i+xs.length,i+xs.length+1)
+ for(const lane of routes){
+  const width=lane.width/2
+  const draw=(a:number,b:number,h:number,m:T.Material)=>{const data=ribbon(lane,a,b,h);mesh(data.vertices,data.indices,m)}
+  if(lane.zone<0)draw(-width-3.1,width+3.1,-.08,groundMats[0]);
+  if(lane.road){draw(-width-1.55,width+1.55,.025,side);draw(-width,width,.06,road)
+   if(lane.length>50)for(let s=3;s<lane.length;s+=5.3){const q=along(lane,s);stripe(q.x,q.y+.09,q.z,q.angle,.115,2)}
+  }else draw(-width,width,.046,path)
  }
- const mesh=new T.BufferGeometry();mesh.setAttribute('position',new T.Float32BufferAttribute(xyz,3));mesh.setAttribute('uv',new T.Float32BufferAttribute(uv,2));mesh.setIndex(indices)
- scene.add(new T.Mesh(mesh,new T.MeshBasicMaterial({map:texture(cv)})))
+ for(const z of [38,65.5])for(let i=-3;i<=3;i++)stripe((z===38?112:125)+i*.9,ground(z===38?112:125,z)+.10,z,0,.46,1.5)
+ for(const lane of routes.filter(r=>r.road&&r.zone>=0&&r.length>50)){
+  for(const s of [22,lane.length*.48]){const q=along(lane,s);for(let v=-4;v<=4;v++){stripe(q.x+Math.cos(q.angle)*v,q.y+.105,q.z-Math.sin(q.angle)*v,q.angle,.49,1.8)}}
+ }
+ stripes.count=count;scene.add(stripes)
+ const water=new T.Mesh(new T.PlaneGeometry(167,22),roadMaterial('#295b68'));water.rotation.x=-Math.PI/2;water.position.set(origins[3].x+80,.06,origins[3].z+100);scene.add(water)
+ function stencil(x:number,z:number,w:number,d:number,text:string,color:string){
+  const cv=document.createElement('canvas');cv.width=512;cv.height=128;const c=cv.getContext('2d')!;c.fillStyle=color;c.font='bold 78px monospace';c.textAlign='center';c.textBaseline='middle';c.fillText(text,256,65,500)
+  const mesh=new T.Mesh(new T.PlaneGeometry(w,d),new T.MeshBasicMaterial({map:texture(cv),transparent:true,opacity:.72,depthWrite:false}));mesh.rotation.x=-Math.PI/2;mesh.position.set(x,ground(x,z)+.15,z);scene.add(mesh)
+ }
+ for(const [x,z,txt] of [[32,39,'ATELIER 07'],[112,39,'P / LIVRAISON'],[113,52,'QUAI 09'],[135,92,'RUE BASSE'],[125,62,'PASSAGE ↓']] as const)stencil(x,z,7.8,1.4,txt,'#d6c298')
+ for(const [x,z] of [[32,47],[112,38],[142,97]]){for(const side of [-1,1])stripe(x+side*1.7,ground(x,z)+.12,z,0,.095,5.2);stripe(x,ground(x,z)+.12,z+2.6,0,3.4,.11)}
+ stripes.count=count
+ const signals:[[number,number],string][]=[[[sites.garage.x,sites.garage.z],'#ffc370'],[[sites.gate.x,sites.gate.z],'#82d9af'],[[sites.drop.x,sites.drop.z],'#e3a85d']]
+ for(const [[x,z],color] of signals)halo(scene,x,ground(x,z)+.14,z,5,color,.50)
+}
+const corrugated=new Map<string,T.MeshStandardMaterial>()
+export function roofing(color:string){
+ if(corrugated.has(color))return corrugated.get(color)!
+ const cv=document.createElement('canvas');cv.width=512;cv.height=256;const c=cv.getContext('2d')!,rng=noise(531);c.fillStyle=color;c.fillRect(0,0,512,256)
+ for(let j=0;j<256;j+=8){const shade=c.createLinearGradient(0,j,0,j+8);shade.addColorStop(0,'#11161972');shade.addColorStop(.28,'#d5ddc84d');shade.addColorStop(.5,'#27333800');shade.addColorStop(1,'#262c3040');c.fillStyle=shade;c.fillRect(0,j,512,8)}
+ for(let i=0;i<6600;i++){const x=rng()*512,y=rng()*256;c.fillStyle=i%3?'#c0b6a31b':'#62412a42';c.fillRect(x,y,rng()*6+.3,.6+rng()*1.1)}
+ for(const x of [14,142,274,410]){c.fillStyle='#25282588';c.fillRect(x,0,2,256);for(let y=5;y<256;y+=24){c.fillStyle='#d3ceba';c.fillRect(x+1,y,2,2)}}
+ const m=new T.MeshStandardMaterial({map:texture(cv),roughness:.78,metalness:.12});corrugated.set(color,m);return m
 }
 export function roofSkin(g:T.Group,b:Block,i:number){
  const rng=noise(813+i*211),cv=document.createElement('canvas');cv.width=512;cv.height=256;const c=cv.getContext('2d')!

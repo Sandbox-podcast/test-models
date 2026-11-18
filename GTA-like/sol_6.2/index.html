@@ -16,6 +16,7 @@
       <div class="hud-head">
         <section class="objective plate" aria-label="Objectif suivi">
           <div class="location"><span class="diamond"></span><span id="district">Les Forges</span></div>
+          <div id="city-time" class="city-time"></div>
           <h1 id="mission-name">Puce fantôme</h1>
           <p id="objective-text">Parler à Mina au garage</p>
           <div class="objective-meta"><span id="distance"></span><button id="journal" class="text-btn"><kbd>Tab</kbd> Journal</button></div>
@@ -23,7 +24,7 @@
         <div id="danger" class="danger plate" data-state="clear" role="status">
           <i></i><span id="alert-text">Hors détection</span><span id="alert-meter"></span>
         </div>
-        <div class="top-actions"><span id="money" class="plate account">0 ₡</span><button id="pause" class="plate icon-btn" aria-label="Mettre en pause" title="Pause (Échap)">Ⅱ</button></div>
+        <div class="top-actions"><span id="purge-clock" class="plate account" hidden></span><span id="money" class="plate account">0 ₡</span><button id="pause" class="plate icon-btn" aria-label="Mettre en pause" title="Pause (Échap)">Ⅱ</button></div>
       </div>
       <div id="waypoints"></div>
       <div id="crosshair" data-valid="false"></div>
@@ -40,7 +41,7 @@
         </section>
         <div id="speed" class="speed plate" hidden><strong>0</strong><span>km/h</span></div>
         <section class="map plate" aria-label="Minicarte">
-          <div class="map-top"><span id="map-name">Les Forges</span><span>▲ N</span></div>
+          <div class="map-top"><span id="map-name">Les Forges</span><button id="open-map" class="text-btn" aria-label="Ouvrir la carte"><kbd>M</kbd> Carte</button></div>
           <canvas id="minimap" width="215" height="151"></canvas>
           <div class="map-bottom"><span class="you-dot"></span> Vous <span class="goal-dot"></span> Objectif</div>
         </section>
@@ -49,7 +50,7 @@
 
     <section id="title" class="title-screen" aria-labelledby="logo">
       <div class="title-art"></div>
-      <div class="title-top"><span class="brand-mark">D<span>∕</span></span><span>Les Forges · La Dalle · Le Nœud</span></div>
+      <div class="title-top"><span class="brand-mark">D<span>∕</span></span><span>Les Forges · La Dalle · Le Nœud · Les Quais · Les Belvédères</span></div>
       <div class="title-copy">
         <div class="chapter-label"><span></span> Chapitre I</div>
         <h1 id="logo">DeadLine</h1>

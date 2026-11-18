@@ -55,6 +55,9 @@ button:focus-visible { outline: 2px solid #eafc99; outline-offset: 4px; }
 .location { display: flex; gap: 8px; align-items: center; color: var(--mint); font-size: .76rem; }
 .diamond, .goal-dot { display: inline-block; width: 7px; height: 7px; transform: rotate(45deg); background: var(--signal); }
 .location .diamond { background: var(--mint); width: 5px; height: 5px; }
+.city-time { color: #a9bfc5; font-size: .68rem; margin-top: 4px; font-variant-numeric: tabular-nums; }
+#city-overview { display: block; width: 100%; height: auto; border: 1px solid var(--edge); }
+#purge-clock { color: var(--amber); }
 .objective h1 { font: 700 1.32rem/1.15 "Bahnschrift","Arial Narrow",sans-serif; margin: 6px 0; letter-spacing: .01em; }
 .objective p { margin: 0; color: #d6e5e6; font-size: .87rem; line-height: 1.35; }
 .objective-meta { display: flex; justify-content: space-between; align-items: center; gap: 4px; margin-top: 8px; color: #b4c2c4; font-size: .73rem; }

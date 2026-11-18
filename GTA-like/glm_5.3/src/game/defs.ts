@@ -85,6 +85,35 @@ export const DELIVERY_CALM = 5.0;
 
 export function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
 export function clamp(v: number, a: number, b: number) { return Math.min(b, Math.max(a, v)); }
+
+/**
+ * Lectures « à portée courte » des corps Rapier : les getters retournent des
+ * objets réutilisés côté WASM ; les consumer dans une fonction dédiée évite
+ * l'erreur « recursive use / unsafe aliasing » quand plusieurs lectures
+ * s'enchaînent sur une même frame.
+ */
+export interface BodyLike {
+  translation(): { x: number; y: number; z: number };
+  rotation(): { x: number; y: number; z: number; w: number };
+  linvel(): { x: number; y: number; z: number };
+  angvel(): { x: number; y: number; z: number };
+}
+export function bodyPos(b: BodyLike): [number, number, number] {
+  const t = b.translation();
+  return [t.x, t.y, t.z];
+}
+export function bodyRot(b: BodyLike): [number, number, number, number] {
+  const q = b.rotation();
+  return [q.x, q.y, q.z, q.w];
+}
+export function bodyVel(b: BodyLike): [number, number, number] {
+  const v = b.linvel();
+  return [v.x, v.y, v.z];
+}
+export function bodyAng(b: BodyLike): [number, number, number] {
+  const a = b.angvel();
+  return [a.x, a.y, a.z];
+}
 export function lerpAngle(a: number, b: number, t: number) {
   let d = (b - a) % (Math.PI * 2);
   if (d > Math.PI) d -= Math.PI * 2;

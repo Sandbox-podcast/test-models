@@ -265,7 +265,7 @@ export class FxSystem {
     }
   }
 
-  /** Renversement : choc lisible vs impact grave (spec §6 / lot 7). */
+  /** Renversement : choc lisible vs impact grave (spec §6 / lot 7 + bible 05). */
   vehicleHit(actor: Guard | Civilian, ctx: Ctx, speed: number, dir: THREE.Vector3) {
     const severe = speed > 8;
     if (severe) {
@@ -273,13 +273,22 @@ export class FxSystem {
       this.goreImpact(actor.pos.clone(), dir);
       actor.hp = 0;
       actor.kill(ctx, dir, 'impact');
-      // projection du corps
+      // projection du corps (collider déjà désactivé par kill)
       this.thrown.push({ mesh: actor.mesh, vel: dir.clone().multiplyScalar(clamp(speed * 0.45, 2, 9)).setY(2.4), t: 1.1 });
     } else {
       ctx.audio.thud();
       this.bloodBurst(actor.pos.clone().setY(0.9), dir, 6, 0.7);
       actor.damage(28, ctx, ctx.player.pos, 'impact');
       actor.stun = 1.6;
+      // écarté du gabarit du véhicule : un piéton vivant ne bloque pas la voiture
+      const r = ctx.car.right();
+      const rel = new THREE.Vector3(actor.pos.x - ctx.car.pos.x, 0, actor.pos.z - ctx.car.pos.z);
+      const side = rel.x * r.x + rel.z * r.z >= 0 ? 1 : -1;
+      const px = actor.pos.x + r.x * side * 1.9;
+      const pz = actor.pos.z + r.z * side * 1.9;
+      actor.pos.set(px, actor.pos.y, pz);
+      if (actor.body) actor.body.setTranslation({ x: px, y: actor.pos.y, z: pz }, true);
+      if ('panic' in actor) actor.panic(ctx.player.pos);
     }
     this.shake = Math.min(1.6, this.shake + 0.6);
   }

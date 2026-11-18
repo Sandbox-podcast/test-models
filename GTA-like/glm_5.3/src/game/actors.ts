@@ -7,7 +7,16 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { Ctx } from './ctx';
-import { G_ACTOR, G_PLAYER, G_CAR, G_RAY, PLAYER, CAR, clamp, lerp, lerpAngle } from './defs';
+import { G_ACTOR, G_PLAYER, G_CAR, G_RAY, PLAYER, CAR, clamp, lerp, lerpAngle, bodyPos, bodyRot, bodyVel, bodyAng } from './defs';
+
+/** Un corps au sol ne bloque plus la circulation (le sang reste). */
+export function corpseColliderOff(a: { collider?: RAPIER.Collider }) {
+  try { a.collider?.setCollisionGroups(0); } catch { /* corps déjà retiré */ }
+}
+/** Réactive le collider d'un acteur remis en patrouille. */
+export function actorColliderOn(a: { collider?: RAPIER.Collider }) {
+  try { a.collider?.setCollisionGroups(G_ACTOR); } catch { /* ignore */ }
+}
 
 export abstract class Actor {
   pos = new THREE.Vector3();
@@ -70,8 +79,8 @@ export abstract class Actor {
     if (this.dead && this.kind !== 'player') return;
     this.prev.copy(this.pos);
     this.prevYaw = this.yaw;
-    const t = this.body.translation();
-    this.pos.set(t.x, t.y, t.z);
+    const [x, y, z] = bodyPos(this.body);
+    this.pos.set(x, y, z);
   }
 
   sync(alpha: number) {
@@ -91,6 +100,7 @@ export abstract class Actor {
   kill(_ctx: Ctx, _from: THREE.Vector3, _gore: 'bullet' | 'impact' | 'none' = 'bullet') {
     this.dead = true;
     this.hp = 0;
+    if (this.kind !== 'player') corpseColliderOff(this);
   }
 }
 
@@ -131,6 +141,11 @@ export class Player extends Actor {
     const visor = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.07, 0.12), new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0x00f0ff, emissiveIntensity: 1.6 }));
     visor.position.set(0, 1.5, -0.16);
     g.add(visor);
+    // sac plat contrasté (DA : lisibilité du coursier)
+    const bag = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.5, 0.17), new THREE.MeshStandardMaterial({ color: 0xcfd9e2, roughness: 0.8 }));
+    bag.position.set(0, 1.08, 0.3);
+    bag.castShadow = true;
+    g.add(bag);
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.3), new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xff2d78, emissiveIntensity: 1.2 }));
     stripe.position.set(0, 1.12, 0);
     g.add(stripe);
@@ -165,8 +180,8 @@ export class Player extends Actor {
     if (this.inCar) {
       this.pos.copy(ctx.car.pos);
       this.speed = ctx.car.speed;
-      // le corps reste hors collision, au-dessus de la scène
-      this.body.setNextKinematicTranslation({ x: this.pos.x, y: 50, z: this.pos.z });
+      // le corps reste parqué à l'endroit de la montée, collider neutralisé :
+      // aucune écriture physique par tick pendant la conduite
       return;
     }
     // déplacement
@@ -260,11 +275,19 @@ export class Car {
     const cab = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.5, 2.0), cabin);
     cab.position.set(0, 1.02, 0.15);
     g.add(cab);
+    // sangles et outils visibles derrière l'habitacle (DA)
+    const straps = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 0.9), new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.95 }));
+    straps.position.set(0, 0.86, 1.55);
+    g.add(straps);
+    const tool = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.14, 0.7), new THREE.MeshStandardMaterial({ color: 0x4a5460, metalness: 0.7, roughness: 0.4 }));
+    tool.position.set(-0.32, 0.98, 1.6);
+    g.add(tool);
     const underglow = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.08, 3.6), new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0x00f0ff, emissiveIntensity: 2.2 }));
     underglow.position.y = 0.24;
     g.add(underglow);
     // feux
     const hlMat = new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0xfff3d0, emissiveIntensity: this.driven ? 3 : 0.6 });
+    this.headlightMat = hlMat;
     for (const sx of [-0.62, 0.62]) {
       const hl = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.16, 0.08), hlMat);
       hl.position.set(sx, 0.62, -2.1);
@@ -299,11 +322,66 @@ export class Car {
   forward(): THREE.Vector3 { return new THREE.Vector3(Math.sin(this.yaw), 0, -Math.cos(this.yaw)); }
   right(): THREE.Vector3 { return new THREE.Vector3(Math.cos(this.yaw), 0, Math.sin(this.yaw)); }
 
+  // ------------------------------------------------------------------ dégâts visibles (bible 05)
+
+  /** Niveau de dégâts par face : 0 intact, 1 rayure, 2 bosse, 3 choc grave. */
+  sideDamage: Record<'front' | 'rear' | 'left' | 'right', number> = { front: 0, rear: 0, left: 0, right: 0 };
+  private marks: Record<string, number> = { front: 0, rear: 0, left: 0, right: 0 };
+  private headlightMat!: THREE.MeshStandardMaterial;
+  private damageCd = 0;
+
+  /** Applique un choc sur une face. severity : 1 rayure, 2 bosse, 3 grave. */
+  addDamage(side: 'front' | 'rear' | 'left' | 'right', severity: number) {
+    this.sideDamage[side] = Math.min(3, Math.max(this.sideDamage[side], severity));
+    const count = this.marks[side] ?? 0;
+    if (count >= 4) return;
+    this.marks[side] = count + 1;
+    const along = Math.random() * 1.4 - 0.7;
+    const markMat = new THREE.MeshStandardMaterial({
+      color: severity >= 3 ? 0x0a0c0e : severity === 2 ? 0x14181d : 0x2a3138,
+      roughness: 0.9, metalness: 0.2,
+    });
+    let mark: THREE.Mesh;
+    if (side === 'left' || side === 'right') {
+      const x = side === 'left' ? -0.97 : 0.97;
+      mark = new THREE.Mesh(new THREE.BoxGeometry(severity >= 2 ? 0.1 : 0.04, 0.16 + severity * 0.06, 0.5 + Math.random() * 0.5), markMat);
+      mark.position.set(x, 0.52 + Math.random() * 0.22, along * 1.6);
+    } else {
+      const z = side === 'front' ? -2.12 : 2.12;
+      mark = new THREE.Mesh(new THREE.BoxGeometry(0.5 + Math.random() * 0.5, 0.16 + severity * 0.06, severity >= 2 ? 0.1 : 0.04), markMat);
+      mark.position.set(along * 0.8, 0.42 + Math.random() * 0.3, z);
+    }
+    mark.name = 'dmg';
+    this.mesh.add(mark);
+    // choc grave avant : phare avant côté impact cassé
+    if (severity >= 3 && side === 'front' && this.headlightMat) {
+      this.headlightMat.emissiveIntensity = 0.15;
+      this.headlights.intensity = 30;
+    }
+  }
+
+  /** True si un nouveau choc doit être enregistré (anti-spam contact persistant). */
+  canTakeDamage(dt: number): boolean {
+    this.damageCd = Math.max(0, this.damageCd - dt);
+    return this.damageCd <= 0;
+  }
+
+  lockDamage() { this.damageCd = 0.45; }
+
+  resetDamage() {
+    this.sideDamage = { front: 0, rear: 0, left: 0, right: 0 };
+    this.marks = { front: 0, rear: 0, left: 0, right: 0 };
+    for (const child of [...this.mesh.children]) {
+      if ((child as THREE.Mesh).name === 'dmg') this.mesh.remove(child);
+    }
+    if (this.headlightMat) this.headlightMat.emissiveIntensity = 3;
+  }
+
   update(dt: number, ctx: Ctx) {
-    const v = this.body.linvel();
+    const [vx, vy, vz] = bodyVel(this.body);
     const f = this.forward(), r = this.right();
-    let fwdSpeed = v.x * f.x + v.z * f.z;
-    let latSpeed = v.x * r.x + v.z * r.z;
+    const fwdSpeed = vx * f.x + vz * f.z;
+    const latSpeed = vx * r.x + vz * r.z;
     const inp = ctx.input;
 
     if (this.driven && !ctx.cinematic) {
@@ -311,8 +389,8 @@ export class Car {
       if (inp.isDown('forward')) throttle += 1;
       if (inp.isDown('back')) throttle -= 1;
       let steer = 0;
-      if (inp.isDown('left')) steer += 1;
-      if (inp.isDown('right')) steer -= 1;
+      if (inp.isDown('left')) steer -= 1;
+      if (inp.isDown('right')) steer += 1;
       const handbrake = inp.isDown('sprint');
 
       const spd = Math.abs(fwdSpeed);
@@ -331,29 +409,24 @@ export class Car {
       // direction
       const steerAuthority = clamp(spd / 6, 0, 1) * (1 - clamp(spd / CAR.MAX_SPEED, 0, 0.45));
       const targetYawRate = steer * CAR.STEER_RATE * steerAuthority * Math.sign(fwdSpeed >= 0 ? 1 : -1);
-      const av = this.body.angvel();
-      this.body.setAngvel({ x: av.x * 0.82, y: lerp(av.y, targetYawRate, clamp(dt * 10, 0, 1)), z: av.z * 0.82 }, true);
+      const [avx, avy, avz] = bodyAng(this.body);
+      this.body.setAngvel({ x: avx * 0.82, y: lerp(avy, targetYawRate, clamp(dt * 10, 0, 1)), z: avz * 0.82 }, true);
 
       // amortissement latéral (accroche arcade)
       const latKill = clamp(CAR.LATERAL_DAMP * dt, 0, 1) * (handbrake ? 0.35 : 1);
       const newLat = latSpeed * (1 - latKill);
-      let nvx = v.x + r.x * (newLat - latSpeed);
-      let nvz = v.z + r.z * (newLat - latSpeed);
+      const nvx = vx + r.x * (newLat - latSpeed);
+      const nvz = vz + r.z * (newLat - latSpeed);
       // vitesse max
       const hsp = Math.hypot(nvx, nvz);
-      if (hsp > CAR.MAX_SPEED) {
-        nvx *= CAR.MAX_SPEED / hsp;
-        nvz *= CAR.MAX_SPEED / hsp;
-      }
-      this.body.setLinvel({ x: nvx, y: v.y, z: nvz }, true);
+      const k = hsp > CAR.MAX_SPEED ? CAR.MAX_SPEED / hsp : 1;
+      this.body.setLinvel({ x: nvx * k, y: 0, z: nvz * k }, true);
 
       // anti-retournement
-      const up = { x: 0, y: 1, z: 0 };
-      const q = this.body.rotation();
-      const upY = 1 - 2 * (q.x * q.x + q.z * q.z);
-      void up;
+      const [qx, qy, qz, qw] = bodyRot(this.body);
+      const upY = 1 - 2 * (qx * qx + qz * qz);
       if (upY < 0.55) {
-        this.body.setAngvel({ x: av.x * 0.6, y: this.body.angvel().y, z: av.z * 0.6 }, true);
+        this.body.setAngvel({ x: avx * 0.6, y: avy, z: avz * 0.6 }, true);
         this.body.addTorque({ x: (1 - upY) * 6000, y: 0, z: 0 }, true);
       }
       // feux
@@ -366,24 +439,21 @@ export class Car {
       this.wheels[1].rotation.y = steerVis;
     } else {
       this.headlights.intensity = 8;
-      const av = this.body.angvel();
-      if (Math.abs(v.y) < 0.05 && Math.hypot(v.x, v.z) < 0.3) this.body.sleep();
+      if (Math.abs(vy) < 0.05 && Math.hypot(vx, vz) < 0.3) this.body.sleep();
       else this.body.wakeUp();
-      void av;
     }
 
-    void fwdSpeed; void latSpeed;
     this.speed = fwdSpeed;
   }
 
   postStep() {
     this.prev.copy(this.pos);
     this.prevQuat.copy(this.quat);
-    const t = this.body.translation();
-    this.pos.set(t.x, t.y, t.z);
-    const q = this.body.rotation();
-    this.quat.set(q.x, q.y, q.z, q.w);
-    this.yaw = Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.x * q.x));
+    const [x, y, z] = bodyPos(this.body);
+    this.pos.set(x, y, z);
+    const [qx, qy, qz, qw] = bodyRot(this.body);
+    this.quat.set(qx, qy, qz, qw);
+    this.yaw = Math.atan2(2 * (qw * qy + qx * qz), 1 - 2 * (qy * qy + qx * qx));
   }
 
   sync(alpha: number) {
@@ -419,8 +489,8 @@ export class Car {
     return null;
   }
 
-  teleport(ctx: Ctx, x: number, z: number, yaw: number) {
-    this.body.setTranslation({ x, y: 0.7, z }, true);
+  teleport(ctx: Ctx, x: number, z: number, yaw: number, y = 0.7) {
+    this.body.setTranslation({ x, y, z }, true);
     this.body.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);

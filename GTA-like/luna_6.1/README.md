@@ -31,7 +31,7 @@ En voiture, l’accélération est sur Z/W et le frein ou la marche arrière sur
 - Garage de Mina, avenues, cour de livraison, ruelles, passage sous les voies et pont routier surélevé.
 - Contrat « Puce fantôme » avec entrée principale, grille de cour piratable, patrouilles, caméra, tir et leurre.
 - Poursuite et recherche de la dernière position connue; livraison à pied après cinq secondes sans détection directe.
-- Reprise au briefing, sauvegarde versionnée locale, raccourci persistant et contrat secondaire « Données fantômes ».
+- Reprise au briefing, sauvegarde versionnée locale, raccourci persistant et contrat secondaire « Une porte de plus ».
 - Deux implants à équiper parmi ceux débloqués; le contrat secondaire débloque Surcharge.
 
 La progression permanente est conservée dans `localStorage` sous la clé `deadline.puce-fantome.save.v1`. Pour recommencer une partie, efface cette clé dans les outils de développement du navigateur.

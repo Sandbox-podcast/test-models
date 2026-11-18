@@ -91,6 +91,7 @@ export class Hud {
       p.innerHTML = text;
       p.classList.remove('hidden');
     } else {
+      p.textContent = '';
       p.classList.add('hidden');
     }
   }

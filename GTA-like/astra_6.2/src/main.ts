@@ -9,7 +9,7 @@ import './style.css'
 import {icon,logo} from './icons'
 import {drawMap} from './map'
 import {sites,districts,distance} from './level'
-import {readSave,writeSave,fresh,chapter,available,brief,jobNames,type Job} from './campaign'
+import {readSave,writeSave,fresh,chapter,available,brief,jobNames,missions,all,mainJobs,common,offerDetails,type Job} from './campaign'
 import {AudioBus} from './audio'
 import type {Game,Dialogue} from './game'
 const app=document.querySelector<HTMLDivElement>('#app')!
@@ -19,7 +19,7 @@ let loaded=false,loadError='',selected:Job=save.active||chapter(save)
 export let game:Game|undefined
 const modulePromise=import('./game')
 modulePromise.then(m=>m.ready).then(()=>{loaded=true;updatePlay()}).catch(()=>{loadError='Le moteur n’a pas pu charger. Rechargez la page.';updatePlay()})
-const ordinal=(j:Job)=>({chip:'01',ledger:'02',core:'03',parcel:'S1',relay:'S2'})[j]
+const ordinal=(j:Job)=>missions[j].id
 const btn=(id:string,text:string,cls='secondary',i='')=>`<button class="${cls}" data-act="${id}">${i?icon(i):''}${text}</button>`
 app.innerHTML=`<div id="terminal"></div><section id="playfield" hidden><canvas id="world" aria-label="Ville jouable d’Angoulême"></canvas><div id="hud"></div></section><div id="modal" hidden></div><div id="toast" role="status"></div>`
 const terminal=document.querySelector<HTMLElement>('#terminal')!,field=document.querySelector<HTMLElement>('#playfield')!,overlay=document.querySelector<HTMLElement>('#modal')!
@@ -27,31 +27,25 @@ const keysHelp=[['ZQSD / WASD','Se déplacer ou conduire'],['Souris','Viser ind�
 function header(){return `<header class="header"><button class="brand" data-act="home" aria-label="DeadLine, accueil">${logo}<span>DEADLINE</span></button><div class="head-divider"></div><nav aria-label="Navigation principale">${[['home','home','Terminal'],['journal','book','Journal'],['atlas','map','Carte']].map(([id,i,t])=>`<button data-act="${id}" class="navbtn ${screen===id?'active':''}" ${screen===id?'aria-current="page"':''}>${icon(i,16)}${t}</button>`).join('')}</nav><div class="profile"><button data-act="sound" class="sound" aria-label="${save.sound?'Couper':'Activer'} le son" title="${save.sound?'Couper':'Activer'} le son">${icon(save.sound?'volume':'mute',18)}</button><span class="head-divider"></span><span class="online"></span><span class="profile-name">COURSIER_01</span></div></header>`}
 function footer(){return `<footer><span><i class="online"></i> TERMINAL EN LIGNE</span><span>DEADLINE OS <b>//</b> V1.0</span></footer>`}
 function home(){
- const j=save.active||chapter(save),complete=save.done.includes('core')
+ const j=save.active||chapter(save),complete=save.done.includes(j),contact=j==='ascent'&&save.route==='sorel'?'Sorel':missions[j].contact
  return `<main class="shell"><section class="hero"><div class="hero-art"></div><div class="hero-shade"></div><i class="corner tl"></i><i class="corner br"></i><div class="hero-copy"><div class="hero-tag"><i class="slashes"></i>CAMPAGNE SOLO</div><h1 class="wordmark">DEADLINE</h1><div class="hero-sub"><span></span>ACTION & INFILTRATION</div><p>Dans les rues d’Angoulême, une puce dérobée<br class="wide"> détient votre avenir. Votre identité est en sursis.</p><div class="hero-actions"><button data-act="play" class="primary" id="start" ${loaded?'':'disabled'}>${icon('play',18)}<span>${playLabel()}</span></button>${btn('controls','Commandes','secondary glass','keyboard')}</div></div><div class="geotag">${icon('pin',16)}ANGOULÊME <b>/</b> SECTEUR 01</div></section>
  <div class="section-heading"><span class="section-line"></span><h2>Centre d’opérations</h2><span class="section-rule"></span><span class="mono heading-meta">TERMINAL <b>//</b> 01</span></div>
  <div class="dashboard"><article class="card mission-card"><div class="card-top"><span class="card-label">${icon('aim',17)} DOSSIER DE MISSION</span><span class="status"><i></i>${complete?'TERMINÉ':save.active?'EN COURS':'DISPONIBLE'}</span></div>
- <div class="mission-body"><div class="portrait"><img src="/mina.webp" alt="Portrait de Mina, mécanicienne des Forges"><span>MINA</span></div><div class="mission-text"><div class="chapter">CHAPITRE ${ordinal(j)} <span>/</span> ${j==='chip'?'LES FORGES':j==='ledger'?'LA DALLE':'LE NŒUD'}</div><h3>${jobNames[j]}</h3><p>${brief[j]}</p><button class="text-link" data-act="journal">Consulter le journal ${icon('arrow',15)}</button></div></div></article>
+ <div class="mission-body"><div class="portrait">${contact==='Mina'?'<img src="/mina.webp" alt="Portrait de Mina, mécanicienne des Forges">':icon('chip',34)}<span>${contact.toUpperCase()}</span></div><div class="mission-text"><div class="chapter">MISSION ${ordinal(j)} <span>/</span> ${missions[j].zone.toUpperCase()}</div><h3>${jobNames[j]}</h3><p>${brief[j]}</p><button class="text-link" data-act="journal">Consulter le journal ${icon('arrow',15)}</button></div></div></article>
  <article class="card map-card"><div class="card-top"><span class="card-label">${icon('layers',17)} CARTE DU SECTEUR</span><button class="open-map" data-act="atlas" aria-label="Ouvrir la carte">${icon('diagonal',16)}</button></div><button class="map-preview" data-act="atlas" aria-label="Explorer la carte des Forges"><canvas></canvas><span class="north">N ↑</span></button><div class="map-caption"><span>${icon('pin',15)} Les Forges</span><small>ANGOULÊME / 01</small></div></article></div>${footer()}</main>`
 }
 function playLabel(){return loadError?'Recharger':!loaded?'Initialisation…':game?.started||save.active||save.done.length?'Reprendre la partie':'Jouer'}
 function updatePlay(){const start=document.querySelector<HTMLButtonElement>('#start');if(start){start.disabled=!loaded&&!loadError;start.querySelector('span')!.textContent=playLabel()}}
-function detail(j:Job){return ({
- chip:'Accès principal par l’avenue. Dans la cour latérale, le quai reste accessible à pied. Intrusion ouvre la grille ou suspend la caméra. Après le vol, Mina attend sous les voies. Restez cinq secondes hors détection pour livrer.',
- ledger:'L’annexe du registre se rejoint par la rue du coteau et la galerie nord. Le collectif ouvre sa galerie vers le Nœud. Sorel fournit un badge de service. Les deux contacts peuvent recevoir le registre.',
- core:'La galerie du collectif mène au pied du bâtiment de service. Le badge de Sorel ouvre la voie technique. Au terminal central, publier désactive les contrôles du plateau. Sceller protège les dossiers et maintient la surveillance.',
- parcel:'Passez au relais des ateliers, récupérez le pli aux archives puis revenez le remettre au contact.',
- relay:'Sorel vous attend à La Dalle. Rejoignez le relais sur le plateau, réactivez l’antenne et confirmez la liaison.'
- })[j]}
+function detail(j:Job){return missions[j].access+(common.includes(j)?' '+offerDetails(save,j):'')}
 function journal(){
- const entries:Job[]=['chip','ledger','core',...(save.done.includes('chip')?['parcel' as Job]:[]),...(save.done.includes('ledger')?['relay' as Job]:[])]
+ const entries:Job[]=all.filter(j=>mainJobs.includes(j)||save.done.includes(j)||available(save).includes(j)||j===save.active)
  const unlocked=available(save).includes(selected)||save.done.includes(selected)||save.active===selected
  const status=(j:Job)=>save.done.includes(j)?'Terminé':save.active===j?'En cours':available(save).includes(j)?'Disponible':'Verrouillé'
  return `<main class="shell subpage"><div class="page-head"><div class="hero-tag"><i class="slashes"></i>DOSSIER DU COURSIER</div><h1>Journal de mission</h1></div><div class="journal-layout"><div class="job-list">${entries.map(j=>`<button data-act="select-${j}" class="${j===selected?'chosen':''}"><span class="chapter">${ordinal(j)} / ${status(j)}</span><strong>${jobNames[j]}</strong></button>`).join('')}</div><article class="detail"><span class="chapter">DOSSIER ${ordinal(selected)} / ${status(selected)}</span><h2>${jobNames[selected]}</h2><p>${brief[selected]}</p>${unlocked?`<h3>Accès et objectifs</h3><p>${detail(selected)}</p>`:''}
  ${available(save).includes(selected)&&!save.active?btn('track',save.track===selected?'Objectif suivi':'Suivre cet objectif','primary','aim'):''}
  <h3>Conséquences enregistrées</h3><p>${consequences()}</p><p class="wallet">${icon('chip',16)} ${save.money} crédits</p>${save.done.length?btn('new-run','Nouvelle campagne','restart-link'):''}</article></div>${footer()}</main>`
 }
-function consequences(){return [save.done.includes('chip')?'La grille sous les voies est ouverte. Le relais des ateliers propose un contrat.':'',save.route==='collectif'?'Le collectif a ouvert la galerie du coteau.':save.route==='sorel'?'Le badge de Sorel ouvre l’accès de service.':'',save.ending==='public'?'La surveillance du plateau est désactivée.':save.ending==='seal'?'Les dossiers sont scellés. Les contrôles restent actifs.':''].filter(Boolean).join(' ')||'Aucune décision enregistrée.'}
+function consequences(){return [save.done.includes('chip')?'La grille sous les voies est ouverte. Mina propose de rétablir son éclairage.':'',save.route==='collectif'?'Le collectif a ouvert la galerie du coteau.':save.route==='sorel'?'Le badge de Sorel ouvre l’accès de service.':'',save.ending==='public'?'La surveillance du plateau est désactivée.':save.ending==='seal'?'Les révocations sont annulées. Les portiques relèvent de la cellule de Sorel.':'' ,save.done.includes('module')?'Le tunnel de service est éclairé.':'',save.done.includes('escort')?'La résidente est à la permanence, la cour est ouverte.':'',save.done.includes('paper')?'La carte annotée est exposée au garage.':'',save.done.includes('exit')?'Le portillon de nuit fonctionne.':'',save.night==='destroy'?'Lise a fait détruire les dossiers.':save.night==='entrust'?'Lise conserve les preuves en lieu sûr.':''].filter(Boolean).join(' ')||'Aucune décision enregistrée.'}
 function atlas(){return `<main class="shell subpage"><div class="page-head"><div class="hero-tag"><i class="slashes"></i>ANGOULÊME</div><h1>Carte de la ville</h1></div><article class="card"><div class="card-top"><span class="card-label">${icon('map')} RÉSEAU URBAIN</span><span class="chapter">N ↑</span></div><div class="atlas-map"><canvas></canvas></div><div class="atlas-legend">${districts.map((d,i)=>`<span><b>0${i+1}</b> ${d}</span>`).join('')}</div></article><p class="map-key"><i></i> Position du coursier <i></i> Objectif suivi</p>${footer()}</main>`}
 function render(){if(screen==='game')return;terminal.hidden=false;field.hidden=true
  terminal.innerHTML=header()+(backToGame?`<div class="return-bar">${btn('return','Retour en jeu','text-link','arrow')}</div>`:'')+(screen==='home'?home():screen==='journal'?journal():atlas());maps()}
@@ -68,7 +62,7 @@ function gameHud(){if(!game||screen!=='game')return;const g=game,h=document.quer
  const target=g.target();set('#mission-name',g.job?'CONTRAT / '+jobNames[g.job].toUpperCase():'EXPLORATION LIBRE');set('#goal',target.label)
  set('.hud-state',g.alert==='Discret'?(g.job==='chip'&&g.step===1&&g.quiet>=5?'●  Remise disponible':'●  Discret'):g.alert+' · '+(g.alert==='Observé'?g.observer+' '+Math.round(g.detection*100)+' %':g.source))
  h.querySelector('.hud-state')!.className='hud-state '+(g.alert==='Discret'?'':'danger')
- set('.radar span',g.region);drawMap(h.querySelector('canvas')!,'mini',g.q,target.q);set('.health b',String(Math.ceil(g.health)));(h.querySelector('.health i') as HTMLElement).style.width=g.health+'%'
+ set('.radar span',g.region+' · '+g.hour);drawMap(h.querySelector('canvas')!,'mini',g.q,target.q);set('.health b',String(Math.ceil(g.health)));(h.querySelector('.health i') as HTMLElement).style.width=g.health+'%'
  const slots=g.save.equip.map((n,i)=>`<span><kbd>${i+1}</kbd> ${n} ${g.cool[i]>0?Math.ceil(g.cool[i])+' s':''}</span>`).join('');const slot=h.querySelector('.slots')!;if(slot.innerHTML!==slots)slot.innerHTML=slots
  const hint=h.querySelector('.hint')!;const msg=(g.hint?`<kbd>E</kbd> ${g.hint}`:'')+(g.valid?`<small>${g.valid}</small>`:'');if(hint.innerHTML!==msg)hint.innerHTML=msg;hint.toggleAttribute('hidden',!msg)
  const arrow=h.querySelector<HTMLElement>('.hud-compass')!,v=g.view.screen(target.q);const far=v.x<40||v.x>innerWidth-40||v.y<95||v.y>innerHeight-105

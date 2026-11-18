@@ -1,5 +1,9 @@
 import * as T from 'three';
-import { blocks, bounds, buildings, clamp, elevation, gates, inRect, roads, rooms, walls, type Building, type Point, type Rect } from './level';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { furniture, type Furniture } from './furniture';
+import { ribbons } from './roads';
+import { places } from './places';
+import { blocks, bounds, buildings, clamp, crossingSurfaces, elevation, foundation, gates, inRect, roads, rooms, walls, type Building, type Point, type Rect } from './level';
 
 const unit = new T.BoxGeometry();
 const plane = new T.PlaneGeometry(1, 1);
@@ -120,6 +124,30 @@ function surface(area: Rect, mat: T.Material, offset: number, cuts = 2.5) {
   return new T.Mesh(g, mat);
 }
 
+function ribbonSurface(axis: (typeof ribbons)[number]['samples'], width: number, material: T.Material, offset: number) {
+  const vertices: number[] = [], uvs: number[] = [], indices: number[] = [];
+  const across = Math.max(3,Math.ceil(width/2.1));
+  const stride = across+1;
+  for(const [i,p] of axis.entries()){
+    for(let j=0;j<=across;j++){
+      const side = (j/across-.5)*width;
+      const x=p.x+Math.cos(p.yaw)*side,z=p.z-Math.sin(p.yaw)*side;
+      vertices.push(x,elevation(x,z)+offset,z);
+      uvs.push(x/7,-z/7);
+      if(i>0&&j>0){
+        const k=i*stride+j;
+        indices.push(k-stride-1,k,k-stride,k-stride-1,k-1,k);
+      }
+    }
+  }
+  const mesh=new T.BufferGeometry();
+  mesh.setAttribute('position',new T.Float32BufferAttribute(vertices,3));
+  mesh.setAttribute('uv',new T.Float32BufferAttribute(uvs,2));
+  mesh.setIndex(indices);
+  mesh.computeVertexNormals();
+  return new T.Mesh(mesh,material);
+}
+
 const textMaterials = new Map<string, T.MeshBasicMaterial>();
 function sign(parent: T.Object3D, word: string, accent: string, x: number, y: number, z: number, w: number, h = .88, roof = false) {
   const key = word + accent;
@@ -191,6 +219,31 @@ function batchBoxes(group: T.Group) {
   }
 }
 
+const vertexMat = new T.MeshStandardMaterial({vertexColors:true,roughness:.77,metalness:.14});
+const vertexGlow = new T.MeshBasicMaterial({vertexColors:true});
+function fuseParts(group:T.Group, keep:T.Object3D[]=[]){
+  const batches = new Map<T.Material,T.BufferGeometry[]>();
+  for(const object of [...group.children]){
+    if(!(object instanceof T.Mesh) || object.geometry!==unit || keep.includes(object)) continue;
+    const material = object.material;
+    if(!(material instanceof T.MeshStandardMaterial || material instanceof T.MeshBasicMaterial)) continue;
+    object.updateMatrix();
+    const geo=unit.clone().applyMatrix4(object.matrix);
+    const colors=new Float32Array(geo.attributes.position.count*3);
+    for(let i=0;i<colors.length;i+=3){colors[i]=material.color.r;colors[i+1]=material.color.g;colors[i+2]=material.color.b;}
+    geo.setAttribute('color',new T.BufferAttribute(colors,3));
+    const target=material instanceof T.MeshBasicMaterial?vertexGlow:vertexMat;
+    const list=batches.get(target)??[];
+    list.push(geo);
+    batches.set(target,list);
+    object.removeFromParent();
+  }
+  for(const [material,geometries] of batches){
+    group.add(new T.Mesh(mergeGeometries(geometries),material));
+    geometries.forEach(geo=>geo.dispose());
+  }
+}
+
 function fader(group: T.Group) {
   const originals = new Map<T.Material, T.Material>();
   group.traverse(object => {
@@ -219,9 +272,9 @@ function fader(group: T.Group) {
 
 function structure(group: T.Group, b: Building, roofs: Record<'steel' | 'felt', T.Material>) {
   const [x, z, w, d] = b.area;
-  const y = elevation(x, z), h = b.height;
+  const y = foundation(b.area), h = b.height;
   const trim = b.style === 'brick' ? '#72554e' : '#52616d';
-  const shells = { workshop: '#3a505c', brick: '#60484a', housing: '#586275', civic: '#38495d' };
+  const shells = { workshop:'#52616a', brick:'#9a8876', housing:'#aa9285', civic:'#788590' };
   const shell = shells[b.style];
   const roof = b.style === 'brick' ? '#3e3c4a' : '#293845';
   box(group, '#141d27', x + .35, y + .035, z + .58, w + .8, .045, d + .9);
@@ -273,42 +326,91 @@ function structure(group: T.Group, b: Building, roofs: Record<'steel' | 'felt', 
   }
 }
 
-function lamp(group: T.Group, x: number, z: number, color: string, length = 3.8) {
-  const y = elevation(x, z);
-  box(group, '#576475', x, y + length * .5, z, .11, length, .11);
-  box(group, '#495464', x + .38, y + length, z, .85, .1, .11);
-  box(group, color, x + .81, y + length - .07, z, .48, .095, .30, true);
-  box(group, '#27313f', x, y + .10, z, .32, .2, .33);
-  glow(group, color, x + .65, y + .045, z, 9, 9, .86);
-}
-
-function crate(group: T.Group, x: number, z: number, w = 1.45, d = 1.4, h = 1.04, tone = '#665446') {
-  const y = elevation(x, z);
-  box(group, '#141f28', x + .15, y + .04, z + .20, w + .23, .05, d + .28);
-  box(group, tone, x, y + h / 2, z, w, h, d);
-  for (const side of [-1, 1]) {
-    box(group, '#8f7760', x + side * w * .33, y + h + .015, z, .09, .05, d);
-    box(group, '#8f7760', x + side * w * .33, y + h / 2, z + d / 2, .09, h, .05);
+function buildFurniture(prop: Furniture) {
+  const group = new T.Group();
+  const {at:[x,z], size:[w,h,d], tint, kind} = prop;
+  group.name = prop.id;
+  group.position.set(x, elevation(x,z), z);
+  if (kind === 'lamp') {
+    box(group, '#576475', 0, h * .5, 0, .11, h, .11);
+    box(group, '#495464', .38, h, 0, .85, .10, .11);
+    box(group, tint, .81, h - .07, 0, .48, .095, .30, true);
+    box(group, '#27313f', 0, .10, 0, w, .20, d);
+    const pool = glow(group, tint, .65, .045, 0, 8.5, 7.5, .86);
+    pool.name = 'light';
+  } else if (kind === 'tree') {
+    box(group, '#696c61', 0, h*.5, 0, w, h, d);
+    box(group, '#333941', 0, h+.02, 0, w-.17, .04, d-.18);
+    box(group, '#635743', 0, h+.49, 0, .18, 1.16, .18);
+    for (const [xx, zz, shade, size] of [[-.25,-.13,'#264841',1.7],[.52,.19,'#496551',1.22],[.17,-.47,'#3e5b51',1.02]] as const) {
+      const crown = new T.Mesh(new T.IcosahedronGeometry(size*.57,1), standard(shade));
+      crown.position.set(xx,h+1.43+size*.16,zz);
+      crown.scale.y=.81;
+      group.add(crown);
+    }
+  } else if (kind === 'bench') {
+    for (const xx of [-w*.34,w*.34]) box(group, '#283843', xx, .21, 0, .12, .42, d*.9);
+    box(group,tint,0,.45,0,w,.12,d);
+    box(group,tint,0,h-.11,-d*.36,w,.19,.10);
+  } else if (kind === 'stall') {
+    box(group, '#594d45',0,.46,0,w,.92,d);
+    box(group, '#a18970',0,.96,0,w,.13,d);
+    for (const xx of [-w*.46,w*.46]) box(group,'#735b47',xx,h*.53,0,.1,h*.90,.11);
+    box(group,tint,0,h-.07,0,w,.14,d);
+    for(let xx=-w/2+.27;xx<w/2;xx+=.55) box(group,'#e8d4ae',xx,h-.055,0,.23,.15,d);
+  } else {
+    box(group,kind==='cabinet'?'#37505a':tint,0,h*.5,0,w,h,d);
+    if (kind==='crate') {
+      for (const xx of [-w*.31,w*.31]) {
+        box(group,'#8f7760',xx,h+.018,0,.075,.036,d);
+        box(group,'#8f7760',xx,h*.5,d*.5,.075,h,.036);
+      }
+    } else {
+      box(group,tint,0,h-.08,0,w+.025,.12,d+.028);
+      for (const yy of [.41,.63]) box(group,'#acd0c9',0,h*yy,d*.51,w*.60,.045,.025,kind==='bollard');
+    }
   }
+  fuseParts(group);
+  return group;
 }
 
 export class City {
   readonly group = new T.Group();
   private readonly roofs: { area: Rect; fade: ReturnType<typeof fader>; slice: T.Group }[] = [];
   readonly gateMeshes = new Map<string, T.Group>();
+  private readonly propModels = new Map<string, T.Group>();
+  private readonly serviceLights = new T.Group();
+  private readonly garageMap = new T.Group();
+  private readonly civicSigns = new T.Group();
+  private readonly relaySigns = new T.Group();
+  private readonly marketOpen = new T.Group();
+  private readonly marketClosed = new T.Group();
   private railDeck = new T.Group();
   private fadeRail: ReturnType<typeof fader>;
 
   constructor(scene: T.Scene) {
     randomState = 61287;
     scene.add(this.group);
+    this.group.add(this.serviceLights,this.garageMap,this.civicSigns,this.relaySigns,this.marketOpen,this.marketClosed);
     const decor = new T.Group();
     this.group.add(decor);
-    const base = slabTexture('#354450', false);
-    decor.add(surface([83, -4, 317, 144], base, -.035, 2));
+    const base = slabTexture('#34414a', false);
+    for (let x=bounds.west-12;x<bounds.east+12;x+=31) {
+      for (let z=bounds.north-10;z<bounds.south+10;z+=31) decor.add(surface([x+15.5,z+15.5,31,31],base,-.035,1.85));
+    }
     const roadmat = asphalt();
     for (const area of roads) decor.add(surface(area, roadmat, .012, 1.5));
     const walkmat = slabTexture('#53616e', true);
+    for(const road of ribbons) {
+      if(!road.pedestrian) decor.add(ribbonSurface(road.samples,road.width+2.8,walkmat,.047));
+      decor.add(ribbonSurface(road.samples,road.width,road.pedestrian?walkmat:roadmat,.083));
+      if (road.pedestrian) continue;
+      for(const [i,p] of road.samples.entries()){
+        if(i%4!==0 || i===0 || i===road.samples.length-1) continue;
+        const mark=box(decor,'#bcb098',p.x,elevation(p.x,p.z)+.105,p.z,.13,.015,1.59);
+        mark.rotation.y=p.yaw;
+      }
+    }
     for (const area of blocks) {
       decor.add(surface(area, walkmat, .038));
       const [x, z, w, d] = area;
@@ -326,13 +428,13 @@ export class City {
       }
     }
     for (let x = -52; x < 223; x += 4.4) {
-      if ([-53, 0, 43, 105, 144, 175].some(road => Math.abs(x - road) < 7)) continue;
+      if ((x>40 && x<102) || (x>126 && x<177) || [-53,0,105].some(road => Math.abs(x-road)<6)) continue;
       const mark = box(decor, '#b0a98e', x, elevation(x, 0) + .035, 0, 1.95, .015, .12);
       mark.rotation.z = Math.atan2(elevation(x + .10, 0) - elevation(x - .10, 0), .20);
     }
-    for (const x of [-53, 43, 105, 144, 175]) {
+    for (const x of [-53, 43, 105, 144, 175,225]) {
       for (let z = -33; z < 42; z += 4.7) {
-        if (Math.abs(z) < 6) continue;
+        if (Math.abs(z) < 6 || (x===43 && z < -25)) continue;
         const mark = box(decor, '#a6a28a', x, elevation(x, z) + .039, z, .12, .016, 2.08);
         mark.rotation.x = -Math.atan2(elevation(x, z + .10) - elevation(x, z - .10), .20);
       }
@@ -379,7 +481,7 @@ export class City {
         box(mesh, '#26343e', x + offset * w, y + r.height + .47, z + d * .14, 2.3, .55, 1.25);
         box(mesh, '#657680', x + offset * w, y + r.height + .76, z + d * .14, 1.9, .05, .98);
       }
-      const names: Record<string, string> = { garage: 'MINA / GARAGE', depot: 'DÉPÔT F-07', archive: 'ARCHIVES', core: 'NŒUD / REGISTRE' };
+      const names: Record<string, string> = { garage:'MINA / GARAGE',depot:'DÉPÔT F-07',archive:'ARCHIVES CIVIS',core:'NŒUD / REGISTRE',records:'ARCHIVES D’ATELIER',housing:'RÉSIDENCE HAUTE',shop:'ARRIÈRE-BOUTIQUE',paper:'PAPETERIE' };
       sign(mesh, names[r.id], r.accent, x, y + r.height + .27, z + d * .30, Math.min(12, w - 1), 1.72, true);
       box(mesh, r.accent, x, y + r.height - .08, z + d / 2 + .225, w - .18, .09, .15, true);
       glow(decor, r.accent, x, y + .09, z + d / 2, 16, 8, .85);
@@ -402,26 +504,10 @@ export class City {
       box(group, gate.accent, x, y + 2.24, z, alongX ? w * .71 : .19, .057, alongX ? .19 : d * .71, true);
       glow(decor, gate.accent, x, y + .06, z, 5.2, 4.4, .5);
     }
-    for (const [x, z, hue] of [
-      [-34, 20, '#88edce'], [-16, 21, '#69ffe5'], [-10, 7, '#ffa85f'], [-33, 7, '#ffc37a'],
-      [-47, -8, '#ffd284'], [-44, 36, '#f6bb70'], [8, 9, '#fc71a6'], [22, 13, '#ff7eb1'], [36, 7, '#ffd58c'],
-      [9, -11, '#ffc578'], [31, -8, '#ffbe6e'], [2, -24, '#7be9dd'], [20, -35, '#ffc370'],
-      [38.7, -25, '#ffcf81'], [46.8, -36, '#ffcd8c'], [39, -49, '#74bde7'], [19, -52, '#76eac6'],
-      [-4, -54, '#cbdbad'], [-36, -53, '#ffcf8f'], [51, -7, '#c1b6fe'], [67, 5, '#9fd8ee'],
-      [83, -6, '#a3ebc5'], [96, 7, '#ffcd81'], [112, 8, '#ffb67f'], [125, -8, '#9fefd7'],
-      [138, 8, '#9fefd7'], [153, -6, '#abc7ff'], [169, -6, '#abc7ff'], [187, 7, '#d4d4ff'],
-      [205, -10, '#85c7fb'], [219, 8, '#9db5fc'],
-    ] as const) lamp(decor, x, z, hue);
-    for (const [x, z] of [[-34, 16], [-33, 32], [-17, 14], [-31, -10], [-35, -29], [-8, -29], [-8, -27.4],
-      [2.1, -28], [3.5, -28], [15.3, -28.5], [13.6, -28.5], [28, -19], [27.8, -30], [31, -16],
-      [35, 15], [19, 29], [65, -11], [113, -26], [109.6, -25], [126, -24], [201, -31], [205, -34]]) {
-      crate(decor, x, z, scatter(1.1, 1.55), scatter(1.1, 1.55), scatter(.45, 1.0), random() > .5 ? '#665446' : '#52656b');
-    }
-    for (const [x, z] of [[-28.8, 17.8], [-19.2, 17.8], [-20.9, 21.4]]) {
-      box(decor, '#37505a', x, .46, z, 1.1, .92, .61);
-      box(decor, '#a67354', x, .97, z, 1.15, .12, .66);
-      box(decor, '#9dc1c0', x, .69, z + .314, .72, .045, .031);
-      box(decor, '#9dc1c0', x, .49, z + .314, .72, .045, .031);
+    for (const prop of furniture) {
+      const model = buildFurniture(prop);
+      this.group.add(model);
+      this.propModels.set(prop.id, model);
     }
     for (const [x,z,breadth] of [[-24,21.95,12.6],[22,-13.4,5.2],[14,-34.3,4.2],[103,-15.0,4.1],[192.5,-14.37,4.6]]) {
       for (let d = -breadth / 2; d < breadth / 2; d += .51) {
@@ -436,23 +522,33 @@ export class City {
       glow(decor, color, x, y + .085, z, 5.7, 10.5, .52);
       glow(decor, color, x + .46, y + .09, z - .90, 1.55, 5.7, .42);
     }
-    for (const x of [-47, -34, -14, 7, 25, 35, 80, 93, 120, 133, 161, 180, 205]) {
-      const z = x % 3 < 1 ? 39.5 : 8.2;
-      const y = elevation(x, z);
-      box(decor, '#626360', x, y + .23, z, 1.65, .46, 1.4);
-      box(decor, '#313941', x, y + .47, z, 1.43, .06, 1.18);
-      box(decor, '#655946', x, y + 1.02, z, .18, 1.1, .18);
-      box(decor, '#314d4d', x, y + 1.89, z, 1.55, 1.24, 1.82);
-      box(decor, '#51645a', x + .48, y + 2.11, z - .22, 1.06, 1.29, 1.23);
-    }
     this.railway(decor);
-    sign(decor, 'SOUS LES VOIES ↑', '#73efd3', 13, .065, -35.35, 5.9, 1.28, true);
+    const water=new T.MeshStandardMaterial({color:'#284d5d',roughness:.36,metalness:.41});
+    decor.add(surface([99,-117.1,111,12.2],water,.16,1.5));
+    for(let x=48;x<154;x+=4.9){
+      for(let i=0;i<3;i++) box(decor,i%2?'#4f727b':'#3a6370',x,.185,-112.6-i*3,3.2+i*.35,.007,.067);
+    }
+    sign(this.garageMap,'CARTE DU COTEAU','#f3cd95',-24.45,elevation(-24.45,16)+1.8,16.00,3.6,.74);
+    sign(this.civicSigns,'CELLULE D’APPEL','#bacfec',195,elevation(195,12)+1.9,12,5.15,.90);
+    sign(this.relaySigns,'DROITS / RELAIS','#a5e8b8',198.6,elevation(198.6,10.9)+1.9,10.9,5.6,.90);
+    sign(decor,'PERMANENCE DE NADIA','#f1c697',116,elevation(116,12.6)+1.9,12.6,5.1,.84);
+    sign(this.marketOpen,'HALLE OUVERTE','#fdd190',106,elevation(106,-81.9)+1.82,-81.9,6.3,.92);
+    glow(this.marketOpen,'#ffbb77',106,elevation(106,-80.1)+.14,-80.1,10,6,.74);
+    sign(this.marketClosed,'HALLE FERMÉE','#a7b4af',106,elevation(106,-81.88)+1.82,-81.88,6.3,.92);
+    sign(decor,'SOUS LES VOIES ↑','#95dcb0',13,elevation(13,-35.15)+.14,-35.15,5.9,1.28,true);
     sign(decor, 'PONT ROUTIER ↑', '#ffd378', 43, elevation(43, -24) + .069, -24, 8.6, 1.39, true);
-    sign(decor, 'QUAI NORD ↑', '#94ebdd', 4.0, .066, -30.6, 5.65, 1.46, true);
-    sign(decor, 'QUAI NORD ↓', '#94ebdd', 21.5, .075, -35.75, 5.1, 1.22, true);
-    sign(decor, 'DÉPÔT / ENTRÉE', '#ffba61', 22.4, .07, -10.2, 6.5, 1.40, true);
+    const [px,pz]=places.escapeParking;
+    for(const edge of [-1,1]) box(decor,'#c2ab79',px+edge*1.47,elevation(px,pz)+.047,pz,.08,.012,5.35);
+    box(decor,'#c2ab79',px,elevation(px,pz)+.047,pz-2.63,2.98,.012,.08);
+    sign(decor,'P','#f3dc9d',px,elevation(px,pz)+.057,pz,1.13,1.13,true);
+    sign(decor, 'QUAI NORD ↑', '#94ebdd', 4.0, elevation(4,-30.6)+.066, -30.6, 5.65, 1.46, true);
+    sign(decor, 'QUAI NORD ↓', '#94ebdd', 21.5, elevation(21.5,-35.75)+.075, -35.75, 5.1, 1.22, true);
+    sign(decor, 'DÉPÔT / ENTRÉE', '#ffba61', 22.4, elevation(22.4,-10.2)+.07, -10.2, 6.5, 1.40, true);
     sign(decor, 'LA DALLE →', '#8eded0', 65, elevation(65, 8) + 1.75, 8, 5.5, .93);
     sign(decor, 'LE NŒUD →', '#b0d4ff', 153, elevation(153, 7) + 1.8, 7, 5.5, .90);
+    sign(decor,'LES QUAIS →','#86d4c4',56,elevation(56,-69)+.13,-69,7,1.42,true);
+    sign(decor,'BELVÉDÈRES ↓','#eec1a2',105,elevation(105,49)+.095,49,7.5,1.31,true);
+    sign(decor,'RAMPE DU NŒUD','#bdd9e9',223,elevation(223,31)+.106,31,8.1,1.33,true);
     for (const x of [9.03, 16.94]) {
       for (let z = -35; z >= -46; z -= .50) {
         box(decor, '#657678', x, elevation(x, z) + .18, z, .11, .55, .54);
@@ -469,33 +565,69 @@ export class City {
   private railway(decor: T.Group) {
     const z = -42;
     this.group.add(this.railDeck);
-    for (const [x, width] of [[-24, 65], [13, 9], [38, 41]]) {
+    const {railway,bridge,tunnel}=crossingSurfaces;
+    const [tunnelX,tunnelZ,tunnelWidth,tunnelLength]=tunnel.area;
+    box(decor,'#7f7261',tunnelX,tunnel.base+tunnel.height*.5,tunnelZ,tunnelWidth,tunnel.height,tunnelLength);
+    for (const [x, width] of [[-24, 65], [railway.area[0],railway.area[2]], [38, 41]]) {
       const target = x === 13 ? this.railDeck : decor;
-      box(target, '#384452', x, 2.45, z, width, .44, 7.4);
-      for (const dz of [-2.3, -1.05, 1.1, 2.35]) box(target, '#8f9aa5', x, 2.81, z + dz, width, .075, .079);
+      box(target, '#384452', x, railway.base+railway.height*.5, z, width, railway.height, railway.area[3]);
+      for (const dz of [-2.3,-1.05,1.1,2.35]) box(target,'#a9afb3',x,3.084,z+dz,width,.075,.079);
       for (let xx = x - width / 2 + .22; xx < x + width / 2; xx += .70) {
-        box(target, '#514c4b', xx, 2.728, z - 1.68, .22, .09, 2.02);
-        box(target, '#514c4b', xx, 2.728, z + 1.74, .22, .09, 2.02);
+        box(target,'#615953',xx,3.021,z-1.68,.22,.046,2.02);
+        box(target,'#615953',xx,3.021,z+1.74,.22,.046,2.02);
       }
     }
-    box(decor, '#354a58', 43, 2.92, z, 10.2, .23, 8.68);
-    for (const lane of [-3.85, 3.85]) box(decor, '#98977c', 43 + lane, 3.046, z, .08, .015, 8.56);
-    for (const dash of [-2.8, 0, 2.8]) box(decor, '#b8ad8a', 43, 3.045, z + dash, .12, .016, 1.38);
-    for (const x of [38.15, 47.85]) {
-      for (let z = -50; z <= -34; z += .57) {
-        const y = elevation(x, z);
-        box(decor, '#7a8490', x, y + .42, z, .19, .82, .62);
-        box(decor, '#ddaa64', x, y + .85, z, .20, .095, .60);
-      }
+    box(decor,'#726e65',bridge.area[0],bridge.base+bridge.height*.5,z,bridge.area[2],bridge.height,bridge.area[3]);
+    for(let z=-46;z<-40;z+=1.1){
+      box(decor,'#343f4b',36.98,5.82,z,.38,.54,1.12);
+      box(decor,'#343f4b',49.04,5.82,z,.38,.54,1.12);
     }
     for (const x of [-44, -27, -10]) {
       box(decor, '#704e52', x, 3.72, -40.3, 11.6, 2.04, 2.65);
       box(decor, '#9c7167', x, 4.77, -40.3, 11.7, .12, 2.79);
       for (let i = -5.5; i < 5.6; i += .60) box(decor, '#925e5e', x + i, 3.72, -38.94, .105, 1.98, .09);
     }
-    for (let z = -46; z >= -50; z -= 2) {
-      glow(decor, '#60efd2', 13, elevation(13, z) + .05, z, 6.7, 5, .78);
-      box(decor, '#81ffe4', 17.06, elevation(17, z) + 1.1, z, .11, .13, .48, true);
+    for (let z=-42;z>=-51;z-=2.25){
+      glow(decor,'#995e48',13,elevation(13,z)+.057,z,5,4,.55);
+      glow(this.serviceLights,'#ffc886',13,elevation(13,z)+.087,z,8,6,.95);
+      box(this.serviceLights,'#ffd49b',16.84,elevation(16.84,z)+1.25,z,.13,.16,.54,true);
+    }
+  }
+
+  setStoryLights(service:boolean, annotated:boolean, ending:'publish'|'protect'|null) {
+    this.serviceLights.visible=service;
+    this.garageMap.visible=annotated;
+    this.relaySigns.visible=ending==='publish';
+    this.civicSigns.visible=ending==='protect';
+  }
+
+  setPeriod(period:'morning'|'day'|'evening') {
+    this.marketOpen.visible=period!=='evening';
+    this.marketClosed.visible=period==='evening';
+  }
+
+  damageProp(id: string, dx: number, dz: number, strength: number) {
+    const model = this.propModels.get(id);
+    const prop = furniture.find(p => p.id === id);
+    if (!model || !prop?.fragile || strength < 4.5) return false;
+    const toppled = strength >= (prop.kind === 'lamp' ? 11 : 8);
+    const tilt = toppled ? 1.46 : .25;
+    model.rotation.x = tilt * dz;
+    model.rotation.z = -tilt * dx;
+    model.position.x = prop.at[0] + dx * (toppled ? .52 : .08);
+    model.position.z = prop.at[1] + dz * (toppled ? .52 : .08);
+    const light = model.getObjectByName('light');
+    if (light) light.visible = !toppled;
+    return toppled;
+  }
+
+  resetProps() {
+    for (const prop of furniture) {
+      const model = this.propModels.get(prop.id)!;
+      model.position.set(prop.at[0],elevation(...prop.at),prop.at[1]);
+      model.rotation.set(0,0,0);
+      const light = model.getObjectByName('light');
+      if (light) light.visible = true;
     }
   }
 
@@ -505,7 +637,7 @@ export class City {
       roof.fade(exposed, dt);
       roof.slice.visible = !exposed;
     }
-    this.fadeRail(x > 8.6 && x < 17.45 && z < -35.7 && z > -50.5, dt);
+    this.fadeRail(x > 8.6 && x < 17.45 && z < -37 && z > -47.8 && elevation(x,z)<2.2,dt);
   }
 }
 
@@ -544,6 +676,7 @@ export class PersonModel {
       box(this.body, '#242d3d', .455, 1.09, .62, .12, .115, .38);
       box(this.body, '#d3ba84', .455, 1.10, .81, .09, .044, .05);
     }
+    fuseParts(this.body,this.legs);
     this.body.scale.setScalar(scale);
   }
   pose(yaw: number, stride: number, time: number, fallen: number, hit: number) {
@@ -558,8 +691,74 @@ export class PersonModel {
   }
 }
 
+export type CarSide = 'front' | 'rear' | 'left' | 'right';
+
+export class CarModel extends T.Group {
+  private readonly marks = new Map<CarSide, T.Group>();
+  private readonly brakes = new T.Group();
+  private readonly bends: { mesh: T.Mesh; side: CarSide; origin: T.Vector3 }[] = [];
+  private readonly damage: Record<CarSide, number> = { front: 0, rear: 0, left: 0, right: 0 };
+
+  constructor() {
+    super();
+    for(const x of [-.63,.63]) box(this.brakes,'#ff9e80',x,.756,-2.009,.39,.07,.033,true);
+    this.brakes.visible = false;
+    this.add(this.brakes);
+    for (const side of ['front','rear','left','right'] as const) {
+      const mark = new T.Group();
+      const lengthwise = side === 'left' || side === 'right';
+      const facing = side === 'front' || side === 'right' ? 1 : -1;
+      for (const [n, tone] of ['#5a3940','#dba88f','#f6cfac'].entries()) {
+        if (lengthwise) box(mark,tone,facing*.962,.79+n*.045,.21-n*.19,.025,.046,.64+n*.15);
+        else box(mark,tone,-.15+n*.12,.755+n*.047,facing*1.97,.50+n*.12,.04,.025);
+      }
+      mark.visible = false;
+      this.marks.set(side,mark);
+      this.add(mark);
+    }
+  }
+
+  bend(mesh: T.Mesh, side: CarSide) {
+    this.bends.push({mesh, side, origin:mesh.position.clone()});
+  }
+
+  setBrake(on: boolean) { this.brakes.visible = on && this.damage.rear < 2.1; }
+
+  fuseBody() { fuseParts(this,this.bends.map(part=>part.mesh)); }
+
+  impact(side: CarSide, strength: number) {
+    const level = clamp(this.damage[side] + (strength > 13 ? 2.2 : strength > 7 ? 1.1 : .43),0,3);
+    this.damage[side] = level;
+    const mark = this.marks.get(side)!;
+    mark.visible = true;
+    mark.scale.setScalar(1 + level * .065);
+    for (const part of this.bends) {
+      if (part.side !== side) continue;
+      const {mesh, origin} = part;
+      mesh.position.copy(origin);
+      if (side === 'front' || side === 'rear') mesh.position.z *= 1 - level * .047;
+      else mesh.position.x *= 1 - level * .067;
+      mesh.position.y -= level * .042;
+      mesh.rotation.y = level * (origin.x < 0 ? -.08 : .09);
+      if (level >= 2.1 && mesh.name === 'lamp') mesh.visible = false;
+    }
+  }
+
+  resetDamage() {
+    for (const [side, mark] of this.marks) {
+      this.damage[side] = 0;
+      mark.visible = false;
+    }
+    for (const {mesh, origin} of this.bends) {
+      mesh.position.copy(origin);
+      mesh.rotation.y = 0;
+      mesh.visible = true;
+    }
+  }
+}
+
 export function makeCar(color = '#48636d') {
-  const car = new T.Group();
+  const car = new CarModel();
   shadow(car, 4.8, 7.5);
   box(car, '#1a2430', 0, .38, 0, 1.92, .47, 3.9);
   box(car, color, 0, .71, 0, 1.86, .49, 3.85);
@@ -572,18 +771,26 @@ export function makeCar(color = '#48636d') {
   rear.rotation.x = -.45;
   box(car, color, 0, 1.397, -.25, 1.29, .083, .93);
   box(car, '#b8a777', 0, .966, 1.26, .13, .028, 1.25);
+  box(car, '#28383e', 0, .997, -1.30, .84, .09, .52);
+  for (const x of [-.29,.29]) box(car,'#b3a077',x,1.06,-1.3,.06,.045,.56);
+  car.bend(box(car,'#3f565c',0,.54,1.934,1.91,.25,.13),'front');
+  car.bend(box(car,'#43555e',0,.51,-1.934,1.91,.23,.13),'rear');
   for (const side of [-1, 1]) {
     const x = side * .92;
-    box(car, '#222c38', x, .62, 0, .11, .092, 3.84);
+    car.bend(box(car,'#222c38',x,.62,0,.11,.092,3.84),side===-1?'left':'right');
     for (const z of [-1.22, 1.22]) {
       box(car, '#131a24', side * .943, .35, z, .29, .61, .67);
       box(car, '#5e6a75', side * 1.102, .36, z, .027, .34, .34);
     }
-    box(car, '#f1f4d3', side * .62, .76, 1.942, .46, .12, .066, true);
-    box(car, '#ff5775', side * .61, .74, -1.963, .48, .10, .073, true);
+    const head = box(car, '#f1f4d3', side * .62, .76, 1.942, .46, .12, .066, true);
+    const tail = box(car, '#ff5775', side * .61, .74, -1.963, .48, .10, .073, true);
+    if (side > 0) { head.name = 'lamp'; tail.name = 'lamp'; }
+    car.bend(head,'front');
+    car.bend(tail,'rear');
   }
   glow(car, '#fff2c4', 0, .025, 3.08, 5.5, 4.6, .7);
   glow(car, '#ff476a', 0, .028, -2.1, 3.4, 2.8, .7);
+  car.fuseBody();
   return car;
 }
 

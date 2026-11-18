@@ -74,17 +74,17 @@ export class Mission {
     // conséquences appliquées ensemble à la remise
     if (this.secondary === 'verrouille') this.secondary = 'disponible';
     this.consequences.push('Mina a ouvert la grille de service entre le passage inférieur et la rue des Ateliers.');
-    this.consequences.push('Ysec, au bar Le Signal, propose un contrat de récupération.');
+    this.consequences.push('U01 « Une porte de plus » est disponible auprès de Mina : rétablir l’éclairage de la galerie.');
   }
 
   onSecondaryTaken(ctx: Ctx) {
     this.secondary = 'acceptee';
-    ctx.toast('Contrat accepté : Colis perdu', 'info');
+    ctx.toast('Quête acceptée : Une porte de plus', 'info');
   }
 
   onSecondaryDone(ctx: Ctx) {
     this.secondary = 'terminee';
-    this.consequences.push('Ysec fournit des munitions au Signal.');
+    this.consequences.push('L’éclairage de la galerie de service fonctionne à nouveau (U01).');
   }
 
   /** Objectif courant (texte + cible du marqueur). */
@@ -107,11 +107,12 @@ export class Mission {
         };
       case 'terminee':
         if (this.secondary === 'disponible') {
-          return { text: 'Contrat « Colis perdu » au Signal', sub: 'Ysec t’attend au bar, face à l’avenue', target: { x: L.ysec.x, z: L.ysec.z } };
+          return { text: 'U01 — Une porte de plus', sub: 'Mina propose un module d’éclairage pour la galerie de service', target: { x: L.minaHome.x, z: L.minaHome.z } };
         }
         if (this.secondary === 'acceptee') {
-          return { text: this.secondaryCarried(ctx) ? 'Livrer le colis à Ysec' : 'Récupérer le colis sur le quai',
-            sub: 'Dépôt NOVAK — quai ouest', target: this.secondaryCarried(ctx) ? { x: L.ysec.x, z: L.ysec.z } : { x: L.crate.x, z: L.crate.z } };
+          return this.secondaryCarried(ctx)
+            ? { text: 'Brancher le module au panneau de la grille', sub: 'Galerie de service, sous les voies — raccourci ou avenue', target: { x: L.panel.x, z: L.panel.z } }
+            : { text: 'Prendre le module au garage', sub: 'Sur l’établi de Mina', target: { x: L.module.x, z: L.module.z } };
         }
         return { text: 'Explorer Les Forges', sub: 'Le quartier continue de vivre — la piste des effacés mène vers La Dalle', target: null };
     }
@@ -148,24 +149,26 @@ export class Mission {
     });
     const contracts: JournalEntry[] = [];
     const secLabel: Record<SecondaryState, string> = {
-      verrouille: 'VERROUILLÉ',
+      verrouille: 'VERROUILLÉE',
       disponible: 'DISPONIBLE',
       acceptee: 'EN COURS',
-      terminee: 'TERMINÉ',
+      terminee: 'TERMINÉE',
     };
     contracts.push({
-      title: 'Colis perdu — Ysec',
+      title: 'U01 — Une porte de plus · Mina',
       body: this.secondary === 'verrouille'
-        ? 'Un contact de Mina trafique au bar Le Signal. Disponible après la remise de la puce.'
+        ? 'Après la remise de la puce, Mina veut rouvrir l’éclairage de la galerie de service.'
         : this.secondary === 'disponible'
-          ? 'Ysec veut récupérer un colis confisqué par le dépôt NOVAK. Il traîne sur le quai ouest.'
+          ? 'Prendre le module d’éclairage sur l’établi du garage et le brancher au panneau de la grille de service, sous les voies.'
           : this.secondary === 'acceptee'
-            ? 'Le colis est sur le quai ouest du dépôt. Le ramener à Ysec, au Signal.'
-            : 'Colis livré. Ysec arme maintenant les effacés de La Dalle.',
+            ? this.carried
+              ? 'Brancher le module au panneau, dans la galerie de service. Y aller par le raccourci ou par l’avenue.'
+              : 'Le module attend sur l’établi du garage.'
+            : 'La galerie de service est éclairée. Le raccourci entre le passage inférieur et la rue des Ateliers reste ouvert, jour et nuit.',
       status: secLabel[this.secondary],
       kind: this.secondary === 'terminee' ? 'done' : this.secondary === 'verrouille' ? 'locked' : 'active',
     });
-    sec.push({ title: 'CONTRATS', entries: contracts });
+    sec.push({ title: 'QUÊTES', entries: contracts });
     sec.push({
       title: 'CONTACTS',
       entries: [
@@ -225,8 +228,44 @@ export const DIALOGUES = {
       'Reviens quand tu veux, coursier. La suite se joue sur le coteau.',
     ],
   },
+  u01Start: {
+    speaker: 'Mina',
+    lines: [
+      'La grille de service est ouverte, mais sa galerie est aveugle. Le module d’éclairage est sur l’établi.',
+      'Descends le brancher au panneau, derrière la grille. Par le raccourci, ou par l’avenue si tu préfères tourner.',
+      'Une porte de plus qui reste allumée, c’est dix voisins qui rentrent sans y penser.',
+    ],
+  },
+  u01Done: {
+    speaker: 'Mina',
+    lines: [
+      'Les lampes tiennent. Le panneau a enregistré le module — plus besoin d’y retourner.',
+      'Coursier, la puce parlait de La Dalle. Quand tu veux monter, le raccourci est à toi.',
+    ],
+  },
   minaIdle: {
     speaker: 'Mina',
     lines: ['Le van est prêt. Le dépôt est au nord-est, le long des voies. Reviens avec la puce, pas en civière.'],
+  },
+  nadiaIdle: {
+    speaker: 'Nadia Keita',
+    lines: [
+      'La permanence tient encore, mais chaque semaine un immeuble perd ses accès au registre Civis.',
+      'Quand Mina aura fini de lire ta puce, monte par la route du coteau. On aura besoin d’un coursier qui connaît les portes.',
+    ],
+  },
+  liseIdle: {
+    speaker: 'Lise Marec',
+    lines: [
+      'Je tiens la permanence de nuit avec Nadia. Il y a des dossiers, dans ce quartier, qui servent à faire plier des gens.',
+      'Pas avant que le journal du portique parle — c’est la première porte qui compte.',
+    ],
+  },
+  sorelIdle: {
+    speaker: 'Sorel',
+    lines: [
+      'Agent du registre. Je signe des validations que je ne peux pas prouver, voilà mon travail.',
+      'Le calendrier de migration est quelque part dans les archives des Forges. Trouve-le avant la date d’effet, et on reparlera.',
+    ],
   },
 } as const;

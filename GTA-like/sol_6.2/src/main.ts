@@ -1,8 +1,10 @@
 import R from '@dimforge/rapier3d-compat';
 import './style.css';
 import { Game, type Menu, type Pin } from './game';
-import { blocks, buildings, clamp, distance, districtAt, districtNames, gates, roads, walls, type Point, type Rect } from './level';
-import { effects, implants, objectives, type Ending, type Implant, type Route } from './progression';
+import { blocks, bounds, buildings, clamp, distance, districtAt, districtNames, gates, roads, walls, type Point, type Rect } from './level';
+import { effects, getSide, implants, objectives, type Implant } from './progression';
+import { ribbons } from './roads';
+import { populationHour, populationPeriod } from './population';
 
 const get = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id)! as T;
 const viewport = get<HTMLCanvasElement>('viewport');
@@ -17,7 +19,7 @@ const slots = [get('slot-1'), get('slot-2')];
 const shade = document.querySelector<HTMLElement>('.vignette')!;
 const moveKeys = new Set(['w','a','s','d','z','q','arrowup','arrowdown','arrowleft','arrowright','shift',' ']);
 let game: Game | undefined;
-let current: Menu | 'pause' | 'journal' | 'help' | 'restart' | null = null;
+let current: Menu | 'pause' | 'journal' | 'overview' | 'help' | 'restart' | null = null;
 let previousFocus: HTMLElement | null = null;
 let lastMap = 0;
 let lastHud = 0;
@@ -57,7 +59,7 @@ function button(label: string, run: () => void, style = 'primary', disabled = fa
   actions.append(b);
   return b;
 }
-function choice(data: typeof effects[Route | Ending], callback: () => void, disabled = false) {
+function choice(data: {label:string;now:string;later:string}, callback: () => void, disabled = false) {
   const b = button('', callback, 'choice', disabled);
   const name = document.createElement('span'), consequence = document.createElement('small');
   name.textContent = data.label;
@@ -74,7 +76,7 @@ function commands() {
     '<dt>Parler, récupérer, entrer, sortir</dt><dd><kbd>E</kbd></dd>' +
     '<dt>Utiliser les implants</dt><dd><kbd>1</kbd> <kbd>2</kbd></dd>' +
     '<dt>Freiner en voiture</dt><dd><kbd>Espace</kbd></dd>' +
-    '<dt>Journal et pause</dt><dd><kbd>Tab</kbd> <kbd>Échap</kbd></dd></dl>');
+    '<dt>Journal, carte et pause</dt><dd><kbd>Tab</kbd> <kbd>M</kbd> <kbd>Échap</kbd></dd></dl>');
   button('Fermer', leave);
 }
 function pause() {
@@ -100,122 +102,169 @@ function pause() {
 }
 
 function history(g: Game) {
-  const { chapter, route, ending, side } = g.save;
-  if (chapter === 1) return '';
-  let html = '<div class="history"><h3>Conséquences dans la ville</h3><p>Mina a déchiffré la puce. Passage de service ouvert et contrat d’Ilyes débloqué.</p>';
-  if (route) html += '<p>' + effects[route].now + ' ' + effects[route].later + '</p>';
-  if (side === 'complete') html += '<p>Ilyes a détruit les dossiers de chantage.</p>';
-  if (ending) html += '<p>' + effects[ending].now + ' ' + effects[ending].later + '</p>';
-  return html + '</div>';
+  const {chapter,route,ending,completed,records}=g.save;
+  if(chapter===1) return '';
+  const entries=['Mina a ouvert la grille vers les ateliers. Le bordereau de la puce porte la référence d’audit.'];
+  if(chapter>=3) entries.push('Le calendrier papier identifie la résidence haute et la date de purge.');
+  if(chapter>=4) entries.push('Le refus du portique est lié au bordereau de Civis.');
+  if(route) entries.push(effects[route].now+' '+effects[route].later);
+  for(const id of completed) entries.push(getSide(g.save,id).result);
+  if(records) entries.push(records==='destroy'?'Lise a fait détruire les dossiers privés.':'Lise conserve les preuves dans sa permanence.');
+  if(ending) entries.push(effects[ending].now+' '+effects[ending].later);
+  return '<div class="history"><h3>Conséquences</h3>'+entries.map(line=>'<p>'+line+'</p>').join('')+'</div>';
 }
 
 function journal() {
-  if (!game?.running) return;
-  const g = game, { side, tracking, chapter, ending } = g.save;
-  current = 'journal';
-  const objective = g.objective(), brief = objectives[chapter];
-  const overview = '<h3>Objectif suivi</h3><p>' + objective.name + ' · ' + objective.text + '</p>';
-  const details = '<h3>' + brief.heading + '</h3><p><em>' + brief.briefing + '</em></p><p>' + brief.access + '</p>';
-  const sideText = { locked: '', available: 'Ilyes attend au dispensaire des Forges.', accepted: 'Récupérez les dossiers de chantage puis retrouvez Ilyes.', complete: 'Dossier remis. Récompense versée.' }[side];
-  const secondary = sideText ? '<h3>Sous scellés</h3><p>' + sideText + '</p>' : '';
-  show('Journal', ending ? 'Ville libre' : brief.heading, overview + details + secondary + history(g));
-  button('Retour au jeu', leave);
-  if (!g.active && side === 'available') {
-    button(tracking === 'main' ? 'Suivre Sous scellés' : 'Suivre le chapitre', () => {
-      g.track(tracking === 'main' ? 'side' : 'main');
-      journal();
-    }, 'secondary');
-  }
+  if(!game?.running) return;
+  const g=game, objective=g.objective(), brief=objectives[g.save.chapter];
+  current='journal';
+  const side=g.save.side || (g.save.tracking==='main'?null:g.save.tracking);
+  const task=side?getSide(g.save,side):brief;
+  const remaining=g.offerIds.map(id=>getSide(g.save,id).name).join(' · ');
+  const details=remaining?'<h3>Offres disponibles</h3><p>'+remaining+'</p>':'';
+  show('Journal',g.save.ending?'Ville libre':brief.heading,
+    '<h3>Objectif suivi</h3><p>'+objective.name+' · '+objective.text+'</p><p><em>'+task.briefing+'</em></p><p>'+task.access+'</p>'+details+history(g));
+  button('Retour au jeu',leave);
+  if(!g.busy && g.offerIds.length) button('Suivre une autre piste',()=>menu('offers'),'secondary');
 }
 
-function menu(which: Menu) {
-  const g = game!;
-  const { chapter, side, ending, route } = g.save;
-  const briefing = objectives[chapter];
-  current = which;
-  switch (which) {
+function overview() {
+  if(!game?.running) return;
+  const g=game;
+  current='overview';
+  show('Plan de la ville','Les cinq quartiers','<canvas id="city-overview" width="720" height="510" aria-label="Carte des cinq quartiers"></canvas><p class="caption">Vert clair pour votre position, or pour l’objectif. Les liaisons piétonnes sont en pointillés.</p>');
+  button('Retour au jeu',leave);
+  const map=get<HTMLCanvasElement>('city-overview'), c=map.getContext('2d')!;
+  const f=Math.min((map.width-60)/(bounds.east-bounds.west),(map.height-74)/(bounds.south-bounds.north));
+  const x=(value:number)=>map.width/2+(value-(bounds.west+bounds.east)/2)*f;
+  const z=(value:number)=>map.height/2+(value-(bounds.north+bounds.south)/2)*f;
+  c.fillStyle='#15222b';c.fillRect(0,0,map.width,map.height);
+  for(const [cx,cz,w,d] of blocks){c.fillStyle='#263c46';c.fillRect(x(cx-w/2),z(cz-d/2),w*f,d*f);}
+  for(const [cx,cz,w,d] of roads){c.fillStyle='#51626a';c.fillRect(x(cx-w/2),z(cz-d/2),w*f,d*f);}
+  c.lineCap='round';
+  for(const r of ribbons) {
+    c.strokeStyle=r.pedestrian?'#84c6af':'#88918b';
+    c.lineWidth=Math.max(2,r.width*f);
+    c.setLineDash(r.pedestrian?[4,6]:[]);
+    c.beginPath();for(const [i,s] of r.samples.entries()){if(i)c.lineTo(x(s.x),z(s.z));else c.moveTo(x(s.x),z(s.z));}c.stroke();
+  }
+  c.setLineDash([]);
+  const areas:Point[]=[[-29,-26],[82,27],[184,-48],[87,-93],[155,63]];
+  c.font='600 17px Segoe UI';c.textAlign='left';c.textBaseline='middle';
+  for(const [i,at] of areas.entries()){
+    c.lineWidth=3;c.strokeStyle='#13202b';c.fillStyle='#e3ede7';
+    c.strokeText(districtNames[i],x(at[0]),z(at[1]));c.fillText(districtNames[i],x(at[0]),z(at[1]));
+  }
+  const marker=(at:Point,color:string)=>{
+    c.beginPath();c.arc(x(at[0]),z(at[1]),5.7,0,Math.PI*2);c.fillStyle=color;c.fill();
+    c.lineWidth=1.8;c.strokeStyle='#0d2123';c.stroke();
+  };
+  const destination=g.objective().pins[0];
+  if(destination) marker(destination.at,'#f1db89');
+  marker(g.at,'#9cf1cb');
+}
+
+function menu(which:Menu) {
+  const g=game!;
+  const {chapter,ending,route,records}=g.save, brief=objectives[chapter];
+  current=which;
+  switch(which){
     case 'garage': {
-      const available = g.availableImplants;
-      const loadout = g.save.loadout;
-      const equipment = available.map(i => '<label><input type="checkbox" data-implant="' + i + '"' + (loadout.includes(i) ? ' checked' : '') + '><span>' +
-        implants[i].name + '</span><small>' + implants[i].help + '</small></label>').join('');
-      const canAccept = chapter <= 2 && !g.active && side !== 'accepted' && !ending;
-      const line = chapter === 1
-        ? '« Les badges de leurs employés ouvrent encore toutes les portes. Les nôtres sautent sans préavis. Le dépôt peut nous dire qui donne l’ordre. »'
-        : '« La puce a livré une liste. J’y ai reconnu ceux que j’héberge au-dessus de l’atelier. Retrouve le registre à La Dalle. »';
-      show('Garage des Forges / Mina', canAccept ? briefing.heading : 'Garage de Mina', '<p>' + (canAccept ? line + '</p><p><em>' + briefing.briefing + '</em></p><p>' + briefing.access : 'Mina vous soigne et règle vos implants.') +
-        '</p><h3>Équipez deux implants</h3><div class="loadout">' + equipment + '</div>');
-      const inputs = Array.from(body.querySelectorAll<HTMLInputElement>('[data-implant]'));
-      const selection = () => inputs.filter(input => input.checked).map(input => input.dataset.implant as Implant);
-      const apply = () => {
-        const selected = selection();
-        if (selected.length === 2 && (selected[0] !== loadout[0] || selected[1] !== loadout[1])) {
-          g.equip([selected[0], selected[1]]);
-        }
+      const loadout=g.save.loadout;
+      const equipment=g.availableImplants.map(i=>'<label><input type="checkbox" data-implant="'+i+'"'+(loadout.includes(i)?' checked':'')+'><span>'+
+        implants[i].name+'</span><small>'+implants[i].help+'</small></label>').join('');
+      const canAccept=chapter===1&&!g.busy;
+      show('Garage des Forges / Mina',canAccept?brief.heading:'Garage de Mina',
+        '<p>'+(canAccept?brief.briefing+'</p><p>'+brief.access:'Mina vous soigne et règle vos implants.')+
+        '</p><h3>Équipez deux implants</h3><div class="loadout">'+equipment+'</div>');
+      const inputs=Array.from(body.querySelectorAll<HTMLInputElement>('[data-implant]'));
+      const selection=()=>inputs.filter(input=>input.checked).map(input=>input.dataset.implant as Implant);
+      const apply=()=>{
+        const selected=selection();
+        if(selected.length===2&&(selected[0]!==loadout[0]||selected[1]!==loadout[1])) g.equip([selected[0],selected[1]]);
       };
-      const accept = button(canAccept ? 'Accepter le contrat' : 'Équiper et sortir', () => {
-        apply();
-        if (canAccept) g.accept();
-        leave();
+      const accept=button(canAccept?'Accepter la mission':'Équiper et sortir',()=>{
+        apply();if(canAccept) g.accept();leave();
       });
-      button(canAccept ? 'Équiper et sortir' : 'Retour au jeu', () => { apply(); leave(); }, 'secondary');
-      for (const input of inputs) input.addEventListener('change', () => {
-        const count = selection().length;
-        accept.disabled = count !== 2;
-        for (const other of inputs) other.disabled = !other.checked && count === 2;
-      });
-      for (const input of inputs) input.disabled = !input.checked && selection().length === 2;
+      button('Retour au jeu',()=>{apply();leave();},'secondary');
+      if(g.received&&!g.busy) button('Offres des relais',()=>menu('offers'),'secondary');
+      const update=()=>{
+        const count=selection().length;accept.disabled=count!==2;
+        for(const input of inputs) input.disabled=!input.checked&&count===2;
+      };
+      for(const input of inputs) input.addEventListener('change',update);
+      update();
       break;
     }
     case 'brief':
-      show('Sorel', briefing.heading, '<p><em>' + (chapter === 2
-        ? '« J’ai vérifié le numéro de la puce. Le registre des archives contient les ordres et les dossiers personnels. Récupérez-le avant la prochaine révocation. On peut encore protéger les habitants. »'
-        : briefing.briefing) + '</em></p><p>' + briefing.access + '</p>' + history(g));
-      button('Accepter le contrat', () => { g.accept(); leave(); });
-      button('Plus tard', leave, 'secondary');
+      show(g.missionContact.contact,brief.heading,'<p><em>'+brief.briefing+'</em></p><p>'+brief.access+'</p>'+
+        history(g));
+      button('Accepter la mission',()=>{g.accept();leave();});
+      button('Plus tard',leave,'secondary');
+      if(g.offerIds.length) button('Quêtes locales',()=>menu('offers'),'secondary');
       break;
-    case 'side':
-      show('Dispensaire / Ilyes', 'Sous scellés', '<p>« Ils ont photographié les pièces d’identité de celles et ceux qui bossent au Mercure. Maintenant ils les menacent de dénonciation. Le dossier doit encore être dans leur boîte morte, près des ateliers. Je peux le détruire. »</p><p>Récompense de 280 ₡.</p>');
-      button('Accepter le contrat', () => { g.acceptSide(); leave(); }, 'primary', g.active);
-      button('Plus tard', leave, 'secondary');
+    case 'offers':
+      show('Panneau des relais','Offres et quêtes disponibles',
+        '<p>Suivez une piste dans le journal ou acceptez une offre commune.</p>');
+      actions.classList.add('grid');
+      for(const id of g.offerIds) {
+        const q=getSide(g.save,id);
+        choice({label:q.name,now:q.area+' · '+q.reward+' ₡.',later:id[0]==='U'?q.contact:'Offre du panneau.'},()=>{
+          if(id[0]==='C'||distance(q.at,g.at)<3.5) g.selectSide(id);
+          else {g.track(id);leave();}
+        });
+      }
+      button('Suivre la campagne',()=>{g.track('main');leave();},'secondary');
       break;
+    case 'offer': {
+      const q=g.dossier;
+      show(q.contact,q.name,'<p>'+q.briefing+'</p><p>'+q.access+'</p><p>Récompense de '+q.reward+' ₡.</p>');
+      button('Accepter le contrat',()=>{g.acceptSide(g.selectedSide);leave();});
+      button('Plus tard',leave,'secondary');
+      break;
+    }
     case 'route': {
-      const atSorel = g.at[0] > 119;
-      show(atSorel ? 'Sorel' : 'Collectif de La Dalle', 'Les effacés',
-        atSorel ? '<p>« Je peux séparer les identités des ordres de révocation. Il faudra me faire confiance. Le badge vous donnera accès au relais. »</p><p>Le collectif attend près de la galerie.</p>'
-          : '<p>« Le quartier a besoin des ordres pour pouvoir se défendre. S’ils sortent sans précaution, ils exposeront aussi les habitants. Nous pouvons ouvrir la galerie. »</p><p>Sorel attend sur la place du coteau.</p>');
-      choice(atSorel ? effects.sorel : effects.collective, () => { g.finishRoute(atSorel ? 'sorel' : 'collective'); leave(); });
-      button('Réfléchir', leave, 'secondary');
+      const recipient=g.routeContact;
+      show(recipient==='sorel'?'Sorel':'Nadia Keita',brief.heading,recipient==='sorel'
+        ? '<p>« J’ai signé une validation sous pression. Je peux maintenant établir ce qui s’est passé et protéger les dossiers privés. Si vous me confiez la copie, mon badge vous ouvrira le vestibule. »</p><p>Nadia attend à la permanence.</p>'
+        : '<p>« J’ai déjà distribué des badges provisoires. Je veux que leurs bénéficiaires puissent encore rentrer demain. Confiez-moi la copie et nous ouvrirons la galerie. »</p><p>Sorel attend sur la place du coteau.</p>');
+      choice(effects[recipient],()=>{g.finishRoute(recipient);leave();});
+      button('Réfléchir',leave,'secondary');
       break;
     }
     case 'ending':
-      show('Relais du Nœud', 'Le registre', '<p>Le relais attend un ordre. Les personnes déjà effacées pourront demander le rétablissement de leurs droits.</p>');
+      show('Poste de commande / Civis','Droit d’accès','<p>Le registre est prêt. Les dossiers privés restent à l’écart dans les deux décisions.</p>');
       actions.classList.add('grid');
-      choice(effects.publish, () => g.finishEnding('publish'));
-      choice(effects.protect, () => g.finishEnding('protect'));
+      choice(effects.publish,()=>g.finishEnding('publish'));
+      choice(effects.protect,()=>g.finishEnding('protect'));
       break;
     case 'epilogue':
-      show('DeadLine / Épilogue', ending === 'publish' ? 'La liste circule' : 'Un sursis', '<p>' + (ending ? effects[ending].now + ' ' + effects[ending].later : '') +
-        '</p><p>' + (route === 'collective' ? 'Mina garde le garage ouvert pour ceux qui regagnent La Dalle.' : 'Sorel vous remet une attestation. Votre badge répond de nouveau.') + '</p><p>Les rues restent accessibles.</p>');
-      button('Continuer en ville libre', leave);
+      show('DeadLine / Épilogue',ending==='publish'?'Le registre public':'Révocations annulées','<p>'+
+        (ending?effects[ending].now+' '+effects[ending].later:'')+'</p><p>'+
+        (route==='collective'?'Nadia maintient sa galerie et Mina garde le garage ouvert.':'Sorel vous remet une attestation. Votre badge répond de nouveau.')+'</p>');
+      button('Continuer en ville libre',leave);
+      break;
+    case 'side-choice':
+      show('Lise Marec','Les noms de la nuit','<p>« Ce sont leurs dossiers. Je veux leur rendre le contrôle. Tu peux les détruire ici ou me remettre la copie pour qu’elles et ils décident de la suite. »</p>');
+      button('Détruire les dossiers privés',()=>{g.finishBlackmail('destroy');leave();});
+      button('Remettre les preuves à Lise',()=>{g.finishBlackmail('give');leave();},'secondary');
       break;
     case 'failed':
-      show('Intégrité à zéro', 'Séquence interrompue', '<p>' + (g.active ? 'Le point de reprise ramène au garage, avec la puce, les vigiles et la voiture restaurés.' : 'Vous pouvez retrouver le garage et reprendre l’exploration.') + '</p>', true);
-      button(g.active || side === 'accepted' ? 'Reprendre au point de sauvegarde' : 'Revenir au garage', () => {
-        current = null;
-        g.retry(false);
-        leave();
-      });
-      if (g.active || side === 'accepted') button('Abandonner le contrat', () => {
-        current = null;
-        g.retry(true);
-        leave();
-      }, 'secondary');
+      show('Intégrité à zéro','Séquence interrompue','<p>Le point de reprise restaure le garage, la voiture, les vigiles et le premier objectif du contrat.</p>',true);
+      button(g.busy?'Reprendre au point de sauvegarde':'Revenir au garage',()=>{current=null;g.retry(false);leave();});
+      if(g.busy) button('Abandonner le contrat',()=>{current=null;g.retry(true);leave();},'secondary');
       break;
-    case 'residents':
-      show('La Dalle', 'Inès', '<p>« Mon frère dort dans l’escalier depuis qu’on lui a coupé son badge. Je ne peux plus le faire entrer chez moi. S’il passe le contrôle, ils me coupent le mien. »</p>');
-      button('Reprendre la route', leave);
+    case 'dialogue': {
+      const lines:Record<string,string>={
+        'Inès':'« Mon frère dort dans l’escalier depuis qu’on lui a coupé son badge. Nadia essaie de lui trouver une porte qui fonctionne. »',
+        'Lise Marec':records==='destroy'?'« Les dossiers sont détruits. La permanence ouvre ce soir à la même heure. »':'« J’ai gardé les preuves sous clé. Les personnes concernées décideront de la suite à la permanence. »',
+        'Élias Varenne':ending==='publish'?'« Les contrôles sont fermés. Vos relais devront assurer la continuité de service. »':'« La purge a été annulée. Désormais, chaque révocation passera par la cellule de contrôle. »',
+        'Relais de quartier':'« On rétablit d’abord les accès des gens qui ne peuvent pas rentrer. Vous avez un badge ou un justificatif papier ? »',
+      };
+      show('Ville libre',g.dialoguePerson,'<p>'+lines[g.dialoguePerson]+'</p>');
+      button('Reprendre la route',leave);
       break;
+    }
   }
 }
 
@@ -236,6 +285,14 @@ function minimap(g: Game, markers: Pin[]) {
   ctx.fillRect(0, 0, w, h);
   for (const r of roads) area(r, '#293d48');
   for (const r of blocks) area(r, '#20313a');
+  ctx.lineCap='round';
+  for(const r of ribbons){
+    ctx.strokeStyle=r.pedestrian?'#496e64':'#495963';
+    ctx.lineWidth=r.width*scale;
+    ctx.beginPath();
+    r.samples.forEach((point,i)=>i?ctx.lineTo(sx(point.x),sy(point.z)):ctx.moveTo(sx(point.x),sy(point.z)));
+    ctx.stroke();
+  }
   for (const b of buildings) area(b.area, '#37505b');
   for (const b of walls) if (b.height >= 1.6) area(b.area, '#445c65');
   for (const gate of gates) if (g.city.gateMeshes.get(gate.id)?.visible) area(gate.area, '#8d7771');
@@ -302,8 +359,13 @@ function paint(g: Game) {
 
   if (now - lastHud < 55) return;
   lastHud = now;
-  const district = districtNames[districtAt(g.at[0])];
-  text('district', district);
+  const district = districtNames[districtAt(...g.at)];
+  text('district',district);
+  const hour=populationHour(g.time), hours=String(Math.floor(hour)).padStart(2,'0'), minutes=String(Math.floor((hour%1)*60)).padStart(2,'0');
+  const periods={morning:'Matin',day:'Journée',evening:'Soirée'};
+  text('city-time',hours+':'+minutes+' · '+periods[populationPeriod(g.time)]);
+  get('purge-clock').hidden=g.save.ending!==null || g.save.chapter<6 && !(g.save.chapter===5 && g.stage>0);
+  text('purge-clock','Purge · '+g.purgeClock);
   text('map-name', district);
   text('mission-name', objective.name);
   text('objective-text', objective.text);
@@ -355,6 +417,7 @@ window.addEventListener('keydown', event => {
     return;
   }
   if (current || !game?.running || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (key==='m' && !event.repeat) { event.preventDefault(); overview();return; }
   if (event.code === 'Tab') { event.preventDefault(); if (!event.repeat) journal(); return; }
   if (moveKeys.has(key)) {
     event.preventDefault();
@@ -381,6 +444,7 @@ viewport.addEventListener('contextmenu', e => e.preventDefault());
 get('title-help').addEventListener('click', commands);
 get('pause').addEventListener('click', pause);
 get('journal').addEventListener('click', journal);
+get('open-map').addEventListener('click',overview);
 close.addEventListener('click', leave);
 function begin() {
   if (!game) return;

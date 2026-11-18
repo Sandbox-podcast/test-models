@@ -1,23 +1,53 @@
-export type Job = 'chip'|'ledger'|'core'|'parcel'|'relay'
-export const jobNames:Record<Job,string>={chip:'Puce fantôme',ledger:'Les effacés',core:'Le dernier signal',parcel:'Courrier de nuit',relay:'Fréquence libre'}
-export type Implant = 'Intrusion'|'Leurre'|'Surcharge'
-export type Save = {version:1,done:Job[],active:Job|null,money:number,route:'collectif'|'sorel'|null,ending:'public'|'seal'|null,equip:Implant[],sound:boolean,track:Job|null,contact:'mina'|'sorel'}
-const key='deadline.courier.v1'
-const jobs=Object.keys(jobNames) as Job[]
-export const fresh=():Save=>({version:1,done:[],active:null,money:0,route:null,ending:null,equip:['Intrusion','Leurre'],sound:true,track:null,contact:'mina'})
-export function readSave():Save {
-  try {const raw=JSON.parse(localStorage.getItem(key)||'null'); if(raw?.version!==1)return fresh()
-    return {...fresh(),...raw,done:Array.isArray(raw.done)?[...new Set<Job>(raw.done.filter((x:Job)=>jobs.includes(x)))]:[],active:jobs.includes(raw.active)?raw.active:null}
-  }catch{return fresh()}
+import {sites,district,districts,siteNames,type Site} from './level'
+export type Implant='Intrusion'|'Leurre'|'Surcharge'
+type Stage=readonly [Site,string]
+type Mission={id:string,title:string,zone:string,contact:string,start:Site,reward:number,requires?:string,brief:string,access:string,stages:Stage[]}
+export const missions={
+ chip:{id:'M01',title:'Puce fantôme',zone:'Les Forges',contact:'Mina',start:'garage',reward:450,brief:'Le bordereau signé d’un convoi Civis est au dépôt. Une liste de noms voyage avec lui.',access:'Entrez par le portail nord, le quai sud ou la grille compatible. Après le vol, descendez sous les voies ou retrouvez votre voiture au parking nord. Mina attend côté rue basse.',stages:[['chip','Prendre la puce du dépôt'],['drop','Remettre la puce à Mina']]},
+ calendar:{id:'M02',title:'Date d’effet',zone:'Les Forges',contact:'Mina',start:'garage',requires:'chip',reward:350,brief:'Mina reconnaît la référence. Sorel peut retrouver le calendrier papier de la purge.',access:'Rencontrez Sorel aux archives. Suivez l’archiviste jusqu’à son départ ou ouvrez son accès latéral avec Intrusion.',stages:[['sorel','Rencontrer Sorel aux archives'],['archivist','Repérer l’archiviste de Civis'],['archives','Récupérer le calendrier papier'],['sorel','Faire authentifier la date par Sorel']]},
+ door:{id:'M03',title:'La première porte',zone:'La Dalle',contact:'Nadia Keita',start:'mina',requires:'calendar',reward:400,brief:'Un immeuble a déjà perdu ses accès. Nadia rassemble les familles à sa permanence.',access:'Le portique se rejoint par l’escalier extérieur du coteau ou par le passage d’entretien. Leurre peut éloigner le vigile.',stages:[['portique','Lire le journal du portique'],['resident','Vérifier le badge d’une résidente'],['mina','Comparer les relevés chez Nadia']]},
+ ledger:{id:'M04',title:'Le registre des effacés',zone:'La Dalle',contact:'Nadia Keita',start:'mina',requires:'door',reward:650,brief:'Le journal et le bordereau désignent un relais Civis. La signature de Sorel figure sur les deux pièces.',access:'Profitez de la relève au dépôt de maintenance ou rejoignez la galerie technique. Remettez le registre à Nadia pour ouvrir sa galerie ou à Sorel pour obtenir son badge.',stages:[['portique','Croiser le journal et le bordereau'],['ledger','Copier le registre d’audit'],['mina','Confier la copie à Nadia ou à Sorel']]},
+ ascent:{id:'M05',title:'Dernière montée',zone:'Le Nœud',contact:'Nadia Keita',start:'mina',requires:'ledger',reward:600,brief:'Varenne a avancé la migration. Il reste un poste de commande isolé sur le plateau.',access:'La galerie de Nadia et l’annexe de Sorel desservent deux arrivées distinctes. En cas de contrôle, passez à pied par la cour de service.',stages:[['gallery','Rejoindre l’accès privilégié ou la cour de secours'],['vestibule','Identifier le circuit de commande'],['power','Rétablir l’alimentation du poste']]},
+ core:{id:'M06',title:'Droit d’accès',zone:'Le Nœud',contact:'Sorel',start:'power',requires:'ascent',reward:1000,brief:'Les preuves sont réunies. Le poste de Varenne donne un dernier accès au registre avant la purge.',access:'Rejoignez la salle par le couloir surveillé ou la coursive lors de la relève. Le terminal propose les deux décisions, quelle que soit votre filière.',stages:[['vestibule','Franchir le vestibule du centre'],['core','Décider du sort du registre']]},
+ module:{id:'U01',title:'Une porte de plus',zone:'Les Forges',contact:'Mina',start:'garage',requires:'chip',reward:200,brief:'La grille verte est ouverte. Son éclairage a lâché et les coursiers se perdent sous les voies.',access:'Prenez le module à l’établi et rejoignez le panneau par la grille ouverte ou la rue basse.',stages:[['module','Prendre le module d’éclairage'],['panel','Brancher le panneau sous les voies']]},
+ escort:{id:'U02',title:'L’étage des absents',zone:'La Dalle',contact:'Nadia Keita',start:'mina',requires:'door',reward:280,brief:'Une résidente veut déposer ses relevés avant que Civis efface son dernier passage.',access:'Récupérez les relevés, rejoignez la résidente et accompagnez-la à pied par les galeries ou les escaliers. Elle attend si vous vous éloignez.',stages:[['portique','Récupérer les relevés d’accès'],['resident','Rejoindre la résidente'],['mina','Accompagner la résidente chez Nadia']]},
+ parcel:{id:'U03',title:'Les noms de la nuit',zone:'La Dalle',contact:'Lise Marec',start:'lise',requires:'door',reward:320,brief:'Des dossiers privés servent à faire chanter les adultes de la permanence. Lise veut mettre fin aux menaces.',access:'Obtenez l’accord de la gardienne de l’arrière-boutique ou entrez par la cour de service. Lise vous laisse détruire les dossiers ou lui confier les preuves.',stages:[['shopkeeper','Parler à la gardienne ou passer par la cour'],['nightFile','Récupérer le dossier de chantage'],['lise','Remettre les preuves ou les détruire']]},
+ paper:{id:'U04',title:'Papier carbone',zone:'Les Quais',contact:'Mina',start:'garage',requires:'calendar',reward:250,brief:'Un lot de documents subsiste dans la papeterie des Quais. Son propriétaire attend devant la halle.',access:'Le porche et le quai haut mènent au lot. La carte annotée du propriétaire révèle une liaison vers le coteau.',stages:[['papeterie','Retrouver les documents dans la papeterie'],['proprio','Rendre les documents au propriétaire']]},
+ exit:{id:'U05',title:'Le dernier portillon',zone:'Le Nœud',contact:'Sorel',start:'service',requires:'ascent',reward:300,brief:'Une équipe de nuit attend la remise en service de sa sortie piétonne.',access:'Atteignez le boîtier par la rampe ou l’escalier de maintenance. La sortie restera ouverte après votre intervention.',stages:[['stairExit','Vérifier le câblage de la sortie'],['exit','Rétablir le portillon de nuit']]},
+ delivery:{id:'C01',title:'Course entre relais',zone:'Réseau des relais',contact:'Réseau des coursiers',start:'contact',requires:'chip',reward:120,brief:'Un pli doit passer d’un relais à l’autre.',access:'Prenez le colis et livrez-le au contact indiqué. À pied ou en voiture.',stages:[['module','Prendre le colis'],['drop','Livrer le colis']]},
+ gear:{id:'C02',title:'Récupération de matériel',zone:'Réseau des relais',contact:'Réseau des coursiers',start:'contact',requires:'chip',reward:150,brief:'Un outil de diagnostic est resté sur un site technique.',access:'Récupérez le matériel sur le site indiqué puis rapportez-le au donneur.',stages:[['chip','Récupérer le matériel'],['contact','Rapporter le matériel']]},
+ relay:{id:'C03',title:'Relais hors ligne',zone:'Réseau des relais',contact:'Réseau des coursiers',start:'contact',requires:'chip',reward:140,brief:'Un relais local a cessé de répondre.',access:'Rétablissez le service puis sortez de la zone pour confirmer la liaison.',stages:[['panel','Réarmer la borne'],['garage','Quitter le site et confirmer la liaison']]},
+ guide:{id:'C04',title:'Passage accompagné',zone:'Réseau des relais',contact:'Réseau des coursiers',start:'contact',requires:'chip',reward:165,brief:'Un habitant a besoin de quelqu’un qui connaît les passages du quartier.',access:'Rejoignez-le et accompagnez-le à pied. S’il tombe, reprenez l’escorte au départ.',stages:[['contact','Rejoindre l’habitant'],['garage','Accompagner l’habitant au refuge']]}
+} satisfies Record<string,Mission>
+export type Job=keyof typeof missions
+export const all=Object.keys(missions) as Job[],mainJobs=all.filter(j=>missions[j].id.startsWith('M')),common=all.filter(j=>missions[j].id.startsWith('C'))
+export const jobNames=Object.fromEntries(all.map(j=>[j,missions[j].title])) as Record<Job,string>
+export const brief=Object.fromEntries(all.map(j=>[j,missions[j].brief])) as Record<Job,string>
+export type Save={version:2,done:Job[],active:Job|null,money:number,route:'collectif'|'sorel'|null,ending:'public'|'seal'|null,night:'destroy'|'entrust'|null,equip:Implant[],sound:boolean,track:Job|null,contact:'mina'|'sorel',offers:number,activeOffer:string|null,dayTime:number}
+export const fresh=():Save=>({version:2,done:[],active:null,money:0,route:null,ending:null,night:null,equip:['Intrusion','Leurre'],sound:true,track:null,contact:'mina',offers:0,activeOffer:null,dayTime:0})
+const key='deadline.courier.v2'
+export function readSave():Save{
+ try{const raw=JSON.parse(localStorage.getItem(key)||localStorage.getItem('deadline.courier.v1')||'null');if(!raw||![1,2].includes(raw.version))return fresh()
+ const s:Save={...fresh(),...raw,version:2,done:all.filter(j=>!common.includes(j)&&raw.done?.includes(j)),active:all.includes(raw.active)?raw.active:null}
+ if(raw.version===1){if(s.done.includes('ledger'))for(const j of ['calendar','door'] as Job[])if(!s.done.includes(j))s.done.push(j)
+ if(s.done.includes('core')&&!s.done.includes('ascent'))s.done.push('ascent')}
+ if(s.active&&common.includes(s.active)&&!s.activeOffer)s.activeOffer=missions[s.active].id+'-'+s.offers
+ return s}catch{return fresh()}
 }
 export function writeSave(s:Save){try{localStorage.setItem(key,JSON.stringify(s));return true}catch{return false}}
-export function chapter(s:Save):Job {return !s.done.includes('chip')?'chip':!s.done.includes('ledger')?'ledger':'core'}
-export function available(s:Save):Job[]{const options:Job[]=[chapter(s)];if(s.done.includes('chip'))options.push('parcel');if(s.done.includes('ledger'))options.push('relay');return options.filter(x=>!s.done.includes(x))}
-export function finish(s:Save,j:Job){if(s.done.includes(j))return;s.done.push(j);s.money+=({chip:450,ledger:650,core:1000,parcel:200,relay:300})[j];s.active=null;s.track=null;writeSave(s)}
-export const brief:Record<Job,string>={
- chip:'Une puce contenant des identités à révoquer transite par le dépôt. Mina veut la récupérer avant le prochain convoi.',
- ledger:'Le registre relie chaque identité à une adresse. Récupérez-le à La Dalle et choisissez qui pourra le consulter.',
- core:'Le serveur du Nœud applique les révocations à minuit. Rejoignez son terminal pour décider du sort du registre.',
- parcel:'Un relais conserve les dossiers de personnes victimes de chantage. Rapportez le pli scellé aux ateliers.',
- relay:'Les habitants ont besoin d’une fréquence privée. Réactivez le relais technique du plateau.'
+export const chapter=(s:Save)=>mainJobs.find(j=>!s.done.includes(j))||'core'
+export function available(s:Save):Job[]{return all.filter(j=>{const m:Mission=missions[j];return !s.done.includes(j)&&(!m.requires||s.done.includes(m.requires as Job))&&(!common.includes(j)||common[s.offers%4]===j)})}
+export function finish(s:Save,j:Job){if(s.active!==j||s.done.includes(j))return false;if(common.includes(j)){if(s.activeOffer!==missions[j].id+'-'+s.offers)return false;s.offers++;s.activeOffer=null}else s.done.push(j);s.money+=missions[j].reward;s.active=null;s.track=null;writeSave(s);return true}
+export function steps(s:Save,j:Job):Stage[]{const base:Stage[]=[...missions[j].stages]
+ if(j==='ascent'&&s.route==='sorel')base[0]=['service','Présenter le badge de Sorel ou passer par la cour']
+ if(common.includes(j)){const turn=Math.floor(s.offers/4);const sets:Record<string,Site[][]>={delivery:[['module','drop'],['resident','mina']],gear:[['chip','contact'],['papeterie','proprio'],['power','service']],relay:[['panel','garage'],['portique','mina'],['relay','service']],guide:[['contact','garage'],['resident','mina'],['market','proprio']]};const variants=sets[j],keys=variants[turn%variants.length];return base.map(([,label],i)=>[keys[i],label])}
+ return base
+}
+export function startSite(s:Save,j:Job):Site{return j==='ascent'&&s.route==='sorel'?'sorel':missions[j].start}
+export function destination(s:Save,j:Job,i:number){const [site,label]=steps(s,j)[i];return {q:sites[site],label}}
+export function offerDetails(s:Save,j:Job){
+ const stages=steps(s,j),first=stages[0][0],last=stages.at(-1)![0]
+ const labels:Partial<Record<Site,string>>={module:'Établi des Forges',contact:'Relais des coursiers',resident:'Palier des logements B',portique:'Portique B',panel:'Panneau sous les voies',relay:'Annexe de maintenance',proprio:'Devant la halle',power:'Poste d’alimentation',service:'Entrée de service',market:'Marché des Quais'}
+ const label=(site:Site)=>siteNames[site]||labels[site]||'Relais'
+ return [districts[district(sites[first].x,sites[first].z)],missions[j].contact,label(first)+' → '+label(last),missions[j].reward+' crédits','Reprise au garage'].join(' · ')
 }

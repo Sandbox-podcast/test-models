@@ -1,6 +1,6 @@
 # DEADLINE — Signal mort
 
-Jeu solo d’action et d’infiltration cyberpunk pour navigateur desktop. Three.js, TypeScript, Rapier 3D et Vite. Tous les modèles, textures d’interface et sons sont produits localement ; aucune ressource distante n’est requise pendant une partie.
+Jeu solo d’action et d’infiltration pour navigateur desktop, inspiré de la géographie d’Angoulême. Three.js, TypeScript, Rapier 3D et Vite. Les modèles, les sons et les cartes sont générés localement ; aucun service externe n’est nécessaire pendant une partie.
 
 ## Lancer
 
@@ -11,38 +11,48 @@ npm install
 npm run dev
 ```
 
-Ouvrir l’adresse locale affichée par Vite. `npm run build` produit le site autonome dans `dist/`. `npm run preview` sert cette version. Un double-clic sur `index.html` ne peut pas charger les modules et WebAssembly : utiliser le serveur.
+Ouvrir l’adresse affichée par Vite. `npm run build` compile le site statique dans `dist/` ; `npm run preview` sert cette version. Utiliser un serveur HTTP pour charger les modules et WebAssembly.
 
 ## Jouer
 
-- ZQSD, WASD ou flèches : déplacement / conduite. Maj : courir. Espace : frein à main.
+- ZQSD, WASD ou flèches : déplacement et conduite. Maj : courir. Espace : frein à main.
 - Souris : viser ; clic gauche : tirer ; R : recharger.
-- E : contact, objet, terminal, entrer / sortir de voiture à faible vitesse.
-- 1 et 2 : implants équipés au garage. Intrusion vise une grille ou une caméra. Leurre attire les vigiles au point visé. Surcharge se débloque après le premier contrat.
-- J : journal, contrats et conséquences ; M : carte complète ; Échap : pause ; molette : zoom.
+- E : parler, prendre un objet, utiliser un terminal, entrer ou sortir de voiture à faible vitesse.
+- 1 et 2 : implants choisis au garage. Intrusion ouvre la grille du dépôt ou désactive une caméra ; Leurre détourne les vigiles ; Surcharge immobilise le drone.
+- J : journal et contrats ; M : carte ; Échap : pause ; molette : zoom.
 
-Parler à Mina, accepter « Puce fantôme », traverser le quartier et prendre la puce dans la cour du dépôt. Le sud de la cour est accessible sans implant ; la grille est une autre approche. Rejoindre Mina sous les voies après cinq secondes sans identification directe. Le pont de l’avenue convient à la voiture ; le passage inférieur convient à la fuite à pied.
+Commencer auprès de Mina au garage. Le dépôt a une entrée au nord et une porte sur sa cour à l’est. La fuite automobile emprunte l’avenue, le pont à +6 m puis la rampe. La fuite piétonne descend à 0 m par l’escalier et le passage sous les voies. La remise exige cinq secondes sans identification directe.
 
-La livraison ouvre la grille de service, débloque Surcharge et le contrat secondaire « Les dossiers de la nuit ». Rejoindre le collectif de La Dalle pour le chapitre II. Le registre peut être confié au collectif (galerie) ou à Sorel (badge). Préparer ensuite l’opération avec Sorel, atteindre le serveur du Nœud et choisir l’une des trois fins. La ville reste jouable après la fin.
+## Contenu
 
-## Sauvegarde et reprise
+Cinq quartiers reliés par six jonctions : Les Forges, La Dalle, Le Nœud, Les Quais et Les Belvédères. La carte reprend les courbes des plans de la bible, avec des surfaces physiques distinctes pour les voies, le pont et les passages inférieurs.
 
-Sauvegarde locale versionnée `deadline.signal-mort.v1` dans le navigateur. Chaque validation de contrat applique dans un même enregistrement sa récompense et ses conséquences. Les récompenses sont idempotentes. Une partie interrompue pendant un contrat repart du briefing. Mort, pause et abandon proposent la reprise ; la progression terminée est conservée. « Nouvelle campagne » demande une confirmation explicite dans les paramètres. Le stockage peut être limité par le mode privé ou les préférences du navigateur ; un message l’indique en cas d’échec.
+La campagne comprend M01–M06 : Puce fantôme, Date d’effet, La première porte, Le registre des effacés, Dernière montée et Droit d’accès. La filière Nadia ou Sorel détermine un accès ; elle reste indépendante des deux fins : publication expurgée avec droits provisoires aux relais, ou annulation des révocations.
 
-## Architecture
+U01–U05 ajoutent l’éclairage du raccourci, une escorte résidentielle, les dossiers de la permanence de nuit, la carte annotée de la papeterie et le portillon de l’équipe de nuit. Les quatre familles communes possèdent huit variantes fixes et des identifiants de récompense par occurrence. Une seule séquence reste active à la fois.
 
-- `src/level.ts` : placements stables, trois quartiers, relief, patrouilles et points de mission.
-- `src/scene.ts` : ville procédurale, véhicules, silhouettes et collisions statiques ; géométrie décorative fusionnée par matériau.
-- `src/main.ts` : boucle à 60 Hz, interpolation, conduite avec balayage de collision Rapier, IA, surveillance, combat, missions et interface.
-- `src/navigation.ts` : graphe de circulation et recherche autour des obstacles.
-- `src/campaign.ts` : transitions persistantes, décisions et récompenses.
-- `src/audio.ts` : ambiance et effets Web Audio après interaction utilisateur.
-- `src/ui.ts`, `src/style.css` : menus, carte, journal, HUD, commandes et réglages.
+Les habitants circulent entre ateliers, arrêts, commerces, halls, bureaux, marché et terrasses. Les horaires changent leurs destinations. Le trafic ralentit pour les piétons et les autres véhicules. Les témoins cherchent un refuge lors d’un incident. Les impacts laissent des marques localisées, des bosses et des feux cassés ; le mobilier fragile peut céder. Les tirs et collisions graves produisent blessures, chutes et traces de sang.
 
-`npm test` vérifie les transitions et les garanties de sauvegarde. Le mode graphique léger désactive les ombres et les halos. Le compteur de performances est disponible dans les paramètres. Le jeu se met en pause quand la fenêtre perd le focus. Un diagnostic en lecture seule est exposé dans `window.deadline.state`.
+Au garage : soins, réparation, choix des implants et attente du matin, de la journée ou de la soirée. Les paramètres proposent qualité légère, son, sang, compteur de performances et lecture en niveaux de gris. La perte de focus met la simulation en pause.
 
-## Périmètre
+## Sauvegarde
 
-Campagne condensée jouable dans les trois quartiers, construite à partir des spécifications v0.3 et du plan web fournis. Les durées de 10–20 minutes par mission restent une cible de contenu ; ce prototype propose des séquences plus courtes. Les choix de campagne changent réellement des grilles et la surveillance après la fin. Les tirs et collisions produisent des blessures, chutes et traces de sang ; gel, brûlure et démembrement attendent les armes et dangers correspondants, comme prévu dans le plan. Les civils sont présents à pied ; la circulation automobile autonome n’est pas simulée.
+Sauvegarde versionnée dans `deadline.signal-mort.v2`, propre au navigateur et à l’adresse du site. Import de la progression v1 sans double paiement. Une mission interrompue reprend à son briefing ; les conséquences terminées restent acquises. Le menu permet reprise, abandon et nouvelle campagne avec confirmation.
 
-Documentation technique : [Three.js](https://threejs.org/docs/), [contrôleur de personnage Rapier](https://rapier.rs/docs/user_guides/javascript/character_controller/).
+La sauvegarde est locale : la partie jouée sur localhost n’est pas partagée avec le site hébergé. Aucun compte en ligne de progression n’est requis par le jeu.
+
+## Architecture et contrôles
+
+- `src/story.ts` : missions, filières, fins, migration et écritures atomiques.
+- `src/game.ts` : simulation à 60 Hz, interactions, surveillance, combat, interface et interpolation.
+- `src/world/data.ts`, `geometry.ts`, `terrain.ts` : plans SVG, implantations et surfaces communes au rendu et à la physique.
+- `src/world/physics.ts` : balayages Rapier, niveaux, sorties, contacts et gravité des impacts.
+- `src/world/navigation.ts`, `population.ts` : graphes séparés, destinations, horaires et trafic.
+- `src/world/furniture.ts`, `render.ts` : placements audités, bâtiments visitables, toits et tabliers masqués visuellement.
+- `src/audio.ts`, `ui.ts`, `style.css` : ambiance, effets, menus et HUD.
+
+`npm test` vérifie la progression, les récompenses, les deux filières et les deux fins, chaque route automobile dans les deux sens, les passages piétons, les parcours de toutes les quêtes, les impacts, les populations et les réserves de placement. Voir [VALIDATION.md](VALIDATION.md) et [IMPLEMENTATION_BIBLE.md](IMPLEMENTATION_BIBLE.md).
+
+## Limites connues
+
+Les séquences sont plus courtes que les durées indicatives de 10–20 minutes par mission et 5–10 minutes par quête annexe ; ces cibles de rythme restent à équilibrer. Les armes ou dangers de gel, brûlure et démembrement restent hors du kit actuel, conformément à leur report dans le plan web. Les mesures de fluidité décrivent la machine de test ; aucun portable de référence n’a été fourni. La progression est locale, sans synchronisation entre appareils.
