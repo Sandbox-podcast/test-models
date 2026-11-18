@@ -1,0 +1,821 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Transformation — Voiture ↔ Robot</title>
+<style>
+  :root { --y:#FFC400; --bg:#16171a; --ink:#e9eaec; --mute:#8b8f96; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); overflow:hidden; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); }
+  canvas { display:block; width:100vw; height:100vh; outline:none; }
+  #tag { position:fixed; top:14px; left:18px; pointer-events:none; user-select:none; }
+  #tag .t { font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:var(--mute); }
+  #tag .p { margin-top:4px; font-size:13px; font-weight:600; letter-spacing:.04em; color:var(--ink); display:flex; align-items:center; gap:8px; }
+  #tag .p i { width:7px; height:7px; border-radius:50%; background:var(--y); display:inline-block; box-shadow:0 0 8px var(--y); }
+  #bar { position:fixed; left:50%; bottom:14px; transform:translateX(-50%); width:min(980px, calc(100vw - 24px));
+         display:flex; align-items:center; gap:6px; padding:7px 8px; border-radius:12px;
+         background:rgba(18,19,22,.62); border:1px solid rgba(255,255,255,.07); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+         box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+  #bar button { height:30px; min-width:30px; padding:0 9px; border-radius:8px; border:1px solid rgba(255,255,255,.08);
+         background:rgba(255,255,255,.04); color:var(--ink); font:600 12px/1 inherit; font-family:inherit; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; }
+  #bar button:hover { background:rgba(255,255,255,.10); }
+  #bar button.on { background:var(--y); color:#141414; border-color:var(--y); }
+  #bar button svg { width:14px; height:14px; fill:currentColor; }
+  .grp { display:flex; gap:3px; padding:2px; border-radius:9px; background:rgba(0,0,0,.25); }
+  .grp button { border:none !important; background:transparent !important; height:26px !important; }
+  .grp button.on { background:var(--y) !important; color:#141414 !important; }
+  #tl { position:relative; flex:1; height:30px; min-width:120px; display:flex; align-items:center; margin:0 4px; }
+  #tl .track { position:absolute; left:0; right:0; top:13px; height:4px; border-radius:2px; background:rgba(255,255,255,.12); overflow:hidden; }
+  #tl .seg { position:absolute; top:0; bottom:0; background:rgba(255,196,0,.55); }
+  #tl .fill { position:absolute; left:0; top:0; bottom:0; background:rgba(255,255,255,.35); }
+  #tl .tick { position:absolute; top:20px; font-size:9px; color:var(--mute); transform:translateX(-50%); pointer-events:none; }
+  #tl input { position:relative; width:100%; margin:0; height:30px; background:transparent; -webkit-appearance:none; appearance:none; cursor:pointer; }
+  #tl input::-webkit-slider-runnable-track { height:30px; background:transparent; }
+  #tl input::-moz-range-track { height:30px; background:transparent; }
+  #tl input::-webkit-slider-thumb { -webkit-appearance:none; width:12px; height:12px; margin-top:9px; border-radius:50%; background:#fff; box-shadow:0 0 0 3px rgba(255,196,0,.35); }
+  #tl input::-moz-range-thumb { width:12px; height:12px; border:none; border-radius:50%; background:#fff; box-shadow:0 0 0 3px rgba(255,196,0,.35); }
+  #time { width:62px; text-align:right; font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--ink); font-variant-numeric: tabular-nums; }
+  .sep { width:1px; height:20px; background:rgba(255,255,255,.08); margin:0 2px; }
+  #help { position:fixed; top:14px; right:18px; font-size:11px; color:var(--mute); text-align:right; line-height:1.6; pointer-events:none; user-select:none; }
+  #help b { color:#c9ccd1; font-weight:600; }
+  #err { position:fixed; inset:0; display:none; align-items:center; justify-content:center; color:#fff; font-size:14px; padding:20px; text-align:center; }
+  @media (max-width:760px){ #help{display:none} .lbl{display:none} }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="tag"><div class="t">Transformation mécanique · boucle 12 s</div><div class="p"><i></i><span id="phase">Présentation</span></div></div>
+<div id="help"><b>Glisser</b> orbiter · <b>Molette</b> zoom · <b>Clic droit</b> déplacer<br><b>Espace</b> lecture · <b>R</b> recommencer · <b>S</b> ralenti · <b>C</b>/<b>B</b> voiture/robot · <b>F</b> cadrage</div>
+<div id="bar">
+  <button id="bPlay" title="Lecture / pause (Espace)"><svg viewBox="0 0 16 16" id="icoPlay"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg></button>
+  <button id="bRestart" title="Recommencer (R)"><svg viewBox="0 0 16 16"><path d="M8 2.5a5.5 5.5 0 1 1-5.2 3.7l1.6.6A3.8 3.8 0 1 0 8 4.2V6L4.8 3.3 8 .6z"/></svg></button>
+  <div class="grp"><button id="bN" class="on" title="Vitesse normale">1×</button><button id="bS" title="Ralenti d'inspection (S)">0,25×</button></div>
+  <div id="tl"><div class="track"><div class="fill" id="fill"></div></div><input id="scrub" type="range" min="0" max="12" step="0.01" value="0" aria-label="Temps"></div>
+  <div id="time">0.00 s</div>
+  <div class="sep"></div>
+  <button id="bCar" title="Figer la forme voiture (C)"><svg viewBox="0 0 16 16"><path d="M3 9l1.3-3.3A1.5 1.5 0 0 1 5.7 4.7h4.6a1.5 1.5 0 0 1 1.4 1L13 9h1v3h-1.6a1.6 1.6 0 0 1-3.2 0H6.8a1.6 1.6 0 0 1-3.2 0H2V9zm2.1 0h5.8l-.9-2.5H6z"/></svg><span class="lbl">Voiture</span></button>
+  <button id="bBot" title="Figer la forme robot (B)"><svg viewBox="0 0 16 16"><path d="M6 1h4v3H6zM4 5h8v5h-1v5H9v-4H7v4H5v-5H4zM1.5 5.5h2v4h-2zM12.5 5.5h2v4h-2z"/></svg><span class="lbl">Robot</span></button>
+  <button id="bCam" title="Cadrage initial (F)"><svg viewBox="0 0 16 16"><path d="M1 1h4v1.6H2.6V5H1zm10 0h4v4h-1.6V2.6H11zM1 11h1.6v2.4H5V15H1zm12.4 0H15v4h-4v-1.6h2.4zM8 5.5A2.5 2.5 0 1 1 8 10.5 2.5 2.5 0 0 1 8 5.5z"/></svg><span class="lbl">Cadrage</span></button>
+</div>
+<div id="err"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+/* =========================================================================
+   Constantes de timing (secondes, vitesse normale)
+   ========================================================================= */
+const LOOP = 12;
+const TF1 = [1.5, 3.5];   // voiture -> robot (2 s)
+const HERO = [3.5, 4.0];
+const WALK = [4.0, 7.0];
+const TF2 = [7.0, 9.0];   // robot -> voiture (2 s)
+const DRIVE = [9.0, 11.0];
+const WALK_DIST = 2.0;    // distance parcourue par le robot (m)
+const WHEEL_R = 0.36;
+const STAND_H = 2.0;      // hauteur du bassin debout
+
+/* =========================================================================
+   Rendu / scène
+   ========================================================================= */
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const BG = new THREE.Color(0x17181b);
+scene.background = BG;
+scene.fog = new THREE.Fog(BG, 22, 48);
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
+
+const camera = new THREE.PerspectiveCamera(32, innerWidth/innerHeight, 0.1, 120);
+const CAM_HOME = { pos:new THREE.Vector3(8.1, 3.7, 10.0), target:new THREE.Vector3(0.1, 1.6, 1.15) };
+camera.position.copy(CAM_HOME.pos);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(CAM_HOME.target);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.minDistance = 4; controls.maxDistance = 30;
+controls.maxPolarAngle = Math.PI*0.495;
+controls.update();
+
+// Lumières : blanc neutre
+scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3b3e, 0.55));
+const key = new THREE.DirectionalLight(0xffffff, 2.6);
+key.position.set(6, 11, 7);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left:-7, right:7, top:7, bottom:-7, near:1, far:30 });
+key.shadow.bias = -0.0004; key.shadow.normalBias = 0.02; key.shadow.radius = 4;
+key.target.position.set(0, 0, 1);
+scene.add(key, key.target);
+const fill = new THREE.DirectionalLight(0xffffff, 0.7); fill.position.set(-8, 5, 3); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 1.4); rim.position.set(-3, 6, -9); scene.add(rim);
+
+// Sol anthracite
+const floor = new THREE.Mesh(new THREE.CircleGeometry(60, 96),
+  new THREE.MeshStandardMaterial({ color:0x2a2c30, roughness:0.62, metalness:0.0 }));
+floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
+
+/* =========================================================================
+   Matériaux
+   ========================================================================= */
+const M = {
+  paint:  new THREE.MeshPhysicalMaterial({ color:0xFFC400, metalness:0.15, roughness:0.28, clearcoat:1, clearcoatRoughness:0.05 }),
+  stripe: new THREE.MeshPhysicalMaterial({ color:0x0a0a0b, metalness:0.1, roughness:0.32, clearcoat:1, clearcoatRoughness:0.06 }),
+  glass:  new THREE.MeshStandardMaterial({ color:0x06080b, metalness:0.55, roughness:0.08, transparent:true, opacity:0.93, envMapIntensity:0.45 }),
+  tire:   new THREE.MeshStandardMaterial({ color:0x121315, roughness:0.88, metalness:0.0 }),
+  rim:    new THREE.MeshStandardMaterial({ color:0xc4c8cf, roughness:0.2, metalness:1.0 }),
+  chrome: new THREE.MeshStandardMaterial({ color:0xe4e7ec, roughness:0.1, metalness:1.0 }),
+  mech:   new THREE.MeshStandardMaterial({ color:0x44484f, roughness:0.38, metalness:0.85 }),
+  mech2:  new THREE.MeshStandardMaterial({ color:0x2d3036, roughness:0.45, metalness:0.8 }),
+  dark:   new THREE.MeshStandardMaterial({ color:0x0d0e10, roughness:0.55, metalness:0.3 }),
+  light:  new THREE.MeshStandardMaterial({ color:0xffffff, emissive:0xf4f6ff, emissiveIntensity:2.2, roughness:0.2 }),
+  tail:   new THREE.MeshStandardMaterial({ color:0x5a0606, emissive:0xff1a10, emissiveIntensity:1.2, roughness:0.25 }),
+  eye:    new THREE.MeshStandardMaterial({ color:0xaeeaff, emissive:0x6fd8ff, emissiveIntensity:3.2, roughness:0.2 }),
+};
+
+/* =========================================================================
+   Aides géométriques
+   ========================================================================= */
+const V3 = (x=0,y=0,z=0)=>new THREE.Vector3(x,y,z);
+const D2R = Math.PI/180;
+function roundPoly(pts, r=0.04, seg=4){
+  const out=[], n=pts.length;
+  for(let i=0;i<n;i++){
+    const p=pts[i], a=pts[(i-1+n)%n], b=pts[(i+1)%n];
+    const rr0 = p[2] ?? r;
+    const ax=a[0]-p[0], ay=a[1]-p[1], bx=b[0]-p[0], by=b[1]-p[1];
+    const la=Math.hypot(ax,ay), lb=Math.hypot(bx,by);
+    const rr=Math.min(rr0, la*0.45, lb*0.45);
+    if(rr<1e-4){ out.push([p[0],p[1]]); continue; }
+    const p1=[p[0]+ax/la*rr, p[1]+ay/la*rr], p2=[p[0]+bx/lb*rr, p[1]+by/lb*rr];
+    for(let k=0;k<=seg;k++){ const t=k/seg, u=1-t;
+      out.push([u*u*p1[0]+2*u*t*p[0]+t*t*p2[0], u*u*p1[1]+2*u*t*p[1]+t*t*p2[1]]); }
+  }
+  return out;
+}
+function shapeOf(pts){ const s=new THREE.Shape(); s.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++) s.lineTo(pts[i][0],pts[i][1]); s.closePath(); return s; }
+function arc(cx, cy, r, a0, a1, n=20){ const o=[]; for(let i=0;i<=n;i++){ const a=(a0+(a1-a0)*i/n)*D2R; o.push([cx+r*Math.cos(a), cy+r*Math.sin(a), 0]); } return o; }
+function extrude(shape, depth, bevel){
+  return new THREE.ExtrudeGeometry(shape, { depth:Math.max(0.001, depth-2*bevel), bevelEnabled:bevel>0, bevelThickness:bevel, bevelSize:bevel*0.8, bevelSegments:3, curveSegments:8, steps:1 });
+}
+// profil latéral (z,y) extrudé selon X entre x0 et x1
+function sideGeo(pts, x0, x1, bevel=0.02, r=0.035){
+  const g=extrude(shapeOf(roundPoly(pts, r)), Math.abs(x1-x0), bevel);
+  g.rotateY(-Math.PI/2); g.computeBoundingBox();
+  g.translate(Math.min(x0,x1)-g.boundingBox.min.x, 0, 0); return g;
+}
+// profil vu de dessus (x,z) extrudé selon Y entre y0 et y0+t
+function topGeo(pts, y0, t, bevel=0.015, r=0.04){
+  const g=extrude(shapeOf(roundPoly(pts.map(p=>[p[0],-p[1],p[2]]), r)), t, bevel);
+  g.rotateX(-Math.PI/2); g.computeBoundingBox();
+  g.translate(0, y0-g.boundingBox.min.y, 0); return g;
+}
+// profil de face (x,y) extrudé selon Z
+function frontGeo(pts, z0, z1, bevel=0.02, r=0.03){
+  const g=extrude(shapeOf(roundPoly(pts, r)), Math.abs(z1-z0), bevel);
+  g.computeBoundingBox(); g.translate(0,0,Math.min(z0,z1)-g.boundingBox.min.z); return g;
+}
+const rbox=(w,h,d,r=0.03)=>new RoundedBoxGeometry(w,h,d,3,Math.min(r,w/2-1e-3,h/2-1e-3,d/2-1e-3));
+function mesh(geo, mat, x=0,y=0,z=0, rx=0,ry=0,rz=0){
+  const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); m.rotation.set(rx,ry,rz);
+  m.castShadow=true; m.receiveShadow=true; return m;
+}
+function cylX(r,len,seg=20){ const g=new THREE.CylinderGeometry(r,r,len,seg); g.rotateZ(Math.PI/2); return g; }
+function cylZ(r,len,seg=20){ const g=new THREE.CylinderGeometry(r,r,len,seg); g.rotateX(Math.PI/2); return g; }
+
+/* =========================================================================
+   Squelette du robot (os = Object3D). Toutes les pièces y sont attachées.
+   ========================================================================= */
+const B = {};
+function bone(name, parent, x,y,z, order='XYZ'){ const o=new THREE.Object3D(); o.name=name; o.position.set(x,y,z); o.rotation.order=order; parent.add(o); B[name]=o; return o; }
+const L_THIGH=0.92, L_SHIN=0.92;
+bone('pelvis', scene, 0,0,0, 'YXZ');
+bone('chest', B.pelvis, 0,0.15,0, 'YXZ');
+bone('neck', B.chest, 0,0.72,-0.02, 'YXZ');
+bone('head', B.neck, 0,0.08,0, 'YXZ');
+for(const [k,s] of [['P',1],['N',-1]]){
+  bone('shoulder'+k, B.chest, s*0.70, 0.84, 0, 'ZXY');
+  bone('elbow'+k, B['shoulder'+k], 0,-0.62,0);
+  bone('hand'+k, B['elbow'+k], 0,-0.58,0, 'ZXY');
+  bone('hip'+k, B.pelvis, s*0.30,-0.12,0, 'ZXY');
+  bone('knee'+k, B['hip'+k], 0,-L_THIGH,0);
+  bone('foot'+k, B['knee'+k], 0,-L_SHIN,0);
+}
+
+// ---- mécanique interne (gris foncé) + quelques plaques jaunes internes ----
+function add(b, ...ms){ ms.forEach(m=>B[b].add(m)); }
+// bassin
+add('pelvis',
+  mesh(rbox(0.66,0.30,0.40,0.06), M.mech, 0,0,0),
+  mesh(cylX(0.10,0.82), M.mech2, 0,-0.12,0),
+  mesh(rbox(0.32,0.26,0.08,0.03), M.paint, 0,-0.05,0.22),
+  mesh(rbox(0.5,0.06,0.42,0.02), M.mech2, 0,0.14,0),
+);
+// torse
+add('chest',
+  mesh(new THREE.CylinderGeometry(0.17,0.2,0.32,20), M.mech2, 0,0.0,0),
+  mesh(cylZ(0.05,0.36), M.mech, 0.13,0.0,0, 0,0,0.3), mesh(cylZ(0.05,0.36), M.mech, -0.13,0,0, 0,0,-0.3),
+  mesh(rbox(0.96,0.78,0.44,0.07), M.mech, 0,0.5,0),
+  mesh(rbox(0.62,0.46,0.06,0.02), M.mech2, 0,0.52,0.215),
+  mesh(rbox(0.40,0.60,0.12,0.03), M.mech2, 0,0.5,-0.25),
+  mesh(cylX(0.13,1.30), M.mech2, 0,0.84,0),
+);
+for(let i=0;i<4;i++) add('chest', mesh(rbox(0.5,0.035,0.03,0.01), M.dark, 0,0.36+i*0.1,0.25));
+// cou + tête
+add('neck', mesh(new THREE.CylinderGeometry(0.075,0.09,0.42,16), M.mech2, 0,-0.12,0), mesh(cylX(0.06,0.24), M.mech, 0,-0.3,0));
+{
+  const H=new THREE.Group(); H.scale.setScalar(1.35); B.head.add(H);   // échelle fixe de conception (non animée)
+  H.add(mesh(rbox(0.28,0.30,0.28,0.05), M.mech, 0,0.17,0.02));                    // visage
+  H.add(mesh(rbox(0.40,0.13,0.38,0.05), M.paint, 0,0.35,-0.02));                   // casque
+  H.add(mesh(rbox(0.07,0.27,0.32,0.03), M.paint, 0.185,0.22,-0.03), mesh(rbox(0.07,0.27,0.32,0.03), M.paint, -0.185,0.22,-0.03));
+  H.add(mesh(rbox(0.36,0.28,0.08,0.03), M.paint, 0,0.22,-0.18));
+  H.add(mesh(rbox(0.07,0.06,0.30,0.02), M.paint, 0,0.43,0.0));                     // crête
+  H.add(mesh(rbox(0.30,0.05,0.06,0.02), M.dark, 0,0.29,0.16));                     // sourcils
+  H.add(mesh(rbox(0.18,0.09,0.05,0.02), M.mech2, 0,0.08,0.16));                    // bouche
+  for(const s of [1,-1]){
+    H.add(mesh(rbox(0.095,0.04,0.02,0.01), M.eye, s*0.07,0.215,0.165, 0,0,s*-0.18));
+    H.add(mesh(rbox(0.04,0.20,0.07,0.015), M.mech, s*0.235,0.34,-0.04, 0,0,s*-0.35)); // antennes
+  }
+}
+// bras
+const fingers = {P:[], N:[]};
+for(const [k,s] of [['P',1],['N',-1]]){
+  add('shoulder'+k,
+    mesh(new THREE.SphereGeometry(0.15,20,14), M.mech2, 0,0,0),
+    mesh(rbox(0.22,0.46,0.24,0.04), M.mech, 0,-0.33,0),
+    mesh(new THREE.CylinderGeometry(0.035,0.035,0.42,10), M.chrome, 0,-0.33,-0.15));
+  add('elbow'+k,
+    mesh(cylX(0.10,0.27), M.mech2, 0,0,0),
+    mesh(rbox(0.24,0.46,0.26,0.04), M.mech, 0,-0.28,0),
+    mesh(cylX(0.07,0.22), M.mech2, 0,-0.56,0));
+  const h=B['hand'+k];
+  h.add(mesh(rbox(0.12,0.17,0.19,0.03), M.mech, 0,-0.1,0));
+  for(let i=0;i<4;i++){
+    const piv=new THREE.Object3D(); piv.position.set(-s*0.03,-0.18,-0.07+i*0.047); h.add(piv);
+    piv.add(mesh(rbox(0.05,0.12,0.042,0.015), M.mech2, 0,-0.055,0));
+    fingers[k].push(piv);
+  }
+  const th=new THREE.Object3D(); th.position.set(-s*0.05,-0.08,0.09); h.add(th);
+  th.add(mesh(rbox(0.05,0.10,0.045,0.015), M.mech2, 0,-0.05,0.0)); th.userData.thumb=true; fingers[k].push(th);
+}
+// jambes
+for(const [k,s] of [['P',1],['N',-1]]){
+  add('hip'+k,
+    mesh(new THREE.SphereGeometry(0.14,20,14), M.mech2, 0,0,0),
+    mesh(rbox(0.27,0.70,0.30,0.05), M.mech, 0,-0.46,0),
+    mesh(rbox(0.25,0.56,0.06,0.03), M.paint, 0,-0.46,0.17),
+    mesh(new THREE.CylinderGeometry(0.035,0.035,0.62,10), M.chrome, s*0.1,-0.46,-0.16));
+  add('knee'+k,
+    mesh(cylX(0.12,0.28), M.mech2, 0,0,0),
+    mesh(rbox(0.22,0.17,0.10,0.04), M.paint, 0,0.0,0.15),
+    mesh(rbox(0.25,0.74,0.28,0.05), M.mech, 0,-0.48,0),
+    mesh(rbox(0.23,0.60,0.07,0.03), M.paint, 0,-0.47,0.16),
+    mesh(new THREE.CylinderGeometry(0.04,0.04,0.6,10), M.chrome, 0,-0.48,-0.16));
+  add('foot'+k,
+    mesh(cylX(0.09,0.3), M.mech2, 0,0,0),
+    mesh(rbox(0.44,0.10,0.72,0.03), M.mech2, 0,-0.07,0.19),
+    mesh(rbox(0.30,0.10,0.30,0.03), M.mech, 0,-0.0,-0.02));
+}
+
+/* ---------- Roue : pneu, jante métallique 5 doubles branches, disque, étrier ---------- */
+const tireGeo = (()=>{ const p=[[0.245,-0.135],[0.29,-0.15],[0.335,-0.147],[0.352,-0.128],[0.36,-0.08],[0.362,0],[0.36,0.08],[0.352,0.128],[0.335,0.147],[0.29,0.15],[0.245,0.135]].map(a=>new THREE.Vector2(a[0],a[1]));
+  const g=new THREE.LatheGeometry(p, 48); g.rotateZ(Math.PI/2); return g; })();
+const wheelSpinners = [];
+function buildWheel(g, w, c){
+  const spin=new THREE.Group(); spin.position.copy(c); g.add(spin);
+  const mir=new THREE.Group(); if(w<0) mir.rotation.y=Math.PI; spin.add(mir);
+  mir.add(mesh(tireGeo, M.tire));
+  const barrel=new THREE.CylinderGeometry(0.248,0.248,0.24,40,1,true); barrel.rotateZ(Math.PI/2);
+  mir.add(mesh(barrel, M.rim));
+  const lip=new THREE.TorusGeometry(0.245,0.014,10,48); lip.rotateY(Math.PI/2); mir.add(mesh(lip, M.chrome, 0.12,0,0));
+  mir.add(mesh(cylX(0.2,0.02,32), M.mech2, -0.02,0,0));            // disque
+  mir.add(mesh(cylX(0.065,0.08,20), M.rim, 0.1,0,0));              // moyeu
+  mir.add(mesh(cylX(0.03,0.02,12), M.dark, 0.145,0,0));
+  for(let i=0;i<5;i++){
+    const a=i*Math.PI*2/5;
+    for(const d of [-0.11,0.11]){
+      const sp=mesh(rbox(0.035,0.19,0.03,0.01), M.rim, 0.1,0,0);
+      const holder=new THREE.Group(); holder.rotation.x=a+d; holder.add(sp); sp.position.set(0.105,0.14,0); sp.rotation.x=0;
+      mir.add(holder);
+    }
+    const nut=mesh(cylX(0.012,0.03,8), M.chrome, 0.14,Math.cos(a+0.6)*0.045,Math.sin(a+0.6)*0.045); mir.add(nut);
+  }
+  // étrier fixe (ne tourne pas)
+  const cal=mesh(rbox(0.06,0.14,0.08,0.02), M.mech, c.x - w*0.03, c.y+0.12, c.z-0.12, 0.6,0,0); g.add(cal);
+  wheelSpinners.push(spin);
+}
+
+/* =========================================================================
+   Pièces de carrosserie (construites en coordonnées "voiture")
+   ========================================================================= */
+const parts = [];
+// Crée une pièce : build() ajoute des meshes en coordonnées voiture, origin = pivot naturel de la pièce
+function part(name, boneName, origin, build, keys){
+  const g=new THREE.Group(); g.name=name;
+  build(g);
+  g.children.forEach(c=>c.position.sub(origin));
+  B[boneName].add(g);
+  const p={ name, bone:B[boneName], g, carPos:origin.clone(), keys:keys||[] };
+  parts.push(p); return p;
+}
+function addTo(g, geo, mat){ const m=mesh(geo,mat); g.add(m); return m; }
+
+const ARCH_R = 0.43, AXLE_F = 1.42, AXLE_R = -1.42, WY = 0.36;
+const archF = (a0,a1)=>arc(AXLE_F, WY, ARCH_R, a0, a1, 22);
+const archR = (a0,a1)=>arc(AXLE_R, WY, ARCH_R, a0, a1, 22);
+
+for(const w of [1,-1]){
+  const sC = -w;     // côté local des os du torse (le torse est retourné en mode voiture)
+  const sL = w;      // côté local des os des jambes
+  const kC = sC>0?'P':'N', kL = sL>0?'P':'N';
+
+  /* ---------- Demi-capot (bande noire) -> plastron ---------- */
+  part('hood'+w, 'chest', V3(w*0.405,0.875,1.47), g=>{
+    const pl=topGeo([[-0.39,0.495,0.01],[0.39,0.495,0.07],[0.39,-0.485,0.02],[-0.39,-0.485,0.01]].map(p=>[p[0]*w,p[1],p[2]]), -0.025, 0.05);
+    pl.rotateX(3*D2R); pl.translate(w*0.405,0.875,1.47);
+    addTo(g, pl, M.paint);
+    const st=rbox(0.17,0.012,0.97,0.005); st.rotateX(3*D2R); st.translate(w*0.24,0.903,1.47); addTo(g, st, M.stripe);
+    // ouïes du capot
+    for(let i=0;i<3;i++){ const v=rbox(0.16,0.012,0.03,0.005); v.rotateX(3*D2R); v.translate(w*0.56,0.903,1.1+i*0.06); addTo(g,v,M.dark); }
+  }, [
+    { space:'car', move:[w*0.06,0.12,0.04], win:[0.02,0.22] },
+    { space:'bone', pos:[sC*0.40,0.34,0.31], rot:[-4,sC*14,0], win:[0.28,0.76], arc:[0,0,0.32] },
+  ]);
+
+  /* ---------- Aile avant + roue avant -> épaule ---------- */
+  const fender = part('fender'+w, 'shoulder'+kC, V3(w*0.885,0.58,1.62), g=>{
+    const prof=[[0.97,0.26,0.01],[0.97,0.9,0.02],[1.5,0.888],[1.95,0.855],[2.14,0.80],[2.24,0.68],[2.27,0.5],[2.24,0.32],[2.18,0.26,0.02],
+      ...archF(-13.4,193.4).map(p=>[p[0],p[1],0.0])];
+    addTo(g, sideGeo(prof, w*0.80, w*0.97), M.paint);
+    // clignotant latéral
+    const ind=rbox(0.02,0.04,0.12,0.01); ind.translate(w*0.975,0.66,1.98); addTo(g,ind,M.dark);
+  }, [
+    { space:'car', move:[w*0.10,0.06,0.02], win:[0.04,0.24] },
+    { space:'bone', pos:[sC*0.37,-0.06,-0.04], rot:[-48,0,sC*-6], win:[0.30,0.80], arc:[sC*0.25,0.15,0] },
+  ]);
+  part('wheelF'+w, 'shoulder'+kC, V3(w*0.80,WY,AXLE_F), g=>buildWheel(g, w, V3(w*0.80,WY,AXLE_F)), [{follow:fender}]);
+
+  /* ---------- Portière (vitre fumée) -> aile dorsale ---------- */
+  part('door'+w, 'chest', V3(w*0.90,0.70,0.26), g=>{
+    addTo(g, sideGeo([[-0.45,0.34,0.02],[0.95,0.34,0.02],[0.95,0.90,0.02],[-0.45,0.925,0.02]], w*0.84, w*0.96), M.paint);
+    addTo(g, sideGeo([[0.88,0.93,0.0],[0.30,1.205,0.06],[-0.40,1.205,0.03],[-0.40,0.94,0.0]], w*0.865, w*0.885, 0.005, 0.02), M.glass);
+    addTo(g, sideGeo([[0.93,0.90,0],[0.32,1.235,0.06],[-0.44,1.235,0.03],[-0.44,1.2,0],[0.30,1.2,0],[0.86,0.92,0]], w*0.86, w*0.89, 0.006, 0.01), M.paint);
+    const hd=rbox(0.03,0.04,0.18,0.012); hd.translate(w*0.965,0.82,-0.18); addTo(g,hd,M.dark);
+    const mi=rbox(0.16,0.09,0.17,0.035); mi.translate(w*1.0,0.98,0.80); addTo(g,mi,M.paint);
+    const ms=rbox(0.06,0.03,0.06,0.01); ms.translate(w*0.92,0.96,0.82); addTo(g,ms,M.dark);
+    const ln=rbox(0.01,0.02,1.36,0.005); ln.translate(w*0.962,0.62,0.25); addTo(g,ln,M.dark);
+  }, [
+    { space:'car', rot:[0,w*-62,0], pivot:[w*0.96,0.6,0.95], win:[0.0,0.22] },
+    { space:'bone', basis:{ x:[0,0,sC], y:[sC*0.55,0.835,0] }, pos:[sC*0.66,0.74,-0.56], win:[0.30,0.78], arc:[sC*0.35,0.25,-0.25] },
+  ]);
+
+  /* ---------- Bas de caisse -> blindage d'avant-bras ---------- */
+  part('skirt'+w, 'elbow'+kC, V3(w*0.955,0.25,0.42), g=>{
+    addTo(g, sideGeo([[-0.42,0.17,0.03],[0.93,0.17,0.03],[0.95,0.33,0.02],[-0.44,0.33,0.02]], w*0.91, w*1.0), M.paint);
+    const lip=rbox(0.03,0.025,1.3,0.01); lip.translate(w*0.99,0.18,0.25); addTo(g,lip,M.dark);
+  }, [
+    { space:'car', move:[w*0.08,-0.02,0], win:[0.06,0.22] },
+    { space:'bone', pos:[sC*0.175,-0.24,0.0], rot:[0,0,0], win:[0.28,0.70], arc:[sC*0.25,0,0] },
+  ]);
+
+  /* ---------- Aile arrière + roue arrière -> jambe ---------- */
+  const quarter = part('quarter'+w, 'knee'+kL, V3(w*0.885,0.6,-1.2), g=>{
+    const prof=[[-0.45,0.26,0.02],[-0.45,0.925,0.02],[-1.2,0.955],[-1.9,0.975,0.03],[-1.99,0.95,0.02],[-1.99,0.28,0.02],
+      ...archR(193.4,-13.4).map(p=>[p[0],p[1],0.0])];
+    addTo(g, sideGeo(prof, w*0.80, w*0.97), M.paint);
+    const sc=rbox(0.03,0.08,0.3,0.02); sc.translate(w*0.97,0.6,-0.62); addTo(g,sc,M.dark);   // prise d'air
+  }, [
+    { space:'car', move:[w*0.10,0.04,0.0], win:[0.04,0.22] },
+    { space:'bone', pos:[sL*0.40,0.02,0.0], rot:[0,0,sL*3], win:[0.24,0.72], arc:[sL*0.22,0,0] },
+  ]);
+  part('wheelR'+w, 'knee'+kL, V3(w*0.80,WY,AXLE_R), g=>buildWheel(g, w, V3(w*0.80,WY,AXLE_R)), [{follow:quarter}]);
+
+  /* ---------- Demi-coffre (bande noire + becquet) -> mollet ---------- */
+  part('trunk'+w, 'knee'+kL, V3(w*0.405,0.97,-1.6), g=>{
+    const pl=topGeo([[0.012,-1.24,0.01],[0.80,-1.24,0.03],[0.80,-1.965,0.05],[0.012,-1.965,0.01]].map(p=>[p[0]*w,p[1],p[2]]), 0.945, 0.05);
+    addTo(g, pl, M.paint);
+    const st=rbox(0.17,0.012,0.72,0.005); st.translate(w*0.24,1.0,-1.6); addTo(g,st,M.stripe);
+    const sp=sideGeo([[-1.86,0.99,0.01],[-1.97,1.0,0.0],[-1.99,1.07,0.02],[-1.9,1.03,0.0]], w*0.012, w*0.79, 0.008, 0.01); addTo(g,sp,M.paint);
+  }, [
+    { space:'car', move:[w*0.05,0.14,0], win:[0.0,0.18] },
+    { space:'bone', pos:[sL*0.07,-0.36,-0.22], rot:[0,0,0], win:[0.20,0.66], arc:[0,0,-0.25] },
+  ]);
+
+  /* ---------- Demi-pare-chocs arrière (feux) -> coque de pied ---------- */
+  part('bumper'+w, 'foot'+kL, V3(w*0.40,0.6,-2.13), g=>{
+    addTo(g, sideGeo([[-1.98,0.95,0.01],[-2.2,0.93,0.05],[-2.29,0.85,0.06],[-2.31,0.5],[-2.27,0.3],[-2.18,0.22,0.04],[-1.98,0.22,0.01]], w*0.012, w*0.80), M.paint);
+    const tl=rbox(0.52,0.07,0.04,0.015); tl.translate(w*0.5,0.80,-2.295); addTo(g,tl,M.tail);
+    const tb=rbox(0.56,0.11,0.03,0.02); tb.translate(w*0.5,0.80,-2.285); addTo(g,tb,M.dark);
+    const df=rbox(0.7,0.1,0.05,0.02); df.translate(w*0.40,0.30,-2.27); addTo(g,df,M.dark);
+    const ex=new THREE.CylinderGeometry(0.05,0.05,0.12,16); ex.rotateX(Math.PI/2); ex.translate(w*0.55,0.30,-2.31); addTo(g,ex,M.chrome);
+  }, [
+    { space:'car', move:[w*0.02,0.0,-0.10], win:[0.0,0.13] },
+    { space:'bone', pos:[sL*0.05,0.075,0.18], rot:[-90,0,0], win:[0.30,0.66], arc:[0,0.3,0] },
+  ]);
+}
+
+/* ---------- Nez (calandre + phares) -> collerette pectorale ---------- */
+part('nose', 'chest', V3(0,0.55,2.13), g=>{
+  addTo(g, sideGeo([[1.96,0.865,0.01],[2.12,0.845,0.05],[2.25,0.77,0.06],[2.3,0.6],[2.31,0.36],[2.26,0.25,0.05],[1.96,0.23,0.01]], -0.80, 0.80), M.paint);
+  const gr=rbox(1.0,0.2,0.06,0.03); gr.translate(0,0.56,2.29); addTo(g,gr,M.dark);
+  for(let i=0;i<3;i++){ const sl=rbox(0.96,0.012,0.02,0.004); sl.translate(0,0.5+i*0.055,2.32); addTo(g,sl,M.mech2); }
+  const lo=rbox(1.2,0.1,0.06,0.03); lo.translate(0,0.32,2.27); addTo(g,lo,M.dark);
+  for(const s of [1,-1]){
+    const hh=rbox(0.30,0.09,0.06,0.03); hh.rotateZ(s*-0.12); hh.translate(s*0.62,0.69,2.255); addTo(g,hh,M.dark);
+    const hl=rbox(0.24,0.03,0.03,0.012); hl.rotateZ(s*-0.12); hl.translate(s*0.62,0.705,2.28); addTo(g,hl,M.light);
+    const fg=new THREE.CylinderGeometry(0.035,0.035,0.03,16); fg.rotateX(Math.PI/2); fg.translate(s*0.68,0.33,2.29); addTo(g,fg,M.light);
+  }
+  const em=rbox(0.14,0.05,0.02,0.01); em.translate(0,0.705,2.3); addTo(g,em,M.chrome);
+}, [
+  { space:'car', move:[0,0.04,0.2], win:[0.0,0.2] },
+  { space:'bone', pos:[0,0.97,0.34], rot:[90,0,0], win:[0.32,0.80], arc:[0,0.0,0.25] },
+]);
+
+/* ---------- Pare-brise -> dos (haut) ---------- */
+part('windshield', 'pelvis', V3(0,1.085,0.625), g=>{
+  const gl=topGeo([[-0.75,0.39,0.06],[0.75,0.39,0.06],[0.65,-0.39,0.04],[-0.65,-0.39,0.04]], -0.0125, 0.025, 0.006, 0.05);
+  gl.rotateX(28.2*D2R); gl.translate(0,1.085,0.625); addTo(g,gl,M.glass);
+  for(const s of [1,-1]){
+    const p=rbox(0.07,0.04,0.82,0.02); p.rotateY(s*-0.13); p.rotateX(28.2*D2R); p.translate(s*0.71,1.09,0.625); addTo(g,p,M.paint);
+  }
+  const hdr=rbox(1.34,0.04,0.07,0.02); hdr.translate(0,1.27,0.27); addTo(g,hdr,M.paint);
+}, [
+  { space:'car', move:[0,0.10,0.0], win:[0.06,0.24] },
+  { space:'bone', pos:[0,1.12,-0.40], rot:[-22,0,0], win:[0.30,0.82], arc:[0,0,-0.35] },
+]);
+
+/* ---------- Toit (2 bandes noires) -> dos (centre) ---------- */
+part('roof', 'pelvis', V3(0,1.285,-0.14), g=>{
+  addTo(g, topGeo([[-0.66,0.28,0.04],[0.66,0.28,0.04],[0.66,-0.56,0.08],[-0.66,-0.56,0.08]], 1.26, 0.05), M.paint);
+  for(const s of [1,-1]){ const st=rbox(0.17,0.012,0.82,0.005); st.translate(s*0.24,1.314,-0.14); addTo(g,st,M.stripe); }
+}, [
+  { space:'car', move:[0,0.16,0], win:[0.04,0.2] },
+  { space:'bone', pos:[0,0.52,-0.36], rot:[0,0,0], win:[0.22,0.76], arc:[0,0,-0.3] },
+]);
+
+/* ---------- Lunette arrière + montants -> bas du dos ---------- */
+part('rear', 'pelvis', V3(0,1.08,-0.88), g=>{
+  const gl=topGeo([[-0.6,-0.56,0.04],[0.6,-0.56,0.04],[0.58,-1.24,0.02],[-0.58,-1.24,0.02]], -0.012, 0.024, 0.006);
+  gl.rotateX(-24.8*D2R); gl.translate(0,1.12,-0.80+0.0);
+  gl.computeBoundingBox();
+  addTo(g,gl,M.glass);
+  for(const s of [1,-1]){
+    addTo(g, sideGeo([[-0.45,0.93,0.02],[-0.45,1.235,0.02],[-0.58,1.27,0.03],[-1.26,0.965,0.03],[-1.0,0.93,0.0]], s*0.62, s*0.86, 0.015, 0.03), M.paint);
+  }
+}, [
+  { space:'car', move:[0,0.30,-0.10], win:[0.0,0.14] },
+  { space:'bone', pos:[0,-0.12,-0.36], rot:[12,0,0], win:[0.14,0.58], arc:[0,0.35,-0.3] },
+]);
+
+/* =========================================================================
+   Courbes d'accélération
+   ========================================================================= */
+const clamp01 = x=>Math.min(1,Math.max(0,x));
+const lerp = (a,b,t)=>a+(b-a)*t;
+const smooth = x=>{ x=clamp01(x); return x*x*(3-2*x); };
+const smoother = x=>{ x=clamp01(x); return x*x*x*(x*(x*6-15)+10); };
+// "Snap" : départ franc, décélération courte avec léger dépassement puis verrouillage
+function snap(u){ u=clamp01(u); if(u<=0) return 0; if(u>=1) return 1;
+  const x=Math.pow(u,1.35); const c1=1.25, c3=c1+1; return 1 + c3*Math.pow(x-1,3) + c1*Math.pow(x-1,2); }
+// progression d'une fenêtre [a,b] dans la transformation.
+// dir<0 (robot->voiture) : miroir temporel exact de l'aller -> mêmes trajectoires, mêmes dégagements,
+// et le dépassement de fin devient un verrouillage sec à l'arrivée.
+function W(s, dir, a, b, ease=snap){
+  const x = dir>0 ? s : 1-s;
+  return ease((x-a)/(b-a));
+}
+
+/* =========================================================================
+   Poses du squelette
+   ========================================================================= */
+function basePose(){ return {
+  pp:V3(), pitch:0, yaw:0, roll:0, cYaw:0, cPitch:0, cRoll:0, neck:1, hPitch:0, hYaw:0, hRoll:0,
+  arm:{P:{pitch:0,roll:0,yaw:0,elbow:0,curl:0,wrist:0},N:{pitch:0,roll:0,yaw:0,elbow:0,curl:0,wrist:0}},
+  ank:{P:V3(),N:V3()}, fPitch:{P:0,N:0}, fBlend:1, fq:null,
+};}
+const _m=new THREE.Matrix4(), _q=new THREE.Quaternion(), _e=new THREE.Euler(), _e2=new THREE.Euler(), _v=new THREE.Vector3();
+const _qr=new THREE.Quaternion(), _qid=new THREE.Quaternion(), _ax=new THREE.Vector3(1,0,0), _qk=new THREE.Quaternion(), _qf=new THREE.Quaternion(), _qcar=new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI/2,0,0));
+// repère de la voiture : translation en z + léger tangage (transfert de masse)
+function frameMatrix(fz, pitch=0){
+  return new THREE.Matrix4().makeTranslation(0,WY,fz).multiply(new THREE.Matrix4().makeRotationX(pitch)).multiply(new THREE.Matrix4().makeTranslation(0,-WY,0));
+}
+function carPose(F){
+  const P=basePose();
+  P.pp.set(0,0.58,0.30).applyMatrix4(F);
+  P.fq = new THREE.Quaternion().setFromRotationMatrix(F).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI/2,0,0)));
+  P.cYaw=Math.PI; P.neck=0;
+  for(const [k,s] of [['P',1],['N',-1]]){ P.ank[k].set(s*0.30,0.58,0.30-0.12-L_THIGH-L_SHIN-0.002).applyMatrix4(F); }
+  P.fBlend=0;
+  return P;
+}
+function standPose(fz){
+  const P=basePose();
+  P.pp.set(0,STAND_H,fz-0.05); P.pitch=0.03; P.cPitch=-0.04; P.neck=1; P.hPitch=0.06;
+  for(const [k,s] of [['P',1],['N',-1]]){
+    Object.assign(P.arm[k], {pitch:0.05, roll:s*0.17, yaw:0, elbow:0.38, curl:1, wrist:0});
+    P.ank[k].set(s*0.36,0.12,fz-0.05);
+  }
+  return P;
+}
+// Transformation : s ∈ [0,1], dir = +1 (voiture->robot) ou -1 (robot->voiture)
+function tfPose(s, dir, fz){
+  const C=carPose(frameMatrix(fz)), S=standPose(fz), P=standPose(fz);
+  const pRise = W(s,dir,0.10,0.62);
+  const pPitch= W(s,dir,0.08,0.60);
+  const pSpin = W(s,dir,0.36,0.80);
+  const pLeg  = W(s,dir,0.05,0.60, smoother);
+  const pFoot = W(s,dir,0.34,0.64);
+  const pArmE = W(s,dir,0.55,0.92);
+  const bump  = Math.sin(Math.PI*W(s,dir,0.28,0.84, smoother));
+  const pNeck = W(s,dir,0.62,0.90);
+  const pCurl = W(s,dir,0.72,0.97);
+  P.pp.lerpVectors(C.pp, S.pp, pRise);
+  const qs=new THREE.Quaternion().setFromEuler(new THREE.Euler(S.pitch,0,0,'YXZ'));
+  P.fq = C.fq.clone().slerp(qs, pPitch);
+  P.cYaw = lerp(Math.PI, 0, pSpin);
+  P.cPitch = lerp(0, S.cPitch, pSpin) - 0.25*bump;
+  P.neck = pNeck; P.hPitch = lerp(0, S.hPitch, pNeck) - 0.3*Math.sin(Math.PI*pNeck);
+  for(const [k,sg] of [['P',1],['N',-1]]){
+    const a=P.arm[k];
+    a.roll = sg*(0.17*pArmE + 1.05*bump); a.pitch = 0.05*pArmE - 0.35*bump; a.elbow = 0.38*pArmE + 0.9*bump;
+    a.curl = pCurl; a.wrist = 0;
+    P.ank[k].lerpVectors(C.ank[k], S.ank[k], pLeg); P.ank[k].y += 0.62*Math.pow(Math.sin(Math.PI*clamp01(pLeg)),0.7);
+  }
+  P.fBlend = pFoot;
+  return P;
+}
+// Pose héroïque + marche (3.5 s -> 7 s), entièrement fonction du temps
+const STEPS=[ {k:'N', t0:4.02, t1:4.80, z0:-0.05, z1:0.95},
+              {k:'P', t0:4.80, t1:5.58, z0:-0.05, z1:1.95},
+              {k:'N', t0:5.58, t1:6.32, z0:0.95,  z1:1.95} ];
+function footAt(k, T){
+  let z = -0.05, lift=0, pitch=0, u=-1;
+  for(const st of STEPS){ if(st.k!==k) continue;
+    if(T>=st.t1) z=st.z1;
+    else if(T>st.t0){ u=(T-st.t0)/(st.t1-st.t0); z=lerp(st.z0,st.z1,smoother(u)); lift=0.30*Math.pow(Math.sin(Math.PI*u),0.85); pitch=-0.32*Math.sin(Math.PI*u)*(u<0.85?1:(1-u)/0.15); break; }
+  }
+  return {z,lift,pitch,u};
+}
+function impactAt(T){ let v=0; for(const st of STEPS){ const d=T-st.t1; if(d>=0 && d<0.4) v=Math.max(v, Math.sin(Math.PI*Math.min(1,d/0.4))*(1-d/0.4*0.3)); } return v; }
+function robotPose(T){
+  const P=standPose(0);
+  if(T<HERO[1]){
+    const u=(T-HERO[0])/(HERO[1]-HERO[0]);
+    const h = u<0.32 ? snap(u/0.32) : 1-smoother((u-0.62)/0.38);
+    P.pp.y -= 0.10*h; P.cPitch += -0.12*h; P.hPitch += -0.16*h; P.hYaw = 0.28*h;
+    for(const [k,s] of [['P',1],['N',-1]]){ const a=P.arm[k]; a.roll += s*0.30*h; a.pitch += -0.25*h; a.elbow += 1.05*h; a.wrist = s*0.3*h; }
+    return P;
+  }
+  const env = smooth((T-4.0)/0.35)*(1-smooth((T-6.45)/0.5));
+  const fP=footAt('P',T), fN=footAt('N',T);
+  const avg=(fP.z+fN.z)/2;
+  const G=-0.05 + WALK_DIST*smoother((T-4.0)/2.55);
+  const pz = 0.5*avg + 0.5*G;
+  // phase courante
+  let sw=null; for(const st of STEPS) if(T>st.t0 && T<st.t1){ sw=st; break; }
+  const su = sw ? (T-sw.t0)/(sw.t1-sw.t0) : 0;
+  const swSign = sw ? (sw.k==='P'?1:-1) : 0;
+  const bob = sw ? Math.sin(Math.PI*su) : 0;
+  const imp = impactAt(T);
+  P.pp.set(-swSign*0.07*Math.sin(Math.PI*su), STAND_H - 0.06*env + 0.05*bob*env - 0.08*imp, pz);
+  P.roll = swSign*0.05*Math.sin(Math.PI*su);
+  P.yaw = -0.10*swSign*Math.sin(Math.PI*su);
+  P.pitch = 0.03 + 0.05*env;
+  P.cYaw = -1.5*P.yaw; P.cPitch = -0.04 + 0.04*env + 0.05*imp; P.cRoll = -P.roll*0.6;
+  P.hYaw = -(P.yaw+P.cYaw)*0.8; P.hPitch = 0.06 - 0.04*env - 0.05*imp;
+  for(const [k,s] of [['P',1],['N',-1]]){
+    const f = k==='P'?fP:fN;
+    P.ank[k].set(s*0.36, 0.12+f.lift, f.z);
+    P.fPitch[k] = f.pitch;
+    const rel = THREE.MathUtils.clamp((f.z - pz)/0.55, -1, 1);
+    const a=P.arm[k];
+    a.pitch = 0.05 + 0.48*rel*env; a.elbow = 0.38 + 0.32*env*(0.6+0.4*Math.max(0,-rel)) + 0.1*imp; a.roll = s*(0.17+0.04*env);
+  }
+  return P;
+}
+
+/* ---------- Application d'une pose : os + IK des jambes ---------- */
+function applyPose(P){
+  const pel=B.pelvis;
+  pel.position.copy(P.pp);
+  if(P.fq) pel.quaternion.copy(P.fq); else pel.quaternion.setFromEuler(_e.set(P.pitch,P.yaw,P.roll,'YXZ'));
+  B.chest.rotation.set(P.cPitch,P.cYaw,P.cRoll);
+  B.neck.position.y = lerp(0.70, 1.20, P.neck);
+  B.neck.rotation.set(0,0,0);
+  B.head.rotation.set(P.hPitch,P.hYaw,P.hRoll);
+  for(const k of ['P','N']){
+    const a=P.arm[k], s=k==='P'?1:-1;
+    B['shoulder'+k].rotation.set(a.pitch, a.yaw, a.roll);
+    B['elbow'+k].rotation.set(-a.elbow,0,0);
+    B['hand'+k].rotation.set(0, a.wrist, 0);
+    for(const f of fingers[k]) f.rotation.set(f.userData.thumb? 0.0 : 0, 0, f.userData.thumb ? s*0.9*a.curl : s*1.55*a.curl);
+  }
+  pel.updateMatrixWorld(true);
+  _e.setFromQuaternion(pel.quaternion,'YXZ'); const pelPitch=_e.x;
+  // pitch du bassin (pour garder le pied à plat au sol)
+  for(const k of ['P','N']){
+    const hip=B['hip'+k];
+    _v.copy(P.ank[k]); pel.worldToLocal(_v); _v.sub(hip.position);
+    const roll=Math.atan2(_v.x, -_v.y);
+    const vy=-Math.hypot(_v.x,_v.y), vz=_v.z;
+    const d=THREE.MathUtils.clamp(Math.hypot(vy,vz), 0.35, L_THIGH+L_SHIN-1e-4);
+    const dir=Math.atan2(-vz,-vy);
+    const al=Math.acos(THREE.MathUtils.clamp((L_THIGH*L_THIGH+d*d-L_SHIN*L_SHIN)/(2*L_THIGH*d),-1,1));
+    const inner=Math.acos(THREE.MathUtils.clamp((L_THIGH*L_THIGH+L_SHIN*L_SHIN-d*d)/(2*L_THIGH*L_SHIN),-1,1));
+    const th=dir-al, kb=Math.PI-inner;
+    hip.rotation.set(th,0,roll);
+    B['knee'+k].rotation.set(kb,0,0);
+    B['knee'+k].updateMatrixWorld(true);
+    B['knee'+k].getWorldQuaternion(_qk).invert();
+    _qf.setFromEuler(_e2.set(P.fPitch[k], P.fYaw||0, 0, 'YXZ')).premultiply(_qk);   // pied à plat dans le monde
+    // angle de tangage analytique (continu) + petite correction résiduelle (roulis/lacet) -> pas de bascule de slerp
+    const flatA = -pelPitch + P.fPitch[k] - th - kb;
+    _qr.setFromAxisAngle(_ax, -flatA).multiply(_qf);          // résidu ≈ identité
+    _qr.slerp(_qid, 1-P.fBlend);
+    B['foot'+k].quaternion.setFromAxisAngle(_ax, lerp(Math.PI/2, flatA, P.fBlend)).multiply(_qr);
+  }
+}
+
+/* =========================================================================
+   Pré-calcul des positions-clés des pièces (relatives à leur os)
+   ========================================================================= */
+applyPose(carPose(frameMatrix(0)));
+scene.updateMatrixWorld(true);
+const boneCar = new Map();
+for(const p of parts){ if(!boneCar.has(p.bone)) boneCar.set(p.bone, p.bone.matrixWorld.clone()); }
+function keyFromMatrix(m){ const pos=V3(), q=new THREE.Quaternion(), sc=V3(); m.decompose(pos,q,sc); return {pos,q}; }
+function keyMatrix(k){ return new THREE.Matrix4().compose(k.pos,k.q,V3(1,1,1)); }
+for(const p of parts){
+  const inv=boneCar.get(p.bone).clone().invert();
+  const carW=new THREE.Matrix4().makeTranslation(p.carPos.x,p.carPos.y,p.carPos.z);
+  const K=[ keyFromMatrix(inv.clone().multiply(carW)) ];
+  p.K0=K[0];
+  p.segs=[];
+  if(p.keys[0] && p.keys[0].follow) continue;
+  let lastCarW = carW.clone();
+  for(const spec of p.keys){
+    let k;
+    if(spec.space==='car'){
+      let m=lastCarW.clone();
+      if(spec.rot){ const pv = spec.pivot? V3(...spec.pivot) : V3().setFromMatrixPosition(m);
+        const R=new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(spec.rot[0]*D2R,spec.rot[1]*D2R,spec.rot[2]*D2R));
+        m = new THREE.Matrix4().makeTranslation(pv.x,pv.y,pv.z).multiply(R).multiply(new THREE.Matrix4().makeTranslation(-pv.x,-pv.y,-pv.z)).multiply(m); }
+      if(spec.move) m = new THREE.Matrix4().makeTranslation(...spec.move).multiply(m);
+      lastCarW = m;
+      k = keyFromMatrix(inv.clone().multiply(m));
+    } else {
+      let q;
+      if(spec.basis){ const x=V3(...spec.basis.x).normalize(), y=V3(...spec.basis.y).normalize(); const z=V3().crossVectors(x,y).normalize(); y.crossVectors(z,x);
+        q=new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x,y,z)); }
+      else { const r=spec.rot||[0,0,0]; q=new THREE.Quaternion().setFromEuler(new THREE.Euler(r[0]*D2R,r[1]*D2R,r[2]*D2R)).multiply(p.K0.q); }
+      k={ pos:V3(...spec.pos), q };
+    }
+    // pivot : défini en coordonnées voiture -> local pièce
+    let piv = V3();
+    if(spec.pivot && spec.space==='car'){ piv = V3(...spec.pivot).sub(p.carPos); }
+    p.segs.push({ from:K[K.length-1], to:k, win:spec.win, arc:spec.arc?V3(...spec.arc):V3(), pivot:piv });
+    K.push(k);
+  }
+}
+// pièces "suiveuses" (roues) : liaison rigide à leur pièce porteuse
+for(const p of parts){
+  if(!(p.keys[0] && p.keys[0].follow)) continue;
+  const L=p.keys[0].follow;
+  const rel = keyMatrix(L.K0).invert().multiply(keyMatrix(p.K0));
+  const relInv = rel.clone().invert();
+  p.segs = L.segs.map(sg=>({
+    from: keyFromMatrix(keyMatrix(sg.from).multiply(rel)),
+    to:   keyFromMatrix(keyMatrix(sg.to).multiply(rel)),
+    win: sg.win, arc: sg.arc, pivot: sg.pivot.clone().applyMatrix4(relInv),
+  }));
+}
+
+for(const p of parts) for(let i=1;i<p.segs.length;i++) if(p.segs[i].win[0] < p.segs[i-1].win[1]-1e-9) console.warn('fenêtres qui se chevauchent', p.name);
+const _pa=V3(), _pb=V3(), _qq=new THREE.Quaternion();
+function interpSeg(sg, t, g){
+  _qq.slerpQuaternions(sg.from.q, sg.to.q, t);
+  _pa.copy(sg.pivot).applyQuaternion(sg.from.q).add(sg.from.pos);
+  _pb.copy(sg.pivot).applyQuaternion(sg.to.q).add(sg.to.pos);
+  _pa.lerp(_pb, t).addScaledVector(sg.arc, Math.sin(Math.PI*clamp01(t)));
+  g.quaternion.copy(_qq);
+  g.position.copy(sg.pivot).applyQuaternion(_qq).negate().add(_pa);
+}
+function evalPart(p, s, dir){
+  const n=p.segs.length;
+  for(let i=n-1;i>=0;i--){ const sg=p.segs[i]; const t=W(s,dir,sg.win[0],sg.win[1]); if(t>0||i===0){ interpSeg(sg, t, p.g); return; } }
+}
+
+/* =========================================================================
+   Chronologie : tout est fonction de T (secondes dans la boucle)
+   ========================================================================= */
+function carZ(T){
+  if(T<TF2[0]) return 0;              // (inutilisé en mode robot)
+  if(T<DRIVE[0]) return WALK_DIST;
+  if(T<DRIVE[1]) return WALK_DIST*(1-smoother((T-DRIVE[0])/(DRIVE[1]-DRIVE[0])));
+  return 0;
+}
+function wheelAngle(T){
+  if(T<HERO[0]) return 0;
+  if(T<TF2[0]) return (WALK_DIST/WHEEL_R)*smoother((T-HERO[0])/(TF2[0]-HERO[0]));
+  return carZ(T)/WHEEL_R;            // roulement sans glissement : angle = distance / rayon
+}
+const PHASES=[[0,'Présentation'],[1.5,'Transformation → robot'],[3.5,'Pose héroïque'],[4,'Marche'],[7,'Transformation → voiture'],[9,'Retour en position'],[11,'Présentation']];
+let shake=0;
+function update(T){
+  let pose, s=0, dir=1;
+  if(T<TF1[0]){ pose=carPose(frameMatrix(0)); s=0; }
+  else if(T<TF1[1]){ s=(T-TF1[0])/2; dir=1; pose=tfPose(s,1,0); }
+  else if(T<TF2[0]){ pose=robotPose(T); s=1; }
+  else if(T<TF2[1]){ s=(T-TF2[0])/2; dir=-1; pose=tfPose(s,-1,WALK_DIST); }
+  else { pose=carPose(frameMatrix(carZ(T))); s=0; }
+  applyPose(pose);
+  for(const p of parts) evalPart(p, s, dir);
+  const wa=wheelAngle(T); for(const sp of wheelSpinners) sp.rotation.x = wa;
+  // secousse de caméra : impacts des pas + verrouillages
+  let sh=0; for(const st of STEPS){ const d=T-st.t1; if(d>=0&&d<0.35) sh=Math.max(sh,(1-d/0.35)); }
+  for(const t0 of [TF1[1], TF2[1]]){ const d=T-t0; if(d>=0&&d<0.3) sh=Math.max(sh,0.6*(1-d/0.3)); }
+  shake=sh;
+  let ph=PHASES[0][1]; for(const [t,n] of PHASES) if(T>=t) ph=n; return ph;
+}
+
+/* =========================================================================
+   Boucle, interface
+   ========================================================================= */
+let T=0, playing=true, speed=1, last=performance.now(), dragging=false, wasPlaying=true;
+const $=id=>document.getElementById(id);
+const scrub=$('scrub'), fillEl=$('fill'), timeEl=$('time'), phaseEl=$('phase');
+// segments de transformation sur la piste
+for(const [a,b] of [TF1,TF2]){ const d=document.createElement('div'); d.className='seg'; d.style.left=(a/LOOP*100)+'%'; d.style.width=((b-a)/LOOP*100)+'%'; document.querySelector('#tl .track').appendChild(d); }
+function setPlaying(v){ playing=v; $('icoPlay').innerHTML = v ? '<path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/>' : '<path d="M4 2.2l9.5 5.8L4 13.8z"/>'; }
+function setSpeed(v){ speed=v; $('bN').classList.toggle('on', v===1); $('bS').classList.toggle('on', v!==1); }
+$('bPlay').onclick=()=>setPlaying(!playing);
+$('bRestart').onclick=()=>{ T=0; setPlaying(true); };
+$('bN').onclick=()=>setSpeed(1);
+$('bS').onclick=()=>setSpeed(0.25);
+$('bCar').onclick=()=>{ T=0.75; setPlaying(false); };
+$('bBot').onclick=()=>{ T=3.98; setPlaying(false); };
+function resetCam(){
+  controls.enableDamping=false; controls.update();            // purge l'inertie résiduelle
+  camera.position.copy(CAM_HOME.pos); controls.target.copy(CAM_HOME.target);
+  controls.update(); controls.enableDamping=true;
+}
+$('bCam').onclick=resetCam;
+scrub.addEventListener('pointerdown',()=>{ dragging=true; wasPlaying=playing; setPlaying(false); });
+scrub.addEventListener('input',()=>{ T=parseFloat(scrub.value); });
+const endDrag=()=>{ if(dragging){ dragging=false; if(wasPlaying) setPlaying(true); } };
+scrub.addEventListener('pointerup',endDrag); scrub.addEventListener('change',endDrag);
+addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT' && e.code!=='Space') return;
+  if(e.code==='Space'){ e.preventDefault(); setPlaying(!playing); }
+  else if(e.key==='r'||e.key==='R'){ T=0; setPlaying(true); }
+  else if(e.key==='s'||e.key==='S'){ setSpeed(speed===1?0.25:1); }
+  else if(e.key==='c'||e.key==='C'){ $('bCar').click(); }
+  else if(e.key==='b'||e.key==='B'){ $('bBot').click(); }
+  else if(e.key==='f'||e.key==='F'){ resetCam(); }
+});
+document.addEventListener('visibilitychange',()=>{ last=performance.now(); });
+addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+
+const _cp=V3();
+function frame(now){
+  // temps réel écoulé (indépendant du nombre d'images/s) ; plafonné à 0,5 s pour absorber un onglet en arrière-plan
+  const dt=Math.min(0.5,Math.max(0,(now-last)/1000)); last=now;
+  if(playing && !dragging){ T += dt*speed; T = ((T%LOOP)+LOOP)%LOOP; }
+  const ph=update(T);
+  if(!dragging) scrub.value=T.toFixed(2);
+  fillEl.style.width=(T/LOOP*100)+'%';
+  timeEl.textContent=T.toFixed(2)+' s';
+  if(phaseEl.textContent!==ph) phaseEl.textContent=ph;
+  controls.update();
+  // secousse appliquée seulement au rendu
+  _cp.copy(camera.position);
+  if(shake>0){ const a=0.035*shake; camera.position.x+=Math.sin(T*91.7)*a; camera.position.y+=Math.sin(T*77.3+1.3)*a; }
+  renderer.render(scene,camera);
+  camera.position.copy(_cp);
+}
+renderer.setAnimationLoop(frame);
+
+// hooks d'inspection (vérification automatisée)
+window.__app = { setTime(t){ T=t; setPlaying(false); update(T); renderer.render(scene,camera); }, get T(){return T;}, parts, B, update, scene, camera, controls, setPlaying };
+</script>
+</body>
+</html>
