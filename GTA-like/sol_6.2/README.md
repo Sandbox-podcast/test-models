@@ -4,7 +4,7 @@ Jeu solo d’action et d’infiltration en 2,5D pour navigateur de bureau. Les F
 
 ## Jouer en local
 
-Ouvrir [DeadLine.html](outputs/DeadLine.html) dans Chrome ou Firefox. Le fichier contient le jeu et ses ressources. La partie est enregistrée dans le navigateur pour ce fichier.
+Avec Node.js 22 et npm, exécuter `npm ci` puis `npm run dev`. Ouvrir l’adresse affichée dans Chrome ou Firefox. Pour obtenir un fichier autonome, exécuter `npm run build:portable` puis ouvrir `outputs/DeadLine.html`. La partie est enregistrée dans le navigateur.
 
 | Action | Commandes |
 | --- | --- |
@@ -53,7 +53,7 @@ Ouvrir **G** pour voir les cinq activités et afficher leur départ sur la carte
 
 Une fermeture pendant une séquence restaure son point de reprise. Les crédits, implants, décisions, achats et munitions sont conservés. Les anciennes sauvegardes du navigateur conservent leur progression et reçoivent l’arsenal de départ.
 
-Avec Node.js 22 et npm, exécuter npm ci, puis npm run dev. npm run build:portable reconstruit outputs/DeadLine.html. npm run build prépare aussi la distribution statique dans dist/.
+`npm run build` prépare la distribution statique dans `dist/`.
 
 npm run test:world vérifie les emprises et l’altimétrie, les quatre gabarits sur les deux voies et dans les deux sens, les portes, les places de stationnement, les accès des missions et les trajets des passants et des véhicules avec Rapier.
 

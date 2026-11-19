@@ -1,0 +1,9 @@
+{
+  "inputs": ["prompt.md"],
+  "effort": "medium",
+  "steps": ["Envoyer l'intégralité de prompt.md en un seul message, pour une seule exécution."],
+  "criteria": [
+    "Vérifier la boucle de 12 secondes et la continuité entre la voiture, le robot, la marche et le retour à la voiture.",
+    "Contrôler la lisibilité de la transformation, le cadrage et les interactions demandées dans le prompt."
+  ]
+}

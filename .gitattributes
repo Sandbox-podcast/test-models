@@ -1,0 +1,3 @@
+# Les sorties et les traces d'essai sont conservées octet pour octet.
+**/runs/*/output/** -text
+**/runs/*/transcript.md -text

@@ -1,0 +1,11 @@
+{
+  "inputs": ["prompt.md"],
+  "steps": [
+    "Envoyer le brief initial de prompt.md, jusqu'à la consigne sur le visuel de chargement inclus, en retirant le balisage de citation Markdown.",
+    "Dans la même session, envoyer le bloc Flacon 3D interactif, en retirant le balisage de citation Markdown."
+  ],
+  "criteria": [
+    "Observer le flacon sous plusieurs angles, contrôler sa réaction au défilement et tester la manipulation sur ordinateur.",
+    "Vérifier la version mobile, le mode animations réduites et le rendu en cas d'indisponibilité de WebGL."
+  ]
+}

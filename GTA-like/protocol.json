@@ -1,0 +1,12 @@
+{
+  "inputs": ["prompts.md", "Deadline_spec.md", "Deadline_dev_plan.md", "map_ref.md", "bible/"],
+  "steps": [
+    "Rendre disponibles la spec, le plan et la carte de référence, puis envoyer le premier message de prompts.md.",
+    "Rendre disponible la bible, puis envoyer le deuxième message de prompts.md dans la même session.",
+    "Envoyer le troisième message de prompts.md dans la même session."
+  ],
+  "criteria": [
+    "Lancer le jeu et suivre le premier contrat jusqu'à sa conclusion ou au blocage rencontré.",
+    "Vérifier un parcours à pied et en voiture, les collisions, le passage aux intersections et la reprise de la sauvegarde."
+  ]
+}
